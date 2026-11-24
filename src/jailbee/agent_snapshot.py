@@ -1,7 +1,6 @@
 """Capture and consume container-local agent sessions across restarts."""
 
 import fcntl
-import hashlib
 import json
 import os
 import pwd
@@ -16,7 +15,6 @@ from subprocess import TimeoutExpired
 
 SNAPSHOT_RELPATH = ".local/state/jailbee/agent-sessions.json"
 BOOT_RELPATH = ".local/state/jailbee/boot-agent-sessions.json"
-BOOT_QUEUE_RELPATH = ".local/state/jailbee/boot-agent-queue"
 LAUNCHERS_RELPATH = ".local/state/jailbee/launchers"
 SESSIONS_RELPATH = ".claude/sessions"
 REGISTRY_RELPATH = ".local/state/jailbee/live-agent-sessions.json"
@@ -191,7 +189,7 @@ def _hook_process(home: Path, proc: Path) -> tuple[str, str, list[str], str | No
 
 def _lock(fd: int) -> None:
     # Serialize ordinary concurrent hooks, but never wait on a stuck owner.
-    deadline = time.monotonic() + 0.2
+    deadline = time.monotonic() + 5.0
     while True:
         try:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -233,24 +231,22 @@ def _merge_pending(home: Path, proc: Path, source: Path) -> None:
             continue
         candidate = {**saved, "sessions": [*rows, row]}
         if len(json.dumps(candidate, separators=(",", ":")).encode()) + 1 > _LIMIT:
-            payload = json.dumps(
-                {"version": 1, "source": "capture", "sessions": [row]}, separators=(",", ":")
-            ).encode()
-            if source.parent == home / BOOT_QUEUE_RELPATH:
-                remaining.append(row)
-            else:
-                queued = home / BOOT_QUEUE_RELPATH / (hashlib.sha256(payload).hexdigest() + ".json")
-                _write_snapshot(queued, payload)
+            # A deferred old-boot row is no longer owned by its dead process.
+            # Keep it eligible for retry instead of letting hook pruning drop it.
+            remaining.append(
+                {**row, "pid": "", "procStart": ""} if source == home / REGISTRY_RELPATH else row
+            )
         else:
             rows.append(row)
-    _write_snapshot(path, json.dumps(saved, separators=(",", ":")).encode())
-    if (
-        source == home / SNAPSHOT_RELPATH or source.parent == home / BOOT_QUEUE_RELPATH
-    ) and not remaining:
+    _save_pending(path, saved)
+    if source == home / SNAPSHOT_RELPATH and not remaining:
         source.unlink(missing_ok=True)
     else:
         _write_snapshot(
-            source, json.dumps({**fresh, "sessions": remaining}, separators=(",", ":")).encode()
+            source,
+            json.dumps(
+                {**fresh, "sessions": remaining, "boot_id": _boot_id(proc)}, separators=(",", ":")
+            ).encode(),
         )
 
 
@@ -300,9 +296,10 @@ def register_session(
             if not isinstance(rows, list):
                 rows = []
         pending = _json(home / BOOT_RELPATH)
-        preserve_frozen = isinstance(pending, dict) and isinstance(pending.get("sessions"), list)
-        if preserve_frozen:
-            _merge_pending(home, PROC, home / SNAPSHOT_RELPATH)
+        frozen = _json(home / SNAPSHOT_RELPATH)
+        preserve_frozen = (
+            isinstance(pending, dict) and isinstance(pending.get("sessions"), list)
+        ) or (isinstance(frozen, dict) and frozen.get("boot_id") == boot_id)
         rows = [
             row
             for row in rows
@@ -348,6 +345,7 @@ def register_session(
                     if not isinstance(row, dict) or row.get("session_id") != sid
                 ]
                 _write_snapshot(frozen_path, json.dumps(frozen).encode())
+        _acknowledge(home, {sid})
     finally:
         os.close(fd)
 
@@ -432,8 +430,6 @@ def boot(home: Path, *, proc: Path = Path("/proc"), retain: bool = False) -> dic
             saved = _json(pending)
             if isinstance(saved, dict) and isinstance(saved.get("sessions"), list):
                 new_boot = saved.get("boot_id") != _boot_id(proc)
-                for queued in _entries(home / BOOT_QUEUE_RELPATH):
-                    _merge_pending(home, proc, queued)
                 _merge_pending(home, proc, home / SNAPSHOT_RELPATH)
                 if new_boot:
                     _merge_pending(home, proc, registry)
@@ -443,10 +439,19 @@ def boot(home: Path, *, proc: Path = Path("/proc"), retain: bool = False) -> dic
                 return _boot(home, proc=proc, path=frozen, retain=retain)
             if _read(frozen) is not None:
                 result = _boot(home, proc=proc, path=frozen, retain=retain)
-                remaining = _read(frozen)
-                _write_snapshot(
-                    registry, remaining or b'{"version":1,"source":"capture","sessions":[]}'
-                )
+                registered = _json(registry)
+                emitted = result["sessions"]
+                assert isinstance(emitted, list)
+                ids = {row.get("session_id") for row in emitted if isinstance(row, dict)}
+                if isinstance(registered, dict) and isinstance(registered.get("sessions"), list):
+                    registered["sessions"] = [
+                        row
+                        for row in registered["sessions"]
+                        if not isinstance(row, dict) or row.get("session_id") not in ids
+                    ]
+                    _write_snapshot(
+                        registry, json.dumps(registered, separators=(",", ":")).encode()
+                    )
                 return result
             return _boot(home, proc=proc, path=registry, registry=True, retain=retain)
         finally:
@@ -462,19 +467,28 @@ def acknowledge(home: Path, session_ids: list[str]) -> None:
     fd = os.open(registry.with_suffix(".lock"), os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
     try:
         _lock(fd)
-        path = home / BOOT_RELPATH
-        saved = _json(path)
-        if not isinstance(saved, dict) or not isinstance(saved.get("sessions"), list):
-            return
-        ids = set(session_ids)
+        _acknowledge(home, set(session_ids))
+    finally:
+        os.close(fd)
+
+
+def _save_pending(path: Path, saved: dict[str, object]) -> None:
+    if saved["sessions"]:
+        _write_snapshot(path, json.dumps(saved, separators=(",", ":")).encode())
+    else:
+        path.unlink(missing_ok=True)
+
+
+def _acknowledge(home: Path, session_ids: set[str]) -> None:
+    path = home / BOOT_RELPATH
+    saved = _json(path)
+    if isinstance(saved, dict) and isinstance(saved.get("sessions"), list):
         saved["sessions"] = [
             row
             for row in saved["sessions"]
-            if not isinstance(row, dict) or row.get("session_id") not in ids
+            if not isinstance(row, dict) or row.get("session_id") not in session_ids
         ]
-        _write_snapshot(path, json.dumps(saved, separators=(",", ":")).encode())
-    finally:
-        os.close(fd)
+        _save_pending(path, saved)
 
 
 def _boot(
@@ -495,6 +509,23 @@ def _boot(
             and isinstance(data.get("sessions"), list)
         ):
             result = {"version": 1, "source": data["source"], "sessions": data["sessions"]}
+    registered = _json(home / REGISTRY_RELPATH)
+    live_ids: set[str] = set()
+    if (
+        isinstance(registered, dict)
+        and registered.get("boot_id") == _boot_id(proc)
+        and isinstance(registered.get("sessions"), list)
+    ):
+        live_ids = {
+            row["session_id"]
+            for row in registered["sessions"]
+            if isinstance(row, dict)
+            and isinstance(row.get("session_id"), str)
+            and not row.get("ended")
+            and isinstance(row.get("pid"), str)
+            and bool(row["pid"])
+            and _start(proc, row["pid"]) == row.get("procStart")
+        }
     stale: list[dict[str, object]] = []
     unconsumed: set[str] = set()
     blocked_pids: set[str] = set()
@@ -551,6 +582,12 @@ def _boot(
     else:
         entries = result["sessions"]
         assert isinstance(entries, list)
+        live_rows = [
+            row for row in entries if isinstance(row, dict) and row.get("session_id") in live_ids
+        ]
+        entries = [row for row in entries if row not in live_rows]
+        if path == home / BOOT_RELPATH:
+            _acknowledge(home, live_ids)
         blocked = [
             item
             for item in entries
@@ -584,7 +621,9 @@ def _boot(
         if retain and path == home / BOOT_RELPATH:
             result["sessions"] = emitted
         elif blocked or registry:
-            remaining = {**result, "sessions": blocked}
+            remaining = {**result, "sessions": [*blocked, *live_rows] if registry else blocked}
+            if registry and isinstance(data, dict) and "boot_id" in data:
+                remaining["boot_id"] = data["boot_id"]
             try:
                 _write_snapshot(path, json.dumps(remaining, separators=(",", ":")).encode())
             except (OSError, ValueError) as exc:

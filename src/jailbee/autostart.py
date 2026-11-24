@@ -903,8 +903,12 @@ def _step_invocation(cfg: Config, step: AutostartStep, repo_dir: str) -> _StepIn
     independently, which is exactly how the two paths drift apart — a step's
     behaviour must not depend on how many chains its stage happens to have.
     """
+    from jailbee.agent_resume import BOOT_SESSION_ENV
+
+    env = {**cfg.autostart.env, **step.env, "REPO_DIR": repo_dir}
+    env.pop(BOOT_SESSION_ENV, None)
     return _StepInvocation(
-        env={**cfg.autostart.env, **step.env, "REPO_DIR": repo_dir},
+        env=env,
         cwd=repo_dir if not step.working_dir else f"{repo_dir}/{step.working_dir}",
         timeout=step.timeout if step.timeout is not None else cfg.autostart.step_timeout,
     )

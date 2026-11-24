@@ -2012,7 +2012,7 @@ Top-level keys:
 | `on_start` | list[Step] \| list[Stage] | `[]` | Run on every stopped→running transition: both `jailbee new` (after `on_create`) and `jailbee start`/`restart`. Put one-shot setup in `on_create` and recurring launches (dev servers, etc.) in `on_start` — don't duplicate. Same two shapes as `on_create`. |
 | `step_timeout` | int | `600` | Default per-step timeout in seconds (overridable per step). |
 | `env` | map | `{}` | Global env merged into every step (per-step `env` wins on key collisions). |
-| `resume_agent_sessions` | bool | `true` | Resume eligible interactive Claude sessions saved by the live registry or normal stop/restart capture. Entries remain pending until their agent launch succeeds, so failed earlier autostart stages can be retried. `false` consumes the saved snapshot without resuming. Does not cover shell environment, non-Claude processes or background sessions; real host reboot and raw `incus stop` recovery remain unverified. |
+| `resume_agent_sessions` | bool | `true` | Resume eligible interactive Claude sessions saved by the live registry or normal stop/restart capture. Entries remain pending until their agent launch succeeds or their session start/end hook acknowledges them, so failed earlier autostart stages can be retried without reviving ended sessions. Re-entry skips sessions with a matching live registry PID and process start time. `false` consumes the saved snapshot without resuming. Does not cover shell environment, non-Claude processes or background sessions; real host reboot and raw `incus stop` recovery remain unverified. |
 
 #### Profiles
 

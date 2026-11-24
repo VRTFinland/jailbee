@@ -1482,8 +1482,9 @@ def test_on_start_retains_snapshot_only_when_resume_enabled(tmp_path, mocker, en
 @pytest.mark.parametrize("source", ["snapshot", "registry", "stale"])
 @pytest.mark.parametrize("failure", ["prepare", "claude"])
 @pytest.mark.parametrize("detached", [False, True])
+@pytest.mark.parametrize("recovery", ["retry", "ended", "live"])
 def test_failed_pre_agent_stage_keeps_sessions_for_retry(
-    tmp_path, mocker, source, failure, detached
+    tmp_path, mocker, source, failure, detached, recovery
 ):
     import json
 
@@ -1598,10 +1599,46 @@ def test_failed_pre_agent_stage_keeps_sessions_for_retry(
     else:
         start()  # Agent launch failures are continue_on_error, but not acknowledged.
 
+    if recovery == "ended":
+        mocker.patch.object(snapshot, "PROC", tmp_path / "proc")
+        snapshot.register_session(tmp_path, {"session_id": entry.session_id}, ended=True)
+    elif recovery == "live":
+        from tests.test_agent_snapshot import live
+
+        proc = tmp_path / "proc"
+        mocker.patch.object(snapshot, "PROC", proc)
+        live(proc, 7)
+        mocker.patch.object(snapshot.os, "getppid", return_value=7)
+        snapshot.register_session(tmp_path, {"session_id": entry.session_id, "cwd": "/work"})
+        # Reinsert the pending row to model a lost acknowledgement.
+        path = tmp_path / snapshot.BOOT_RELPATH
+        path.write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "source": "capture",
+                    "sessions": [
+                        {
+                            "agent": "claude",
+                            "session_id": entry.session_id,
+                            "cwd": "/work",
+                            "launcher": ["claude"],
+                            "window": "claude",
+                        }
+                    ],
+                }
+            )
+        )
+
     run_step.side_effect = None
     run_step.reset_mock()
     start()
-    assert resume_run(entry) in [call.kwargs["command"] for call in run_step.call_args_list]
+    assert (resume_run(entry) in [call.kwargs["command"] for call in run_step.call_args_list]) is (
+        recovery == "retry"
+    )
+    assert all(
+        "JAILBEE_BOOT_SESSION_ID" not in call.kwargs["env"] for call in run_step.call_args_list
+    )
 
     run_step.reset_mock()
     start()
