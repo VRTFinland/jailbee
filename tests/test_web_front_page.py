@@ -140,8 +140,14 @@ def test_recent_idle_emphasis_and_age_survive_the_snapshot(
         ),
     )
     waiting = AgentSummary(
-        "claude", "waiting", START, None, 2,
-        activity=AgentActivity(None, None, state="idle", last_event_at=START - timedelta(minutes=5)),
+        "claude",
+        "waiting",
+        START,
+        None,
+        2,
+        activity=AgentActivity(
+            None, None, state="idle", last_event_at=START - timedelta(minutes=5)
+        ),
         sessions=(SessionMark("waiting", START), SessionMark("idle", START - timedelta(hours=2))),
     )
     snap = snapshot_of(
@@ -160,7 +166,11 @@ def test_recent_idle_emphasis_and_age_survive_the_snapshot(
     assert rows["alpha-fresh"]["agent_recent_idle"] == "5m"
     assert rows["alpha-mixed"]["agent_recent_idle"] == "7m"
     assert rows["alpha-old"]["agent_recent_idle"] is None
-    assert set(view["filters"]["active"]["visible"]) == {"alpha-waiting", "alpha-fresh", "alpha-mixed"}
+    assert set(view["filters"]["active"]["visible"]) == {
+        "alpha-waiting",
+        "alpha-fresh",
+        "alpha-mixed",
+    }
 
 
 def test_containers_are_grouped_under_their_repo(
