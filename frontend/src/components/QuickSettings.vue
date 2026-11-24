@@ -185,4 +185,14 @@ onBeforeUnmount(() => {
 .filter-marker { position: absolute; top: 0.2rem; right: 0.2rem; width: 0.5rem; height: 0.5rem; border-radius: 50%; background: var(--accent); border: 1px solid var(--text); }
 :root[data-profile="eink"] .quick-panel, :root[data-theme="eink"] .quick-panel { box-shadow: none; }
 :root[data-profile="eink"] .quick-backdrop { background: transparent; }
+/* Keep a full touch-target row plus paging controls reachable in landscape,
+   even when the document's reading font is set to its maximum. */
+@media (max-height: 480px) {
+    .quick-panel { font-size: min(1rem, 16px); padding: 8px; }
+    .menu-row { min-height: 44px; padding: 4px 8px; gap: 8px; }
+    .quick-panel button, .quick-panel select { min-height: 44px; }
+    .font-row button, .menu-pages button { min-width: 44px; }
+    .font-row > span { flex-basis: 80px; }
+    .menu-pages { padding-top: 8px; }
+}
 </style>

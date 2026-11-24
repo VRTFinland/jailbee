@@ -86,13 +86,19 @@ def test_menu_context_paging_and_live_preferences(
     expect(page.locator(".filter-notice")).to_have_count(0)
 
 
-def test_large_font_menu_pages_fit_above_the_bottom_guard(logged_in: Page) -> None:
+@pytest.mark.parametrize("height", [320, 440])
+@pytest.mark.parametrize("profile", ["normal", "eink"])
+def test_large_font_menu_pages_fit_above_the_bottom_guard(
+    logged_in: Page, height: int, profile: str
+) -> None:
     page = logged_in
-    page.set_viewport_size({"width": 390, "height": 440})
+    page.set_viewport_size({"width": 390, "height": height})
     open_settings(page)
     size = page.get_by_role("slider", name="Body:")
     size.focus()
     size.press("End")
+    if profile == "eink":
+        page.get_by_role("radio", name="E-ink (page turns, no animation, slow refresh)").check()
     open_quick_settings(page)
     panel = page.get_by_role("dialog", name="Quick settings")
     while True:
