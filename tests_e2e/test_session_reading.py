@@ -101,7 +101,8 @@ def test_latest_answer_and_sticky_title_follow_the_readable_area(
     # scroll the reader away, and must bring the jump button back.
     page.mouse.wheel(0, -180)
     page.wait_for_function(
-        "document.querySelector('.entry.assistant:last-child').getBoundingClientRect().top > 150"
+        "() => document.querySelector('.entry.assistant:last-child')"
+        ".getBoundingClientRect().top > 150"
     )
     expect(latest).to_be_hidden()
     position = page.evaluate("window.scrollY")
