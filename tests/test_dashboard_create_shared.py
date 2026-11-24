@@ -60,11 +60,25 @@ def test_successful_handoff_leaves_no_parent_entry(tmp_path):
 @pytest.mark.parametrize(
     "result,output,state,hint",
     [
-        (RunResult(status=0), "worker started", "done", "done"),
+        (RunResult(status=0), "worker started", None, None),
+        (
+            RunResult(status=1, cancelled=True),
+            "warning: prior notice\nAborted!\n",
+            None,
+            "cancelled",
+        ),
+        (
+            RunResult(status=1, cancelled=True),
+            "Aborted!\nError: disk failure",
+            "failed",
+            "disk failure",
+        ),
+        (RunResult(status=7, cancelled=True), "error: disk failure", "failed", "disk failure"),
+        (RunResult(status=2), "confirmation needed", "failed", "confirmation needed"),
         (
             RunResult(status=0),
             "Aborted. Pick a different name to branch off 'dev' instead.",
-            "done",
+            None,
             "Pick a different name",
         ),
         (RunResult(status=2), "error: base vanished", "failed", "base vanished"),
@@ -85,19 +99,20 @@ def test_missing_answer_retries_once_with_live_queue_state(tmp_path, result, out
     queue, notices, changes = _start(
         tmp_path,
         # The marker is deliberately in stdout, not stderr.
-        code="import sys; print('Branch already exists in source repo'); sys.exit(2)",
+        code="import sys; print('confirmation needed'); sys.exit(2)",
         run_questions=questions,
     )
     assert len(seen) == 1
     assert seen[0].cwd == tmp_path
     assert seen[0].argv[0] == "-c"
     assert QueueCounts(0, 1) in changes  # awaiting a modal answer
-    assert hint in notices[0]
+    assert notices[0] is None if hint is None else hint in notices[0]
     if state is None:
         assert queue.empty
     else:
         (entry,) = queue
         assert entry.state == state
+        assert entry.status == (result.status if result.status is not None else 1)
         assert (result.error or output) in entry.output
 
 
@@ -131,7 +146,7 @@ def test_retry_keeps_create_busy_until_the_prompt_channel_finishes(tmp_path):
         start_create(jobs, queue, **kwargs)
     callbacks[0](ActionOutcome([RunResult(status=0)], "worker started"))
     assert not jobs.busy("new:work")
-    assert len(queue) == 1
+    assert queue.empty
 
 
 def test_busy_create_does_not_add_a_failure(tmp_path):

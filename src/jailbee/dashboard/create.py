@@ -91,25 +91,39 @@ def start_create(
                 changed()
                 done(result.refused if result else "nothing ran")
                 return
-            if result.cancelled and result.error is None:
-                queue.finish(entry, 0, output)
+            status = result.status if result.status is not None else 1
+            lines = [line.strip() for line in output.splitlines() if line.strip()]
+            cancellation = any(
+                line in {"Aborted!", "Aborted.", "Error: cancelled"} for line in lines
+            )
+            has_error = any(
+                line.lower().startswith("error:") and line != "Error: cancelled" for line in lines
+            )
+            if (
+                result.cancelled
+                and result.error is None
+                and status == 1
+                and cancellation
+                and not has_error
+            ):
+                queue.drop(entry)
                 changed()
                 done(f"'{command}' cancelled")
                 return
-            status = result.status if result.status is not None else 1
+            if status == 0 and result.error is None:
+                queue.drop(entry)
+                changed()
+                text = " ".join(output.split())
+                at = text.find("Aborted. Pick a different name")
+                done(text[at:] if at >= 0 else None)
+                return
             if result.error is not None:
+                status = status or 1
                 output += f"\n{result.error}"
             queue.finish(entry, status, output)
             changed()
-            if status != 0:
-                reason = JobResult(status, output).failure_line() or f"exited {status}"
-                done(f"{command} failed: {reason}")
-            else:
-                # A declined reuse is exit 0, not a failed create. Rich may
-                # wrap the CLI's hint: keep it readable as a one-line notice.
-                text = " ".join(output.split())
-                at = text.find("Aborted. Pick a different name")
-                done(text[at:] if at >= 0 else f"'{command}' done")
+            reason = JobResult(status, output).failure_line() or f"exited {status}"
+            done(f"{command} failed: {reason}")
 
         run_questions([ActionRun(argv[1:], cwd)], settled, _Progress(queue, entry, changed))
 

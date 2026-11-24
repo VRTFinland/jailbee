@@ -31,7 +31,6 @@ _T = TypeVar("_T")
 # stream/exit tests pin the former, not just the marker's presence in source.
 NEEDS_TERMINAL_MARKERS: tuple[str, ...] = (
     "no terminal to ask on",
-    "already exists in source repo",
     "confirmation needed",
 )
 
