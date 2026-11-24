@@ -435,6 +435,12 @@ hooks); command-only sessions use their first slash command, with title lookup
 bounded to 32 candidate user records once that fallback exists. A leading agent
 wrapper and typed text in one record are displayed separately as metadata and a
 prompt; unknown XML-like tags remain typed text.
+The front page and repository container lists have three icon filters: All,
+Running (Incus state Running), and Active (the terminal dashboard's non-grey
+agent marks, including recently active idle sessions). The choice is remembered
+per browser and follows snapshots. Nonmatching ancestors stay dimmed for tree
+context; repositories without retained rows disappear, with an `N hidden by
+filter` hint counting omitted containers. The terminal dashboard is unchanged.
 The front page and repository container lists indent same-repository children
 under their orchestrator, show its child count across all visible repositories
 and each child's state/runner, and keep absent-parent children labelled.
@@ -1114,10 +1120,10 @@ issue outbox are empty — it moves to the very top as "Outbox (N pending)" whil
 holds staged manifests; it opens the Outbox box: the proposals as a tree
 beside a preview, with `Space` mark (a row and everything under it), `d` delete
 (one "No"-first question naming exactly what goes), `p` publish the marked
-proposals, or the one under the cursor (the plans and the choice shown in the box;
+proposals, or the one under the cursor (CLI questions open as modals; marked proposals share a plan preview;
 a description awaiting its PR or a pinned source runs `pr push` /
-`submodule pr push` in the terminal, after the manifests, the first failure
-stopping the rest), `X` clear, `v`/`m` preview and raw
+`submodule pr push` through the shared action runner, after the manifests, the first failure
+stopping the rest; output, URLs and failures stay in the notification queue), `X` clear, `v`/`m` preview and raw
 manifest, `f` full-screen preview reader (`f`/Esc back), `r` refresh and Esc back; keys the SSH policy refuses are not
 offered), then `job clear`, `job log`, then `Autostart →` (re-run, status, cancel and profile when eligible; cancel asks first), then `Git →` (`merge`,
 `git pull`, `git push`, `git push --pr`, `git diff`), `PR →` ("Create/update submodule PR…" when the container has submodule changes, `pr open`,
@@ -1558,7 +1564,13 @@ For a pinned imported source use `jailbee pr push NAME --source-manifest
 FILE.json`. It publishes that ref at its recorded SHA independently of the
 container's own PR. An existing PR supplies its actual head and base; a
 conflicting manifest branch is refused. `--title`, `--body`, `--base`,
-`--as`, `--pr` and `--stacked` cannot be combined with this option.
+`--as`, `--pr`, `--stacked`, `--branch` and `--no-outbox` cannot be combined with this option.
+A matching own-branch source uses the ordinary branch flow; if it has no description,
+its numbered PR must match the container's bound PR. A rejected push or a reported
+PR lookup error is retryable with the same command. An interrupted PR operation
+remains uncertain: resolve it in the outbox before retrying. A differing proposal base is
+warned about, and the resolved base is used. An unselected own-branch proposal is
+named in a warning.
 Non-fast-forward updates require `--force`. Pending source rows show
 `awaiting-push` and `create_scope`; `outbox apply` (and `p` in the outbox)
 hands them to this PR push. An already-published

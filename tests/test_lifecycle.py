@@ -7668,7 +7668,16 @@ def test_list_containers_synthesises_row_for_container_less_op(make_cfg, tmp_pat
     repo.mkdir()
     cfg = make_cfg(repo)
     incus = MagicMock()
-    incus.list_containers.return_value = []
+    parent_name = f"{cfg.container_prefix}-orchestrator"
+    incus.list_containers.return_value = [
+        {
+            "name": parent_name,
+            "status": "Running",
+            "profiles": ["default", f"{cfg.container_prefix}-base"],
+            "config": {},
+            "state": None,
+        }
+    ]
 
     from datetime import UTC, datetime
 
@@ -7685,14 +7694,42 @@ def test_list_containers_synthesises_row_for_container_less_op(make_cfg, tmp_pat
             branch="feat/pre",
             pid=4242,
             log_path="/l",
-            now=datetime.now(UTC),
+            now=datetime(2020, 1, 1, tzinfo=UTC),
+            spawned_by=parent_name,
         )
 
     out = list_containers(cfg, incus, with_background=True)
-    assert len(out) == 1
-    assert out[0].name == f"{cfg.container_prefix}-feat-pre"
-    assert out[0].state == "—"
-    assert out[0].job_phase == "starting"
+    assert [c.name for c in out] == [parent_name, f"{cfg.container_prefix}-feat-pre"]
+    placeholder = out[1]
+    assert placeholder.state == "—"
+    assert placeholder.job_phase == "starting"
+    assert placeholder.child is not None
+    from jailbee.dashboard.fork_tree import FORK_GLYPH, fork_layout, name_prefix
+
+    assert name_prefix(fork_layout(out), placeholder.name) == FORK_GLYPH
+    incus.list_containers.return_value.append(
+        {
+            "name": placeholder.name,
+            "status": "Running",
+            "profiles": ["default", f"{cfg.container_prefix}-base"],
+            "config": {"user.jailbee.spawned_by": parent_name},
+            "state": None,
+            "created_at": "2026-11-24T12:00:00Z",
+        }
+    )
+    appeared = list_containers(cfg, incus, with_background=True)
+    child = next(c for c in appeared if c.name == placeholder.name)
+    assert child.child is not None
+    assert child.created_at == datetime(2026, 11, 24, 12, 0, tzinfo=UTC)
+    assert name_prefix(fork_layout(appeared), child.name) == FORK_GLYPH
+
+    with Session(get_engine()) as s:
+        s.delete(s.get(background.BackgroundJob, placeholder.name))
+        s.commit()
+
+    without_job = list_containers(cfg, incus, with_background=True)
+    child_without_job = next(c for c in without_job if c.name == placeholder.name)
+    assert child_without_job.created_at == child.created_at
 
 
 def test_list_containers_attaches_job_error_to_existing(make_cfg, tmp_path, monkeypatch):

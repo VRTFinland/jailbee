@@ -1026,33 +1026,34 @@ def test_outbox_delete_confirm_no_runs_nothing(mocker, tmp_path):
     assert quiet.call_count == 1  # only the listing
 
 
-def test_outbox_publish_shows_the_plan_and_publishes_in_the_background(mocker, tmp_path):
+def test_outbox_publish_defers_plan_and_questions_to_the_channel_child(mocker, tmp_path):
     group = cfg_group(tmp_path, (ci("alpha-x", "alpha"),))
     _fake_outbox_ls(mocker)
     child = mocker.patch.object(
         tsession.subprocess,
         "run",
-        side_effect=[
-            mocker.Mock(returncode=0, stdout=_PLAN_JSON, stderr=""),
-            mocker.Mock(returncode=0, stdout="Published 1 action\n", stderr=""),
-        ],
+        return_value=mocker.Mock(returncode=0, stdout="Published 1 action\n", stderr=""),
     )
     wait = patch_pause(mocker)
 
-    steps = [*container_menu_keys(group, "outbox browse"), "p", "k", "enter"]  # "Publish"
-    run = drive(mocker, steps, [group])
+    run = drive(mocker, [*container_menu_keys(group, "outbox browse"), "p"], [group])
     assert run.rc == 0
-
-    asked = [b.question for b in _boxes(run) if b.question is not None]
-    assert asked and asked[0].purpose == "publish"
-    assert [v for _, v in asked[0].choices] == ["publish", "cancel"]
+    # The CLI owns the plan and consent; the prompt-channel pilot covers its modal.
+    assert not [b.question for b in _boxes(run) if b.question is not None]
     flags = ["--config", str(group.config_path)]
-    assert [c.args[0] for c in child.call_args_list] == [
-        ["jailbee", *tsession.dob.outbox_plan_argv("alpha-x", "pr/a.json", "r1"), *flags],
-        ["jailbee", "outbox", "apply", "alpha-x", "pr/a.json", "--revision", "r1", "-y", *flags],
+    child.assert_called_once()
+    assert child.call_args.args[0] == [
+        "jailbee",
+        "outbox",
+        "apply",
+        "alpha-x",
+        "pr/a.json",
+        "--revision",
+        "r1",
+        *flags,
     ]
-    assert "Published 1 action" in _boxes(run)[-1].status
-    wait.assert_not_called()  # the terminal was never handed over
+    assert any("output of jailbee outbox apply" in line for line in _boxes(run)[-1].status)
+    wait.assert_not_called()
 
 
 def test_outbox_publish_runs_pr_push_in_the_box(mocker, tmp_path):
@@ -1068,15 +1069,17 @@ def test_outbox_publish_runs_pr_push_in_the_box(mocker, tmp_path):
     )
     _fake_outbox_ls(mocker, tsession.da.CliResult(True, "done", payload))
     child = mocker.patch.object(tsession.subprocess, "run", return_value=mocker.Mock(returncode=0))
-    patch_pause(mocker)
+    wait = patch_pause(mocker)
 
     assert drive(mocker, [*container_menu_keys(group, "outbox browse"), "p"], [group]).rc == 0
 
-    # Handed off with a diagnostic file, so a failure's reason survives the refresh.
+    # The action runner captures output directly; no terminal diagnostic file is needed.
     child.assert_called_once()
     args, kwargs = child.call_args
     assert args == (["jailbee", "pr", "push", "alpha-x", "--config", str(group.config_path)],)
-    assert kwargs["cwd"] == tmp_path and "JAILBEE_DIAGNOSTIC_TEXT_FILE" in kwargs["env"]
+    assert kwargs["cwd"] == tmp_path
+    assert "env" not in kwargs
+    wait.assert_not_called()
 
 
 @pytest.mark.parametrize(

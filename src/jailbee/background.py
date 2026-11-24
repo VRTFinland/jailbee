@@ -182,6 +182,7 @@ def start_job(
     log_path: str,
     now: datetime,
     op_kind: str = JOB_CREATE,
+    spawned_by: str | None = None,
 ) -> None:
     """Insert (or replace) the tracking row for a freshly-spawned worker."""
     row = session.get(BackgroundJob, container_name)
@@ -195,6 +196,7 @@ def start_job(
             log_path=log_path,
             error_msg=None,
             op_kind=op_kind,
+            spawned_by=spawned_by,
             started_at=now,
             updated_at=now,
         )
@@ -206,6 +208,7 @@ def start_job(
         row.log_path = log_path
         row.error_msg = None
         row.op_kind = op_kind
+        row.spawned_by = spawned_by
         row.started_at = now
         row.updated_at = now
     session.add(row)

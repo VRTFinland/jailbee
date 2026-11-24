@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from rich.markup import escape
+from rich.style import Style
 from rich.text import Text
 
 from jailbee import agent_status, table_format
@@ -971,6 +972,8 @@ def list_containers(
                     job_pid=row.pid,
                     job_kind=row.op_kind,
                     job_error=row.error_msg,
+                    child=view.parse_child_view(row.spawned_by, None, None),
+                    created_at=row.started_at if row.spawned_by is not None else None,
                 )
             )
 
@@ -3825,6 +3828,28 @@ _AGENT_GLYPHS: dict[str, tuple[str, str | None]] = {
 """The `agent_compact` mark and Rich style per known state."""
 _AGENT_ERROR_GLYPH: tuple[str, str] = ("✖", "red")
 """The mark of any `error:<kind>` state, followed by the kind."""
+
+
+def agent_compact_is_active(
+    statuses: Sequence[AgentSummary], now: datetime, *, recent_idle: timedelta
+) -> bool:
+    """Whether any dashboard agent mark is coloured rather than dim/unclassified."""
+    cell = Text.from_markup(
+        agent_compact_cell(
+            statuses,
+            now,
+            recent_idle=recent_idle,
+            activity_age=True,
+            max_cells=AGENT_COMPACT_MAX_CELLS,
+        )
+    )
+    # Inspect the final cell so abbreviation and per-state age suppression cannot
+    # leave Active disagreeing with the dashboard's visible marks.
+    return any(
+        style.color is not None and not style.dim
+        for span in cell.spans
+        for style in [Style.parse(span.style) if isinstance(span.style, str) else span.style]
+    )
 
 
 def agent_compact_cell(

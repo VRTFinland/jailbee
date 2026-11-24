@@ -1436,7 +1436,7 @@ preview in the list's place, and Esc, Enter or `v` goes back to the list.
   made during deletion follow uniquely matching remaining children across index
   shifts; ambiguous marks are cleared. If that refresh fails, its marks are
   cleared and another delete requires a successful listing first.
-- **Publish** reads the plan (`outbox apply --dry-run -o json`) and shows it
+- **Publish** in the standalone manager reads the plan (`outbox apply --dry-run -o json`) and shows it
   in the preview with **Publish**, **Publish as draft review** (when the
   proposal has a pending review) and **Cancel**; the publish then runs in the
   background, pinned to the listed revision, and its outcome lines appear in
@@ -1450,12 +1450,19 @@ preview in the list's place, and Esc, Enter or `v` goes back to the list.
   `p` says to mark the proposal row.
 - **Publishing a PR creation** — a description awaiting its PR, or a pinned
   source awaiting its push — re-reads the listing and, if the proposal is
-  unchanged, hands the terminal to `jb pr push`, `jb submodule pr push` or
+  unchanged, runs `jb pr push`, `jb submodule pr push` or
   `jb pr push --source-manifest` for the resolved scope, with that command's
-  own checks and questions (AI consent, branch name, …). Marked together with
+  own checks and questions (AI consent, branch name, …). The standalone manager
+  hands over its terminal; the dashboard runs the same CLI through its shared
+  action runner, with questions as modals and streamed output in its notification
+  queue. A single dashboard publication asks under the CLI's authoritative plan;
+  marked proposals keep their grouped preview and confirmation. Successful queue
+  entries retain the GitHub URLs; failures retain the reason. PR-number and branch
+  text input use prompt-channel modals; no description editor is launched.
+  Marked together with
   manifests, the one question lists each PR creation as "pushes the branch of
   …, opens/updates its PR" with the command it runs; the manifests publish
-  first, then the PR creations one hand-off at a time, and the first that
+  first, then the PR creations one at a time, and the first that
   fails or is cancelled stops the rest — the status names what was not run,
   and those stay marked.
 - **Clear** reads the outbox's clear plan and asks once, as Clear outbox…
@@ -1475,9 +1482,9 @@ box closed"). In the standalone `jailbee outbox`, Esc, `q` and Ctrl-C are
 refused while a mutation runs ("busy: … — wait for it to finish"); quit once it
 has finished. In the
 dashboard over remote SSH a key works, and appears in the hint line, only
-when the session's policy permits its command; `outbox apply -y` is refused there, so `p` hands the
-terminal to the interactive `outbox apply … --revision`, which asks under
-its plan. The local Qt dashboard instead opens a native non-modal tree with
+when the session's policy permits its command; `outbox apply -y` is refused there, so `p` runs
+the interactive `outbox apply … --revision` through the prompt channel, asking
+under its plan without releasing the dashboard terminal. The local Qt dashboard instead opens a native non-modal tree with
 plain, read-only proposal text, Refresh and Delete selected. Qt publication
 opens a host terminal running the exact selected `outbox apply` with its
 revision; that terminal owns the authoritative approval. Launching it is

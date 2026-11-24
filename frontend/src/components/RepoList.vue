@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import {computed} from "vue"
-import type {FrontPageView} from "../protocol"
+import type {ContainerFilter, FrontPageView} from "../protocol"
+import {settings, updateSettings} from "../settings"
 
 const props = withDefaults(defineProps<{
     view: FrontPageView
@@ -10,6 +11,24 @@ const props = withDefaults(defineProps<{
 const listed = computed(() => new Set(props.listedContainers ?? props.view.repos.flatMap(
     repo => repo.containers.map(row => row.name),
 )))
+
+const filterButtons: {mode: ContainerFilter, label: string, path: string}[] = [
+    {mode: "all", label: "All", path: "M3 4h14M3 10h14M3 16h14"},
+    {mode: "running", label: "Running", path: "m6 3 10 7-10 7Z"},
+    {mode: "active", label: "Active", path: "M1 10h4l3-7 4 14 3-7h4"},
+]
+const selection = computed(() => settings.containerFilter === "all" ? null
+    : props.view.filters?.[settings.containerFilter] ?? {visible: [], context: []})
+const context = computed(() => new Set(selection.value?.context ?? []))
+const repos = computed(() => {
+    if (!selection.value) return props.view.repos
+    const visible = new Set(selection.value.visible)
+    return props.view.repos.map(repo => ({...repo,
+        containers: repo.containers.filter(row => visible.has(row.name)),
+    })).filter(repo => repo.containers.length > 0)
+})
+const hidden = computed(() => props.view.repos.reduce((n, r) => n + r.containers.length, 0)
+    - repos.value.reduce((n, r) => n + r.containers.length, 0))
 
 const AGENT_LABELS: Record<string, string> = {
     waiting: "waiting for you",
@@ -34,8 +53,19 @@ function agentLabel(state: string): string {
 </script>
 
 <template>
-    <p v-if="view.repos.length === 0" class="muted">No repositories.</p>
-    <section v-for="repo in view.repos" :key="repo.prefix" class="repo" :data-repo="repo.prefix">
+    <div class="filter-bar">
+        <div class="filters" role="group" aria-label="Container filter">
+            <button v-for="filter in filterButtons" :key="filter.mode" type="button"
+                :aria-label="filter.label" :title="filter.label"
+                :aria-pressed="settings.containerFilter === filter.mode"
+                @click="updateSettings({containerFilter: filter.mode})">
+                <svg viewBox="0 0 20 20" aria-hidden="true"><path :d="filter.path" /></svg>
+            </button>
+        </div>
+        <span v-if="settings.containerFilter !== 'all'" class="muted" role="status">{{ hidden }} hidden by filter</span>
+    </div>
+    <p v-if="repos.length === 0" class="muted">{{ settings.containerFilter === 'all' ? 'No repositories.' : 'No matching containers.' }}</p>
+    <section v-for="repo in repos" :key="repo.prefix" class="repo" :data-repo="repo.prefix">
         <h2 v-if="showHeadings" class="repo-heading">
             <router-link :to="{name: 'repo', params: {prefix: repo.prefix}}">{{
                 repo.prefix
@@ -47,7 +77,7 @@ function agentLabel(state: string): string {
                 v-for="c in repo.containers"
                 :key="c.name"
                 class="row"
-                :class="{nested: c.depth > 0}"
+                :class="{nested: c.depth > 0, 'filter-context': context.has(c.name)}"
                 :data-container="c.name"
                 :data-agent="c.agent ? agentFamily(c.agent) : undefined"
                 :data-state="c.state"
@@ -86,6 +116,41 @@ function agentLabel(state: string): string {
 </template>
 
 <style scoped>
+.filter-bar, .filters {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+}
+.filter-bar {
+    margin-top: var(--space-3);
+}
+.filters button {
+    display: grid;
+    place-items: center;
+    min-width: 2.75rem;
+    min-height: 2.75rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    background: var(--surface);
+}
+.filters button[aria-pressed="true"] {
+    outline: 2px solid var(--accent);
+    outline-offset: -3px;
+    background: var(--notice-bg);
+}
+.filters svg {
+    width: 1.1rem;
+    height: 1.1rem;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linejoin: round;
+}
+.row.filter-context[data-container] {
+    opacity: 0.5;
+}
 .repo {
     margin: var(--space-4) 0;
 }

@@ -77,6 +77,14 @@ class ContainerSessionListView(BaseModel):
     sessions: list[ContainerSessionView]
 
 
+class ContainerSessionHistoryView(ContainerSessionListView):
+    """One bounded page of earlier sessions, with the matching count."""
+
+    total: int
+    limit: int
+    offset: int
+
+
 def find_container(
     snapshot: Snapshot | None, name: str, scope: RemoteRepoScope
 ) -> tuple[RepoGroup, ContainerInfo] | None:
@@ -187,7 +195,10 @@ def session_history(
     scope: RemoteRepoScope,
     engine: Engine,
     repo_sessions: RepoSessions,
-) -> ContainerSessionListView | None:
+    limit: int = 20,
+    offset: int = 0,
+    query: str = "",
+) -> ContainerSessionHistoryView | None:
     """The sessions the container ran before and is not running now, recorded
     and backfilled, newest activity first; None as `live_sessions`."""
     found = find_container(snapshot, name, scope)
@@ -205,8 +216,22 @@ def session_history(
             keys.setdefault((row.agent, row.session_id), None)
     history = [key for key in keys if key not in live]
     views = _views(repo_sessions, group.prefix, history, live=False)
-    views.sort(key=_newest_first)
-    return ContainerSessionListView(container=c.name, repo=group.prefix, sessions=views)
+    needle = query.strip().casefold()
+    if needle:
+        views = [
+            view
+            for view in views
+            if needle in view.title.casefold() or needle in view.session_id.casefold()
+        ]
+    views.sort(key=lambda view: (_newest_first(view), view.agent, view.session_id))
+    return ContainerSessionHistoryView(
+        container=c.name,
+        repo=group.prefix,
+        sessions=views[offset : offset + limit],
+        total=len(views),
+        limit=limit,
+        offset=offset,
+    )
 
 
 def session_containers(

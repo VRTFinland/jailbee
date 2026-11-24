@@ -799,7 +799,10 @@ def test_closing_the_box_during_pr_preflight_runs_no_terminal_hand_off(mocker, t
     app, group, entered, release, _calls, gate = _blocking_outbox_app(
         mocker, tmp_path, [_listing(_container(awaiting))], "ls"
     )
-    handed = mocker.patch.object(app.session, "run_dashboard_command", return_value=0)
+    handed = mocker.patch.object(
+        app.session, "run_dashboard_command", side_effect=AssertionError("terminal hand-off")
+    )
+    published = mocker.patch.object(app, "run_actions")
 
     async def scenario():
         async with app.run_test(size=(120, 35)) as pilot:
@@ -823,9 +826,10 @@ def test_closing_the_box_during_pr_preflight_runs_no_terminal_hand_off(mocker, t
 
     asyncio.run(scenario())
     handed.assert_not_called()
+    published.assert_not_called()
 
 
-def test_pr_preflight_with_the_box_open_runs_the_terminal_hand_off_once(mocker, tmp_path):
+def test_pr_preflight_with_the_box_open_runs_the_action_runner_once(mocker, tmp_path):
     import asyncio
 
     from tests.dashboard_pilot import container_menu_keys
@@ -835,7 +839,10 @@ def test_pr_preflight_with_the_box_open_runs_the_terminal_hand_off_once(mocker, 
     app, group, entered, release, _calls, gate = _blocking_outbox_app(
         mocker, tmp_path, [_listing(_container(awaiting))], "ls"
     )
-    handed = mocker.patch.object(app.session, "run_dashboard_command", return_value=0)
+    handed = mocker.patch.object(
+        app.session, "run_dashboard_command", side_effect=AssertionError("terminal hand-off")
+    )
+    published = mocker.patch.object(app, "run_actions")
 
     async def scenario():
         async with app.run_test(size=(120, 35)) as pilot:
@@ -849,13 +856,21 @@ def test_pr_preflight_with_the_box_open_runs_the_terminal_hand_off_once(mocker, 
                 await pilot.press("p")
                 assert await asyncio.to_thread(entered.wait, 2), "the preflight never started"
                 release.set()
+                async with asyncio.timeout(5):
+                    while not published.called:
+                        app.session.jobs.poll()
+                        await pilot.pause(0.001)
+                from jailbee.dashboard.runner import ActionOutcome, RunResult
+
+                published.call_args.args[1](ActionOutcome([RunResult(status=0)], "PR URL"))
                 await _settle_outbox(app, pilot, controller)
                 assert app.session.notice != "pr push not run: outbox box closed"
             finally:
                 release.set()
 
     asyncio.run(scenario())
-    handed.assert_called_once()
+    handed.assert_not_called()
+    published.assert_called_once()
 
 
 def test_reopen_after_a_background_delete_shows_no_stale_marks(mocker, tmp_path):

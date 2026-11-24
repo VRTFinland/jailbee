@@ -1,5 +1,6 @@
 import {mount} from "@vue/test-utils"
-import {describe, expect, it} from "vitest"
+import {beforeEach, describe, expect, it} from "vitest"
+import {reloadSettings} from "../settings"
 import {createMemoryHistory} from "vue-router"
 import {createAppRouter} from "../router"
 import type {FrontPageView} from "../protocol"
@@ -31,6 +32,33 @@ function mountList() {
 }
 
 describe("RepoList", () => {
+    beforeEach(() => reloadSettings())
+
+    it("switches persisted filters, dims context, hides empty repos and follows live membership", async () => {
+        const wrapper = mountList()
+        const parent = {...view.repos[0].containers[0], agent: null, state: "Stopped"}
+        const child = {...view.repos[0].containers[1], depth: 1, state: "Running", agent: "busy"}
+        const filteredView = {...view, repos: [{prefix: "alpha", containers: [parent, child]}, view.repos[1]],
+            filters: {running: {visible: [child.name, parent.name], context: [parent.name]},
+                active: {visible: [child.name, parent.name], context: [parent.name]}}}
+        await wrapper.setProps({view: filteredView})
+        await wrapper.get('button[aria-label="Active"]').trigger("click")
+        expect(wrapper.get('button[aria-label="Active"]').attributes("aria-pressed")).toBe("true")
+        expect(wrapper.findAll("section.repo")).toHaveLength(1)
+        expect(wrapper.findAll("li.row")[0].classes()).toContain("filter-context")
+        expect(wrapper.findAll("li.row")[1].classes()).toContain("nested")
+        expect(localStorage.getItem("jailbee.containerFilter")).toBe("active")
+        await wrapper.setProps({view: {...filteredView, filters: {...filteredView.filters,
+            active: {visible: [], context: []}}}})
+        expect(wrapper.findAll("li.row")).toHaveLength(0)
+        expect(wrapper.text()).toContain("2 hidden by filter")
+        await wrapper.get('button[aria-label="Running"]').trigger("click")
+        expect(wrapper.findAll("li.row")).toHaveLength(2)
+        await wrapper.get('button[aria-label="All"]').trigger("click")
+        expect(wrapper.findAll("section.repo")).toHaveLength(2)
+        expect(wrapper.find(".filter-context").exists()).toBe(false)
+    })
+
     it("visibly nests children and shows orchestration facts without colour", async () => {
         const wrapper = mountList()
         const parent = {...view.repos[0].containers[0], orchestrator: true, child_count: 2}

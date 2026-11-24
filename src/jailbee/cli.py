@@ -9090,11 +9090,13 @@ def pr_push_cmd(
                 as_name is not None,
                 pr_number is not None,
                 stacked,
+                branch is not None,
+                no_outbox,
             )
         ):
             error(
                 "--source-manifest cannot be combined with --title, --body, --base, "
-                "--as, --pr or --stacked."
+                "--as, --pr, --stacked, --branch or --no-outbox."
             )
             raise typer.Exit(2)
     else:
