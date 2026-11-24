@@ -50,7 +50,7 @@ from jailbee.dashboard.tui.frame import (
     update_line,
 )
 from jailbee.dashboard.tui.layout import FRAME_INSET_COLS, FrameLayout, frame_layout
-from jailbee.dashboard.tui.menu_state import MenuState, RepoMenuState
+from jailbee.dashboard.tui.menu_state import GlobalMenuState, MenuState, RepoMenuState
 from jailbee.dashboard.tui.native import OverlayBox, PickerBox, build_box
 from jailbee.dashboard.tui.overlay import NativeState, Overlay, overlay_key
 
@@ -703,7 +703,7 @@ class DashboardFrame(Vertical):
             self.behind_dialog = floating
             for widget in self.walk_children(with_self=True):
                 widget.refresh()
-        menu = isinstance(overlay, (MenuState, RepoMenuState))
+        menu = isinstance(overlay, (MenuState, RepoMenuState, GlobalMenuState))
         details = (
             details_for(
                 view.groups,

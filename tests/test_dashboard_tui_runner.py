@@ -159,6 +159,38 @@ def test_outbox_publish_uses_runner_modal_and_keeps_queue_result(mocker, tmp_pat
     assert "--source-manifest" in argv if kind == "source" else "apply" in argv
 
 
+@pytest.mark.parametrize(("index", "argv"), [(0, ["stop", "--all"]), (1, ["resume"])])
+def test_global_lifecycle_runs_without_a_repo_and_uses_prompt_channel(mocker, index, argv):
+    from tests.dashboard_pilot import Pick, _apply
+
+    app = make_app(mocker, [])
+    app.threaded_actions = True
+    app.action_runner = drunner.run_action
+    spawn = Spawns([_prompt(question="Proceed on the host?", default=False)])
+    app.action_spawn = spawn
+    hand_off = mocker.patch.object(app, "hand_off", side_effect=AssertionError("terminal hand-off"))
+
+    async def main():
+        async with app.run_test() as pilot:
+            await pilot.press("g")
+            await pilot.pause()
+            await _apply(pilot, app, Pick(index))
+            await _until(pilot, lambda: isinstance(app.screen, pm.ConfirmModal), "host confirmation")
+            assert app.screen.prompt.question == "Proceed on the host?"
+            await pilot.press("y")
+            await _until(pilot, lambda: _finished(app), "host lifecycle result")
+            (entry,) = app.session.queue
+            assert entry.target == "Host"
+            assert entry.command == "jailbee " + " ".join(argv)
+            assert entry.state == "done" and "alku" in entry.output
+
+    asyncio.run(asyncio.wait_for(main(), _RUN_SECONDS))
+    hand_off.assert_not_called()
+    assert spawn.child.answers[0].value is True
+    assert spawn.calls[0]["argv"][-len(argv):] == argv
+    assert spawn.calls[0]["cwd"] == Path.home()
+
+
 def test_single_choice_answer_reaches_the_child(mocker, tmp_path):
     options = (WireOption("0", "a", "a", ""), WireOption("1", "b", "b", ""))
     spawn = Spawns([_prompt(kind="choose_one", question="which", options=options)])

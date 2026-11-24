@@ -29,7 +29,7 @@ from jailbee.dashboard.settings import SettingsState
 from jailbee.dashboard.sorting import DEFAULT_SORT, SortSpec
 from jailbee.dashboard.system import SystemStatus
 from jailbee.dashboard.tui.keys import KEY_BINDINGS
-from jailbee.dashboard.tui.menu_state import MenuState, RepoMenuState
+from jailbee.dashboard.tui.menu_state import GlobalMenuState, MenuState, RepoMenuState
 from jailbee.dashboard.tui.overlay import CommandState, Overlay
 from jailbee.update_check import UpdateNotice
 
@@ -51,10 +51,14 @@ def frame_title(
     folded_note = f" · {n_folded} folded" if n_folded else ""
     folded_note += f" · {marked} selected" if marked else ""
     git_note = "" if git_enabled else "  ·  [dim](no-git)[/dim]"
-    return Text.from_markup(
-        f"[bold]🐝 jailbee dashboard[/]  ·  [dim]h/? help[/]"
+    title = Text()
+    title.append("☰", style=Style(bold=True) + dhit.hit_style("global-menu"))
+    title.append(" ")
+    title.append_text(Text.from_markup(
+        f"[bold]🐝 jailbee dashboard[/] · [dim]h/? help[/]"
         f"  ·  {n_repos} repos · {n_ctr} containers{folded_note}{git_note}  ·  {now:%H:%M:%S}"
-    )
+    ))
+    return title
 
 
 def notice_parts(notice: str | None, *, wraps: bool = True) -> tuple[Text | None, Text | None]:
@@ -115,7 +119,7 @@ def queue_badge(counts: QueueCounts, *, accent: str, frame: int = 0) -> Text:
 
 _MENU_LETTERS_NOTE = (
     "A container's or repo's actions are its menu's letters, and they work here "
-    "without Enter (g Git, l Lifecycle, …); Enter shows the whole list. A letter "
+    "without Enter (l Lifecycle, …); Enter shows the whole list. g/F10 or ☰ opens Global; Enter then g opens Git (repo: Agent). A letter "
     "does nothing when its entry is not offered for the highlighted row: a stopped "
     "container has no tmux or shell, and orphan rows are view-only."
 )
@@ -164,6 +168,8 @@ def help_lines() -> list[str]:
         "Egress panel: a adds, r removes a scoped override; Esc backs to its menu.",
         "Accounts panel: Enter acts on a login or group, n creates a group.",
         "Repo menu: Apply config…, Diagnostics →, Prune stale containers…",
+        "Global menu (g/F10 or ☰): Stop all…, Resume…, Accounts, Notifications,",
+        "  Global config, Settings, Help, Quit. Stop all/Resume use CLI prompt modals.",
         "Container menu: Snapshots…, Mounts…, autostart status/cancel.",
         "Mouse: click selects; Ctrl-click marks; double- or right-click opens the menu;",
         "▾/▸ folds, ‹ › step columns; the wheel scrolls, Shift+wheel steps columns;",  # noqa: RUF001 - the arrows the frame draws
@@ -178,6 +184,11 @@ _MENU_PICK_HINT = "[bold]\\[key][/bold] pick"
 
 def _hint_line(overlay: Overlay | None) -> str:
     """Contextual controls shown only while an overlay is open."""
+    if isinstance(overlay, GlobalMenuState):
+        return (
+            f"[bold]↑/↓[/bold] move  ·  {_MENU_PICK_HINT}  ·  [bold]Enter[/bold] run  ·  "
+            "[bold]Esc[/bold] close  ·  [bold]q[/bold] quit"
+        )
     if isinstance(overlay, (MenuState, RepoMenuState)):
         return (
             f"[bold]↑/↓[/bold] move  ·  {_MENU_PICK_HINT}  ·  [bold]Enter[/bold] open/run  ·  "

@@ -41,7 +41,7 @@ def _long(tmp_path, n=40):
 
 def test_title_table_and_bottom_border(tmp_path):
     lines = paint(view_of([_long(tmp_path, 3)]))
-    assert lines[0].startswith("╭─ 🐝 jailbee dashboard")
+    assert lines[0].startswith("╭─ ☰ 🐝 jailbee dashboard")
     assert "NAME" in lines[1] and "▾ alpha" in lines[2]
     assert lines[-1].startswith("╰")
     assert len(lines) == 25

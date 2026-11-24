@@ -16,6 +16,7 @@ from jailbee.dashboard.commands import (
     Transport,
     check_dashboard_command,
     dashboard_action_argv,
+    permitted,
     remote_unlocks,
 )
 from jailbee.dashboard.model import AppMenuEntry, RepoGroup, RepoTarget, Row, _find_group
@@ -89,6 +90,39 @@ class MenuGroup:
 
 
 MenuItem = tuple[str, str] | MenuGroup
+
+
+def global_action_argv(verb: str) -> list[str] | None:
+    """The CLI command behind a host-wide action; UI-only entries have none."""
+    commands = {
+        "global-stop-all": ["stop", "--all"],
+        "global-resume": ["resume"],
+        "global-accounts": ["account", "ls"],
+        "global-config-edit-global": ["config", "edit", "--global"],
+    }
+    return commands.get(verb)
+
+
+def global_menu_actions(
+    policy: RemotePolicy | None = None, *, transport: Transport = "none"
+) -> list[tuple[str, str]]:
+    """Host-wide menu leaves shared by frontends, filtered by the actual command policy."""
+    items = [
+        ("Stop all…", "global-stop-all"),
+        ("Resume…", "global-resume"),
+        ("Accounts", "global-accounts"),
+        ("Notifications", "global-queue"),
+        ("Global config", "global-config-edit-global"),
+        ("Settings", "global-settings"),
+        ("Help", "global-help"),
+        ("Quit", "global-quit"),
+    ]
+    return [
+        item
+        for item in items
+        if (argv := global_action_argv(item[1])) is None
+        or permitted(argv, policy, transport=transport)
+    ]
 
 _PR_MENU_VERBS = frozenset(
     {

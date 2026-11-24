@@ -1198,11 +1198,17 @@ same command `apps run` documents above, with the container passed as its
 `--container` option rather than a positional — regardless of whether the
 entry set `top_level: true`, so it launches correctly either way.
 
-A row's actions are its menu's letters, and they work in the table without
-Enter: with a container highlighted, `g` opens `Git →`, `l` `Lifecycle →`, `t`
+A row's actions are its menu's letters; most work in the table without
+Enter. `g` / F10 / the title's left-edge ☰ opens Global: Stop all…, Resume…,
+Accounts (`A`), Notifications (`Q`), Global config (`E`), Settings (F2), Help, Quit.
+Stop all and Resume run `jailbee stop --all` / `jailbee resume` through the
+action runner, with CLI questions as modals and results in Notifications; no
+selected repo is needed. Remote policy hides disallowed commands. Escape or
+an outside click closes it. `Enter`, then `g` still opens `Git →` (repo: Agent).
+With a container highlighted, `l` opens `Lifecycle →`, `t`
 attaches tmux, `s` opens a shell (or starts a stopped container), `p` opens
 `PR →`, `a` `Launch →`, `w` `Network →`, `f` forks, `R` renames, and so on; the
-menu's own letters then carry on inside the level (`g` `u` updates from base,
+menu's own letters then carry on inside the level (`Enter` `g` `u` updates from base,
 `l` `D` destroys, `a` `i` launches the IDE). Enter opens the same menu to show
 the letters. A letter fires only when its entry is offered for that container
 — the gate is the menu itself, so a Stopped container has no `t`, `a i`/`a c`

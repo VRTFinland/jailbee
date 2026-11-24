@@ -55,6 +55,8 @@ from jailbee.dashboard.settings import Tab as SettingsTab
 from jailbee.dashboard.tui.frame import help_lines
 from jailbee.dashboard.tui.layout import BOX_INSET_COLS, FRAME_INSET_COLS
 from jailbee.dashboard.tui.menu_state import (
+    ActionMenuState,
+    GlobalMenuState,
     MenuState,
     RepoMenuState,
     menu_entries,
@@ -920,7 +922,7 @@ class MenuBox(OverlayBox):
             self.index = index
 
     def __init__(
-        self, spec: MenuState | RepoMenuState, *, mouse_enabled: Callable[[], bool]
+        self, spec: ActionMenuState, *, mouse_enabled: Callable[[], bool]
     ) -> None:
         super().__init__(spec, mouse_enabled=mouse_enabled)
         self.menu = spec
@@ -951,7 +953,7 @@ class MenuBox(OverlayBox):
         """New entries for the same menu: the cursor stays on its entry when it is still there."""
         old_entries = self._entries() if self.is_mounted else ()
         super().show(spec)
-        assert isinstance(spec, (MenuState, RepoMenuState))
+        assert isinstance(spec, (MenuState, RepoMenuState, GlobalMenuState))
         previous, self.menu = self.menu, spec
         if not self.is_mounted:
             return
@@ -1027,6 +1029,9 @@ class MenuBox(OverlayBox):
         if event.key == "enter":
             return self._choose(lst.highlighted) or True
         keys = menu_hotkeys(self._entries())
+        if isinstance(self.menu, GlobalMenuState) and event.key in ("f2", "S", "question_mark"):
+            shortcut = {"f2": "F2", "S": "F2", "question_mark": "h"}[event.key]
+            return self._choose(keys.index(shortcut)) or True
         if event.character is not None and event.character in keys:
             # An entry's own key is Enter on that entry.
             index = keys.index(event.character)
@@ -1485,7 +1490,7 @@ def build_box(
         return HelpBox(spec, mouse_enabled=mouse_enabled)
     if isinstance(spec, Picker):
         return PickerBox(spec, mouse_enabled=mouse_enabled)
-    if isinstance(spec, (MenuState, RepoMenuState)):
+    if isinstance(spec, (MenuState, RepoMenuState, GlobalMenuState)):
         return MenuBox(spec, mouse_enabled=mouse_enabled)
     if isinstance(spec, SettingsState):
         return SettingsBox(spec, mouse_enabled=mouse_enabled)

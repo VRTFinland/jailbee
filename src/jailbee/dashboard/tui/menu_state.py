@@ -65,6 +65,19 @@ class RepoMenuState:
     direct: bool = False  # as in MenuState
 
 
+@dataclass
+class GlobalMenuState:
+    """Host-wide actions, independent of the selected repo or container."""
+
+    actions: list[MenuItem]
+    start_group: str | None = None
+    start_index: int = 0
+    direct: bool = False
+
+
+ActionMenuState = MenuState | RepoMenuState | GlobalMenuState
+
+
 def open_menu(
     groups: list[RepoGroup],
     name: str | None,
@@ -211,11 +224,11 @@ def open_repo_menu(
     return RepoMenuState(prefix, actions)
 
 
-def menu_entries(menu: MenuState | RepoMenuState, group: str | None = None) -> Sequence[MenuItem]:
+def menu_entries(menu: ActionMenuState, group: str | None = None) -> Sequence[MenuItem]:
     """Visible entries of the root (``group`` None) or of one group, from captured leaves."""
     items = (
         menu.actions
-        if isinstance(menu, RepoMenuState)
+        if isinstance(menu, (RepoMenuState, GlobalMenuState))
         else group_menu_actions(menu.actions, include_network=True, terminal_order=True)
     )
     if group is None:
@@ -226,8 +239,10 @@ def menu_entries(menu: MenuState | RepoMenuState, group: str | None = None) -> S
     )
 
 
-def menu_title(menu: MenuState | RepoMenuState, group: str | None) -> str:
+def menu_title(menu: ActionMenuState, group: str | None) -> str:
     """The border title of one level: ``owner →`` at the root, ``owner → Group`` inside."""
+    if isinstance(menu, GlobalMenuState):
+        return "Global"
     owner = menu.repo if isinstance(menu, RepoMenuState) else menu.container
     return f"{owner} → {group.removesuffix(' →')}" if group else f"{owner} →"
 
@@ -241,7 +256,7 @@ def menu_option_text(item: MenuItem, key: str | None) -> Text:
     return text
 
 
-def menu_width(menu: MenuState | RepoMenuState) -> int:
+def menu_width(menu: ActionMenuState) -> int:
     """Content cells the widest level needs (and the title in the border), chrome excluded."""
     levels: list[str | None] = [
         None,
@@ -371,6 +386,18 @@ def menu_hotkeys(entries: Sequence[MenuItem]) -> list[str | None]:
     take the first free letter of their label, then a digit; None once those
     run out. Keys the open menu already handles are never assigned.
     """
+    global_keys = {
+        "global-stop-all": "s",
+        "global-resume": "r",
+        "global-accounts": "A",
+        "global-queue": "Q",
+        "global-config-edit-global": "E",
+        "global-settings": "F2",
+        "global-help": "h",
+        "global-quit": "q",
+    }
+    if entries and all(isinstance(i, tuple) and i[1] in global_keys for i in entries):
+        return [global_keys[i[1]] if isinstance(i, tuple) else None for i in entries]
     taken = set(_MENU_RESERVED_KEYS)
     keys: list[str | None] = [None] * len(entries)
     for i, item in enumerate(entries):
