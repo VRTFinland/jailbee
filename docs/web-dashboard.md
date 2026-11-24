@@ -443,8 +443,8 @@ frequent choices, including display profile and the login session's name.
 Both surfaces edit one live settings store; display choices need no Save and are
 stored in per-device localStorage (in memory when storage is blocked). Existing
 container filter preferences are preserved. Escape, the icon, or a click outside
-the popover closes it and returns focus to the icon. Escape on the Agent context
-select is left to the native control; move focus elsewhere to dismiss the menu.
+the popover closes it and returns focus to the icon. Escape on a closed Agent
+context select also dismisses the menu; an open native select handles Escape first.
 Navigation closes the menu without returning focus to the icon. Tab stays inside the open
 popover. Short screens split the menu into whole-row pages with up/down buttons
 and PageUp/PageDown; e-ink also supports **n** (previous) and **m** (next). There is

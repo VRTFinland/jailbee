@@ -246,6 +246,31 @@ def test_quick_settings_icon_does_not_overlap_public_page_content(
     assert not overlaps
 
 
+def test_escape_after_font_stepper_disables_closes_menu(logged_in: Page) -> None:
+    page = logged_in
+    open_quick_settings(page)
+    panel = page.get_by_role("dialog", name="Quick settings")
+    increase = panel.get_by_role("button", name="Increase body font size")
+    while increase.is_enabled():
+        increase.click()
+    # Browsers may leave focus on a disabled element or move it to the body.
+    page.locator("body").focus()
+    page.evaluate("document.activeElement.blur()")
+    page.keyboard.press("Escape")
+    expect(panel).to_have_count(0)
+    expect(page.get_by_role("button", name="Quick settings", exact=True)).to_be_focused()
+
+
+def test_escape_on_trigger_closes_open_menu(logged_in: Page) -> None:
+    page = logged_in
+    open_quick_settings(page)
+    icon = page.get_by_role("button", name="Quick settings", exact=True)
+    icon.focus()
+    page.keyboard.press("Escape")
+    expect(page.get_by_role("dialog", name="Quick settings")).to_have_count(0)
+    expect(icon).to_be_focused()
+
+
 def test_escape_on_closed_select_closes_menu_and_restores_focus(
     page: Page, make_server: Callable[..., E2EServer], tmp_path: Path
 ) -> None:
