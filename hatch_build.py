@@ -23,7 +23,9 @@ class ProvenanceHook(BuildHookInterface):
             return
         directory = Path(self.directory)
         directory.mkdir(parents=True, exist_ok=True)
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", dir=directory, delete=False) as generated:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".json", dir=directory, delete=False
+        ) as generated:
             json.dump(info, generated)
         destination = "jailbee/_build_info.json"
         if self.target_name == "sdist":

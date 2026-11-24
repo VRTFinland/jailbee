@@ -262,7 +262,11 @@ def test_staged_version_never_imports_host_dependencies_or_spawns(tmp_path):
 
     from jailbee import container_cli
 
-    shutil.copytree(Path(container_cli.__file__).parent, tmp_path / "jailbee", ignore=shutil.ignore_patterns("__pycache__"))
+    shutil.copytree(
+        Path(container_cli.__file__).parent,
+        tmp_path / "jailbee",
+        ignore=shutil.ignore_patterns("__pycache__"),
+    )
     (tmp_path / "jailbee" / "_build_info.json").write_text(
         '{"commit": "abcdef1234567890123456789012345678901234", "dirty": true}'
     )
@@ -283,7 +287,13 @@ from jailbee.container_cli import container_app
 sys.argv = ['jailbee', '--version']
 container_app()
 """
-    result = subprocess.run([sys.executable, "-c", script], cwd=tmp_path, env={"PYTHONPATH": str(tmp_path)}, capture_output=True, text=True)
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=tmp_path,
+        env={"PYTHONPATH": str(tmp_path)},
+        capture_output=True,
+        text=True,
+    )
     assert result.returncode == 0, result.stderr
     assert "(abcdef1-dirty)" in result.stdout
 

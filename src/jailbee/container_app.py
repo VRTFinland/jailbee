@@ -48,7 +48,12 @@ def code_hash() -> str:
     digest = hashlib.sha256()
     digest.update(__version__.encode() + b"\0")
     for path in sorted(package.rglob("*")):
-        if path.is_file() and "__pycache__" not in path.parts and path.suffix != ".pyc" and path.name != version_info.BUILD_INFO:
+        if (
+            path.is_file()
+            and "__pycache__" not in path.parts
+            and path.suffix != ".pyc"
+            and path.name != version_info.BUILD_INFO
+        ):
             digest.update(str(path.relative_to(package)).encode())
             digest.update(b"\0")
             digest.update(path.read_bytes())

@@ -21,36 +21,52 @@ def test_stage_creates_current_and_version(tmp_path):
     assert result.path.stat().st_mtime_ns == before
 
 
-def test_commit_only_change_restamps_without_copy_or_handshake_change(tmp_path, monkeypatch, mocker):
+def test_commit_only_change_restamps_without_copy_or_handshake_change(
+    tmp_path, monkeypatch, mocker
+):
     import json
 
-    monkeypatch.setattr("jailbee.version_info.identity", lambda: {"commit": "a" * 40, "dirty": False})
+    monkeypatch.setattr(
+        "jailbee.version_info.identity", lambda: {"commit": "a" * 40, "dirty": False}
+    )
     first = container_app.stage(root=tmp_path)
     expected = container_app.expected_version()
     assert json.loads((first.path / "jailbee" / "_build_info.json").read_text()) == {
-        "commit": "a" * 40, "dirty": False
+        "commit": "a" * 40,
+        "dirty": False,
     }
-    copy = mocker.patch.object(container_app.shutil, "copytree", side_effect=AssertionError("no re-copy"))
-    monkeypatch.setattr("jailbee.version_info.identity", lambda: {"commit": "b" * 40, "dirty": True})
+    copy = mocker.patch.object(
+        container_app.shutil, "copytree", side_effect=AssertionError("no re-copy")
+    )
+    monkeypatch.setattr(
+        "jailbee.version_info.identity", lambda: {"commit": "b" * 40, "dirty": True}
+    )
     second = container_app.stage(root=tmp_path)
     assert second.path == first.path
     assert not second.changed
     assert container_app.expected_version() == expected
     assert json.loads((second.path / "jailbee" / "_build_info.json").read_text()) == {
-        "commit": "b" * 40, "dirty": True
+        "commit": "b" * 40,
+        "dirty": True,
     }
     copy.assert_not_called()
 
 
 @pytest.mark.parametrize("interactive", [False, True])
-def test_normal_container_call_refreshes_commit_only_metadata(tmp_path, monkeypatch, mocker, interactive):
+def test_normal_container_call_refreshes_commit_only_metadata(
+    tmp_path, monkeypatch, mocker, interactive
+):
     import json
 
     monkeypatch.setattr(container_app, "staging_root", lambda: tmp_path)
-    monkeypatch.setattr("jailbee.version_info.identity", lambda: {"commit": "a" * 40, "dirty": False})
+    monkeypatch.setattr(
+        "jailbee.version_info.identity", lambda: {"commit": "a" * 40, "dirty": False}
+    )
     staged = container_app.stage().path
     handshake = (staged / "VERSION").read_text()
-    monkeypatch.setattr("jailbee.version_info.identity", lambda: {"commit": "b" * 40, "dirty": False})
+    monkeypatch.setattr(
+        "jailbee.version_info.identity", lambda: {"commit": "b" * 40, "dirty": False}
+    )
     mocker.patch.object(container_app, "stage", side_effect=AssertionError("no staging"))
     incus = Mock()
     incus.exec_bytes.return_value = ExecResult(0, b"ok", b"")

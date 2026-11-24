@@ -62,7 +62,10 @@ def source_identity(repo_root: Path) -> BuildIdentity | None:
     if result.returncode != 0:
         return None
     lines = result.stdout.splitlines()
-    commit = next((line.removeprefix("# branch.oid ") for line in lines if line.startswith("# branch.oid ")), "")
+    commit = next(
+        (line.removeprefix("# branch.oid ") for line in lines if line.startswith("# branch.oid ")),
+        "",
+    )
     if len(commit) not in {40, 64} or any(c not in "0123456789abcdef" for c in commit):
         return None
     return {"commit": commit, "dirty": any(line and not line.startswith("#") for line in lines)}
