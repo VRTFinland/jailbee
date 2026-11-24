@@ -196,7 +196,9 @@ def test_a_failed_attended_fork_is_noticed_as_a_fork(mocker, tmp_path):
     run = drive(mocker, _FORK_KEYS, [group])
 
     notices = [str(n) for n in run.notices()]
-    assert any("jailbee fork failed:" in n and "output of jailbee fork" in n for n in notices), notices
+    assert any("jailbee fork failed:" in n and "output of jailbee fork" in n for n in notices), (
+        notices
+    )
     (entry,) = run.app.session.queue
     assert entry.command == "jailbee fork"
     assert entry.state == "failed"
