@@ -11,6 +11,8 @@ from jailbee.agent_snapshot import register_session, window_names
 from jailbee.inbox import hooks
 from jailbee.inbox.role import local_role
 
+SHUTDOWN_MARKER = Path("/run/nologin")
+
 
 def register_hooks(inbox_app: typer.Typer) -> None:
     app = typer.Typer(help="Handle session lifecycle hooks.")
@@ -38,7 +40,9 @@ def register_hooks(inbox_app: typer.Typer) -> None:
         """Remove a session that Claude has ended normally."""
         data = hooks.read_input()
         try:
-            register_session(Path(pwd.getpwuid(os.getuid()).pw_dir), data, ended=True)
+            # Shutdown ends live processes after capture; preserve their resumable sessions.
+            if not SHUTDOWN_MARKER.exists():
+                register_session(Path(pwd.getpwuid(os.getuid()).pw_dir), data, ended=True)
         except Exception:
             pass  # Best effort, including a busy or unwritable registry.
 

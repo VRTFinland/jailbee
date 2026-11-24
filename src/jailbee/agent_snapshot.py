@@ -210,6 +210,8 @@ def register_session(
     ):
         return
     pid, start, launcher, tmux = _hook_process(home, PROC)
+    if not ended and any(arg in {"-p", "--print"} for arg in launcher[1:]):
+        return
     record = _record(home / SESSIONS_RELPATH / f"{pid}.json") if pid else None
     if (
         not ended
@@ -235,7 +237,7 @@ def register_session(
             if isinstance(row, dict)
             and row.get("session_id") != sid
             and (
-                not row.get("ended")
+                (not row.get("pid") and not row.get("ended"))
                 or (
                     isinstance(row.get("pid"), str)
                     and bool(row["pid"])
@@ -259,8 +261,18 @@ def register_session(
         _write_snapshot(
             path, json.dumps({"version": 1, "source": "capture", "sessions": rows}).encode()
         )
+        frozen_path = home / SNAPSHOT_RELPATH
         if not ended:
-            (home / SNAPSHOT_RELPATH).unlink(missing_ok=True)
+            frozen_path.unlink(missing_ok=True)
+        else:
+            frozen = _json(frozen_path)
+            if isinstance(frozen, dict) and isinstance(frozen.get("sessions"), list):
+                frozen["sessions"] = [
+                    row
+                    for row in frozen["sessions"]
+                    if not isinstance(row, dict) or row.get("session_id") != sid
+                ]
+                _write_snapshot(frozen_path, json.dumps(frozen).encode())
     finally:
         os.close(fd)
 
@@ -283,7 +295,18 @@ def _capture(home: Path, *, proc: Path, windows: Mapping[str, str]) -> int:
     registry = _json(home / REGISTRY_RELPATH)
     rows = registry.get("sessions", []) if isinstance(registry, dict) else []
     registered = [row for row in rows if isinstance(row, dict)] if isinstance(rows, list) else []
-    sessions: list[dict[str, object]] = [row for row in registered if not row.get("ended")]
+    sessions: list[dict[str, object]] = [
+        row
+        for row in registered
+        if not row.get("ended")
+        and (
+            not row.get("pid")
+            or (
+                isinstance(row["pid"], str)
+                and _start(proc, row["pid"]) == row.get("procStart")
+            )
+        )
+    ]
     for path in _entries(home / SESSIONS_RELPATH):
         data = _record(path)
         if data is None or data.get("kind") != "interactive":
@@ -333,7 +356,7 @@ def boot(home: Path, *, proc: Path = Path("/proc")) -> dict[str, object]:
     try:
         fd = os.open(registry.with_suffix(".lock"), os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
         try:
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            _lock(fd)
             frozen = home / SNAPSHOT_RELPATH
             if _read(frozen) is not None:
                 result = _boot(home, proc=proc, path=frozen)

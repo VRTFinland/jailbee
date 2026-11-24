@@ -7,6 +7,15 @@ from jailbee.inbox import role
 from jailbee.inbox.container_cmd import inbox_app
 
 
+@pytest.fixture(autouse=True)
+def isolated_hook_environment(monkeypatch, tmp_path):
+    from jailbee.inbox import hook_cmd
+
+    monkeypatch.delenv("TMUX", raising=False)
+    monkeypatch.delenv("TMUX_PANE", raising=False)
+    monkeypatch.setattr(hook_cmd, "SHUTDOWN_MARKER", tmp_path / "nologin")
+
+
 @pytest.fixture
 def set_role(monkeypatch, tmp_path):
     marker = tmp_path / "role"
@@ -312,25 +321,27 @@ def test_hook_registry_failures_are_silent_and_keep_resume_context(
             os.close(lock)
 
 
-def test_clean_stop_freezes_registry_before_shutdown_end_hook(tmp_path, monkeypatch, set_role):
+@pytest.mark.parametrize("reused_pid", [False, True])
+def test_clean_stop_omits_dead_registry_session(tmp_path, monkeypatch, set_role, reused_pid):
     import pwd
     from types import SimpleNamespace
 
     from jailbee import agent_snapshot as snapshot
-    from tests.test_agent_snapshot import ID
+    from tests.test_agent_snapshot import ID, live
 
-    monkeypatch.setattr(snapshot, "PROC", tmp_path / "proc")
+    proc = tmp_path / "proc"
+    live(proc, 7)
+    monkeypatch.setattr(snapshot, "PROC", proc)
+    monkeypatch.setattr(snapshot.os, "getppid", lambda: 7)
     monkeypatch.setattr(pwd, "getpwuid", lambda uid: SimpleNamespace(pw_dir=str(tmp_path)))
     set_role("plain")
-    runner = CliRunner()
-    payload = json.dumps({"session_id": ID, "cwd": "/work", "reason": "other"})
-    assert runner.invoke(inbox_app, ["hook", "session-start"], input=payload).exit_code == 0
-    assert snapshot.capture(tmp_path, proc=tmp_path / "proc", windows={}) == 1
-    assert runner.invoke(inbox_app, ["hook", "session-end"], input=payload).exit_code == 0
-    # Both the host stop command and the systemd shutdown unit capture.
-    assert snapshot.capture(tmp_path, proc=tmp_path / "proc", windows={}) == 1
-    assert [row["session_id"] for row in snapshot.boot(tmp_path)["sessions"]] == [ID]
-    assert snapshot.boot(tmp_path)["sessions"] == []
+    payload = json.dumps({"session_id": ID, "cwd": "/work"})
+    assert CliRunner().invoke(inbox_app, ["hook", "session-start"], input=payload).exit_code == 0
+    (proc / "7" / "stat").unlink()
+    if reused_pid:
+        (proc / "7" / "stat").write_text("7 (other) S " + "0 " * 18 + "888 0")
+    assert snapshot.capture(tmp_path, proc=proc, windows={}) == 0
+    assert snapshot.boot(tmp_path, proc=proc)["sessions"] == []
 
 
 def test_capture_merges_pre_plugin_sessions_without_reviving_ended_ones(
@@ -361,7 +372,7 @@ def test_capture_merges_pre_plugin_sessions_without_reviving_ended_ones(
     assert snapshot.boot(tmp_path)["sessions"] == []
 
 
-@pytest.mark.parametrize("action", ["hook", "capture"])
+@pytest.mark.parametrize("action", ["hook", "capture", "boot"])
 def test_concurrent_hook_retries_brief_lock_contention_without_losing_session(
     tmp_path, monkeypatch, action
 ):
@@ -375,7 +386,7 @@ def test_concurrent_hook_retries_brief_lock_contention_without_losing_session(
 
     monkeypatch.setattr(snapshot, "PROC", tmp_path / "proc")
     path = tmp_path / snapshot.REGISTRY_RELPATH
-    if action == "capture":
+    if action in {"capture", "boot"}:
         snapshot.register_session(tmp_path, {"session_id": ID, "cwd": "/work"})
     path.parent.mkdir(parents=True, exist_ok=True)
     fd = os.open(path.with_suffix(".lock"), os.O_CREAT | os.O_RDWR, 0o600)
@@ -390,7 +401,7 @@ def test_concurrent_hook_retries_brief_lock_contention_without_losing_session(
     try:
         if action == "capture":
             assert snapshot.capture(tmp_path, proc=tmp_path / "proc", windows={}) == 1
-        else:
+        elif action == "hook":
             snapshot.register_session(tmp_path, {"session_id": ID, "cwd": "/work"})
         assert [row["session_id"] for row in snapshot.boot(tmp_path)["sessions"]] == [ID]
     finally:
@@ -423,6 +434,66 @@ def test_node_launcher_clear_replaces_session_before_claude_pid_file_exists(tmp_
     ]
 
 
+def test_clean_stop_keeps_frozen_session_during_shutdown(tmp_path, monkeypatch, set_role):
+    import pwd
+    from types import SimpleNamespace
+
+    from jailbee import agent_snapshot as snapshot
+    from jailbee.inbox import hook_cmd
+    from tests.test_agent_snapshot import ID, live
+
+    proc = tmp_path / "proc"
+    live(proc, 7)
+    monkeypatch.setattr(snapshot, "PROC", proc)
+    monkeypatch.setattr(snapshot.os, "getppid", lambda: 7)
+    monkeypatch.setattr(pwd, "getpwuid", lambda uid: SimpleNamespace(pw_dir=str(tmp_path)))
+    shutdown_marker = tmp_path / "nologin"
+    monkeypatch.setattr(hook_cmd, "SHUTDOWN_MARKER", shutdown_marker)
+    set_role("plain")
+    runner = CliRunner()
+    payload = json.dumps({"session_id": ID, "cwd": "/work"})
+    assert runner.invoke(inbox_app, ["hook", "session-start"], input=payload).exit_code == 0
+    assert snapshot.capture(tmp_path, proc=proc, windows={}) == 1
+    shutdown_marker.touch()
+    assert runner.invoke(inbox_app, ["hook", "session-end"], input=payload).exit_code == 0
+    assert snapshot.capture(tmp_path, proc=proc, windows={}) == 1
+    assert [row["session_id"] for row in snapshot.boot(tmp_path)["sessions"]] == [ID]
+
+
+def test_session_end_after_cancelled_stop_removes_only_ended_frozen_session(
+    tmp_path, monkeypatch, set_role
+):
+    import pwd
+    from types import SimpleNamespace
+
+    from jailbee import agent_snapshot as snapshot
+    from tests.test_agent_snapshot import ID, live
+
+    proc = tmp_path / "proc"
+    live(proc, 7)
+    live(proc, 8)
+    monkeypatch.setattr(snapshot, "PROC", proc)
+    monkeypatch.setattr(pwd, "getpwuid", lambda uid: SimpleNamespace(pw_dir=str(tmp_path)))
+    set_role("plain")
+    runner = CliRunner()
+    other_id = "aaaaaaaa-1234-1234-1234-123456789abc"
+    for pid, sid in [(7, ID), (8, other_id)]:
+        monkeypatch.setattr(snapshot.os, "getppid", lambda: pid)
+        result = runner.invoke(
+            inbox_app,
+            ["hook", "session-start"],
+            input=json.dumps({"session_id": sid, "cwd": "/work"}),
+        )
+        assert result.exit_code == 0
+    assert snapshot.capture(tmp_path, proc=proc, windows={}) == 2
+    monkeypatch.setattr(snapshot.os, "getppid", lambda: 7)
+    result = runner.invoke(inbox_app, ["hook", "session-end"], input=json.dumps({"session_id": ID}))
+    assert result.exit_code == 0
+    assert result.output == ""
+    assert snapshot.capture(tmp_path, proc=proc, windows={}) == 1
+    assert [row["session_id"] for row in snapshot.boot(tmp_path)["sessions"]] == [other_id]
+
+
 def test_new_start_invalidates_snapshot_from_cancelled_shutdown(tmp_path, monkeypatch):
     from jailbee import agent_snapshot as snapshot
     from tests.test_agent_snapshot import ID
@@ -447,6 +518,57 @@ def test_ended_session_churn_does_not_fill_registry(tmp_path, monkeypatch):
     sid = "aaaaaaaa-1234-1234-1234-123456789abc"
     snapshot.register_session(tmp_path, {"session_id": sid, "cwd": "/work"})
     assert [row["session_id"] for row in snapshot.boot(tmp_path)["sessions"]] == [sid]
+
+
+@pytest.mark.parametrize("flag", ["-p", "--print"])
+@pytest.mark.parametrize("launcher", ["native", "node", "marker"])
+def test_headless_start_without_pid_file_is_not_registered(
+    tmp_path, monkeypatch, set_role, flag, launcher
+):
+    import pwd
+    from types import SimpleNamespace
+
+    from jailbee import agent_snapshot as snapshot
+    from tests.test_agent_snapshot import ID, live, marker
+
+    proc = tmp_path / "proc"
+    live(proc, 7)
+    args = ["claude", flag, "explain this code"]
+    if launcher == "node":
+        args = ["node", "/usr/lib/node_modules/@anthropic-ai/claude-code/cli.js", *args[1:]]
+    if launcher == "marker":
+        marker(tmp_path, 7, b"777\0claude-jb\0" + flag.encode() + b"\0explain this code\0")
+    else:
+        (proc / "7" / "cmdline").write_bytes(b"\0".join(arg.encode() for arg in args) + b"\0")
+    monkeypatch.setattr(snapshot, "PROC", proc)
+    monkeypatch.setattr(snapshot.os, "getppid", lambda: 7)
+    monkeypatch.setattr(pwd, "getpwuid", lambda uid: SimpleNamespace(pw_dir=str(tmp_path)))
+    set_role("plain")
+    result = CliRunner().invoke(
+        inbox_app, ["hook", "session-start"], input=json.dumps({"session_id": ID, "cwd": "/work"})
+    )
+    assert result.exit_code == 0
+    assert result.output == ""
+    assert snapshot.boot(tmp_path, proc=tmp_path / "dead")["sessions"] == []
+
+
+def test_dead_live_session_churn_does_not_fill_registry(tmp_path, monkeypatch):
+    from jailbee import agent_snapshot as snapshot
+    from tests.test_agent_snapshot import ID, live
+
+    proc = tmp_path / "proc"
+    monkeypatch.setattr(snapshot, "PROC", proc)
+    for number in range(400):
+        pid = number + 7
+        live(proc, pid)
+        monkeypatch.setattr(snapshot.os, "getppid", lambda: pid)
+        sid = f"{number:08x}-1234-1234-1234-123456789abc"
+        snapshot.register_session(tmp_path, {"session_id": sid, "cwd": "/work"})
+        (proc / str(pid) / "stat").unlink()
+    live(proc, 999)
+    monkeypatch.setattr(snapshot.os, "getppid", lambda: 999)
+    snapshot.register_session(tmp_path, {"session_id": ID, "cwd": "/work"})
+    assert [row["session_id"] for row in snapshot.boot(tmp_path)["sessions"]] == [ID]
 
 
 @pytest.mark.parametrize("command", ["stop", "session-start", "session-end"])

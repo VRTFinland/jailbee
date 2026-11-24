@@ -91,9 +91,12 @@ For interactive Claude Code, the managed JailBee plugin automatically runs
 items with `jailbee inbox read ID`. Its handlers are
 `jailbee inbox hook session-start`, `jailbee inbox hook session-end` and
 `jailbee inbox hook stop`. Start/end hooks maintain the live Claude session
-registry for normal and unclean-stop recovery; boot consumes saved entries
-once and skips sessions without transcripts. Headless Claude
-sessions and other agents use `jailbee inbox wait`. The packaged marketplace
+registry for normal and unclean-stop recovery; clean-stop capture checks known
+PIDs against their recorded start times. A session ended after a cancelled stop
+is removed from the frozen snapshot too; shutdown end hooks preserve it while
+`/run/nologin` exists. Boot consumes saved entries once and skips sessions without
+transcripts. Headless `claude -p` / `--print` runs are never registered for
+interactive recovery. Headless Claude sessions and other agents use `jailbee inbox wait`. The packaged marketplace
 lives in `jailbee/claude_marketplace`; its read-only managed-settings drop-in
 mounts at `/etc/claude-code/managed-settings.d` independently of
 `agent_instructions`.
