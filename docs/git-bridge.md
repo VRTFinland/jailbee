@@ -1425,7 +1425,10 @@ preview in the list's place, and Esc, Enter or `v` goes back to the list.
   the final reload run in the background, with a "Deleting 2/5…" busy line;
   each successful drop removes its row immediately. Navigation, opening items,
   marking and preview keys remain usable. Another confirmed `d` queues behind
-  the current deletes; a proposal already queued is refused by name. Repeated
+  the current deletes; a proposal with running or queued drops is refused by
+  name until its own drops finish, not until the entire queue finishes. All
+  queued batches share one final summary, leading with any failures and naming
+  their proposals before the successful-deletion count. Repeated
   `r` requests coalesce into the one final reload. Each proposal's first drop
   uses the shown revision directly; multiple child drops within one proposal
   re-read between drops to guard changed indices and dependent scope.
