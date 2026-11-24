@@ -77,11 +77,14 @@ for this metadata.
 Before long test runs, builds or spawning parallel work, run
 `jailbee host status` (`--json` for machine-readable output) to check current
 host load/CPU count, available memory, free space in this container's Incus
-storage pool and the running JailBee container count. Every container may
-query it; no orchestration grant is needed. Readings are computed on demand,
-not from the last broker round. The usual broker connection retry applies;
-exit 4 means the broker is unreachable. Treat unavailable readings as unknown,
-not as free capacity.
+storage pool and the host-wide running JailBee container count across all
+Incus projects and repositories. Every container may query it; no orchestration
+grant is needed. Readings are computed on demand, not from the last broker
+round; inventory and pool readings share a two-second cache and dedicated
+bounded workers, so repeated checks do not starve inbox or outbox operations.
+The usual broker connection retry applies; exit 4 means the broker is
+unreachable or did not answer in time (the message distinguishes them).
+Treat unavailable readings as unknown, not as free capacity.
 
 Before long tests or work that depends on services, check `jailbee service ls`
 or run `jailbee service wait api --until unhealthy` in the background to watch
