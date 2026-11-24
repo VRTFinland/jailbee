@@ -176,8 +176,12 @@ def test_signed_in_tab_returns_to_its_page_after_setup_ends_without_a_new_login(
     expect(page.get_by_label("Setup PIN")).to_be_visible()
 
     # Device sessions persist in the state DB, so the stored token stays valid.
+    # The setup view's poll may land in the gap between the two servers; answer
+    # it as the setup server would, so Chrome logs no refused connection.
+    page.route("**/api/mode", lambda route: route.fulfill(json={"mode": "setup"}))
     server.stop()
     server.start()
+    page.unroute("**/api/mode")
 
     expect(page).to_have_url(re.compile(r"#/settings$"))
     expect(page.get_by_role("heading", name="Settings", level=1)).to_be_visible()
