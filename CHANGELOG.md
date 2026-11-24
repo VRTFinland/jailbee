@@ -10,6 +10,12 @@ before editing `## Unreleased`.
 
 ### Added
 
+- `jailbee --version` and `jailbee version` include the source commit when
+  known, with `-dirty` for uncommitted source changes. Editable installs read
+  their own checkout; wheels preserve build-time provenance, and containers
+  report the staged host code without running Git. A commit-only change
+  refreshes metadata without changing the code handshake or restarting services
+  ([#149](https://github.com/VRTFinland/jailbee/issues/149)).
 - A child agent stuck on an API error (quota or usage limit exhausted, rate limit,
   authentication, provider overloaded) is no longer shown as `alive:busy`: once the
   agent gives up retrying, `jailbee inbox status` shows `alive:error:<kind>` with the

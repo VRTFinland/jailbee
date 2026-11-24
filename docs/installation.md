@@ -199,6 +199,11 @@ Confirm the CLI is on your `PATH`:
 jailbee version
 ```
 
+The output includes the source commit when known, e.g. `1.8.9 (abc1234)`.
+Editable installs read their checkout; wheels retain build-time identity.
+`-dirty` marks uncommitted source changes. Without build info, only the package
+version is printed.
+
 Everything else — creating the golden image and your first container — is
 per repo. Continue in [Getting started](getting-started.md). The first thing
 it has you run, `jailbee doctor`, flags any remaining host issues, i.e. the

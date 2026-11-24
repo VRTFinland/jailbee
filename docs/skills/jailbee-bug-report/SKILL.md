@@ -38,7 +38,9 @@ manifest unprompted: the report becomes public text under their name.
 ## What the report contains
 
 Inside a container, `jailbee --version` works (since 1.8.1) but reports the
-mounted host code's version; `jb doctor` is host-only and cannot be run there.
+mounted host code's version and source commit when known (`-dirty` means
+uncommitted source changes when staged or built), not the container repo's HEAD;
+`jb doctor` is host-only and cannot be run there.
 Ask the user to run these **on the host** and paste the output, or leave a
 clearly marked placeholder line in the body:
 

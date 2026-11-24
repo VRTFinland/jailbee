@@ -66,6 +66,12 @@ session-wide scrollback limit.
 
 The in-container CLI offers `service` (including `ls`, `start`, `stop`, `restart`, `refresh`, `plan`, `logs`), `config validate [--config <path>]`, `inbox`, `version` and `--version`. Inbox notification commands include `jailbee inbox follow` (a non-acknowledging stream) and Claude hook handlers `jailbee inbox hook session-start` / `jailbee inbox hook stop`. In interactive Claude Code sessions the managed JailBee plugin starts the follower automatically; headless sessions and other agents use `jailbee inbox wait` as their fallback. The plugin marketplace ships in `jailbee/claude_marketplace`; its read-only managed-settings drop-in is mounted at `/etc/claude-code/managed-settings.d`, independently of the host-wide agent-instructions mount. Other JailBee management commands run on the host, not here.
 
+`jailbee --version` and `jailbee version` include the staged host code's source
+commit when known, e.g. `1.8.9 (abc1234)`; `-dirty` marks uncommitted source
+changes when staged or built. This is not the container repository's HEAD. With
+no build info they print just the package version; no rebuild is needed solely
+for this metadata.
+
 ### Health and waiting
 
 Before long tests or work that depends on services, check `jailbee service ls`

@@ -154,6 +154,9 @@ ignore_missing_imports = true
 # a container works as expected.
 testpaths = ["tests"]
 
+[tool.hatch.build.hooks.custom]
+path = "hatch_build.py"
+
 [tool.hatch.build.targets.sdist]
 artifacts = ["src/jailbee/web/static/**"]
 # The sdist is a build input, not a mirror of the repo. It carries the package
@@ -162,6 +165,7 @@ artifacts = ["src/jailbee/web/static/**"]
 # wheel from the sdist, so dropping it would silently ship a skill-less wheel.
 include = [
     "/src/jailbee",
+    "/hatch_build.py",
     "/docs/skills",
     "/README.md",
     "/CHANGELOG.md",

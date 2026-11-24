@@ -158,7 +158,7 @@ def _validate_guidance_commands(skill: str, preamble: str) -> None:
         if not tokens or tokens[0] == "...":
             continue
         root = tokens[0]
-        assert root in host_roots | container_roots, example
+        assert root.startswith("-") or root in host_roots | container_roots, example
         command = get_command(app if root in host_roots else container_app)
         index = 0
         while index < len(tokens):

@@ -44,7 +44,7 @@ or suggest. A repo whose config still lives in `.gie/` is still read
 
 ## Workflow
 
-1. **Confirm JailBee is installed.** `jailbee --version` should work. If not, the user installs it with `uv tool install jailbee` or `pipx install jailbee`.
+1. **Confirm JailBee is installed.** `jailbee --version` prints the package version and source commit when known (`-dirty` marks uncommitted source changes). If not, the user installs it with `uv tool install jailbee` or `pipx install jailbee`.
 2. **Confirm cwd is a git repo.** `jailbee` derives `repo_root` from the directory containing `.jailbee/`. If `.git/` is missing or the repo dir name has uppercase/underscores/dots, note it — `container_prefix` will need an explicit override.
 3. **Inspect the stack.** Read the manifest files (see [Stack detection](#stack-detection) below). Note the language, build tool, runtime versions, and any services declared (databases, Redis, etc.) in `docker-compose*.yml`.
 4. **Generate the starter file.** Run `jailbee config init` (or `uv tool run jailbee config init` if `jailbee` isn't on PATH yet). This writes a fully-defaulted `.jailbee/config.yaml`. **Don't** hand-write the file from scratch — the template's comments are the user-facing schema documentation.

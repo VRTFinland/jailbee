@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from jailbee.config.models_behaviour import TagPolicy
+    from jailbee.version_info import BuildIdentity
 
 #: Empty tree: read-tree removes tracked files, preserving ignored files.
 EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
@@ -36,6 +37,38 @@ Ordered: `main` wins a repo that somehow has both. Only ever consulted for
 refs that **exist** — the point of the list is to stop guessing a name and
 start reading one.
 """
+
+
+def source_identity(repo_root: Path) -> BuildIdentity | None:
+    """Read HEAD and dirtiness in one bounded, read-only local Git operation."""
+    try:
+        result = subprocess.run(
+            [
+                "git",
+                "--no-optional-locks",
+                "status",
+                "--porcelain=v2",
+                "--branch",
+                "--untracked-files=normal",
+            ],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            timeout=1,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired, UnicodeError):
+        return None
+    if result.returncode != 0:
+        return None
+    lines = result.stdout.splitlines()
+    commit = next(
+        (line.removeprefix("# branch.oid ") for line in lines if line.startswith("# branch.oid ")),
+        "",
+    )
+    if len(commit) not in {40, 64} or any(c not in "0123456789abcdef" for c in commit):
+        return None
+    return {"commit": commit, "dirty": any(line and not line.startswith("#") for line in lines)}
 
 
 def repo_toplevel(path: Path) -> Path | None:

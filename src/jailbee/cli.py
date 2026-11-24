@@ -1272,7 +1272,9 @@ def _track_job(
 
 def _version_callback(value: bool) -> None:
     if value:
-        typer.echo(__version__)
+        from jailbee.version_info import display_version
+
+        typer.echo(display_version(__version__))
         raise typer.Exit
 
 
@@ -1349,7 +1351,9 @@ def main(
 @app.command()
 def version() -> None:
     """Show the jailbee version."""
-    typer.echo(__version__)
+    from jailbee.version_info import display_version
+
+    typer.echo(display_version(__version__))
 
 
 @app.command()
