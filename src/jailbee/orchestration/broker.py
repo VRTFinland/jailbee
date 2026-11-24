@@ -523,7 +523,9 @@ def run_broker(incus: Incus) -> int:
     previous = {sig: signal.signal(sig, stop) for sig in (signal.SIGTERM, signal.SIGINT)}
     memory = broker_state.BrokerMemory()
     memory.store = BrokerStore(store_path(root))
-    memory.queries = query.Queries(memory.store)
+    from jailbee.orchestration.live_query import host_queries
+
+    memory.queries = query.Queries(memory.store, live=host_queries(incus))
     memory.listener = Listener(memory.requests, queries=memory.queries)
     memory.listener.start()
     try:

@@ -623,7 +623,8 @@ fastest way to see the error without doing anything else. Rejected:
 You may be reading this from **inside** a JailBee container (repo clone at
 `~/<container_prefix>`). Since 1.8.1 every container has a small in-container
 `jailbee` (the host's code, mounted read-only): `jailbee --version`,
-`jailbee config validate`, `jailbee service ...` and `jailbee inbox ...` work here.
+`jailbee config validate`, `jailbee service ...`, `jailbee host status [--json]`
+and `jailbee inbox ...` work here.
 Edit `.jailbee/config.yaml` and `install.d/` snippets directly in the clone and
 check them with `jailbee config validate`. Everything else (`jailbee apply`,
 `jailbee new`, `jailbee doctor`, ...) is host-only. After editing the config, tell the
