@@ -15,11 +15,9 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from tests_e2e.flows import open_settings
-
 from playwright.sync_api import Page, expect
 
-from tests_e2e.flows import log_in_with_pin
+from tests_e2e.flows import log_in_with_pin, open_settings
 from tests_e2e.server import E2EServer
 
 CORPUS = Path(__file__).resolve().parents[1] / "tests/fixtures/transcripts/claude-corpus"

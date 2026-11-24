@@ -6,11 +6,9 @@ import json
 from typing import TYPE_CHECKING
 
 import pytest
-from tests_e2e.flows import open_settings
-
 from playwright.sync_api import Page, expect
 
-from tests_e2e.flows import log_in_with_pin
+from tests_e2e.flows import log_in_with_pin, open_settings
 
 if TYPE_CHECKING:
     from collections.abc import Callable

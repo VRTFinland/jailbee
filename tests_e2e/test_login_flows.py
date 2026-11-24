@@ -8,15 +8,13 @@ from datetime import timedelta
 
 import pyotp
 import pytest
-from tests_e2e.flows import open_settings
-
 from playwright.sync_api import Page, expect
 
 from jailbee.web.auth_admin import add_totp_key, list_sessions, revoke_session
 from jailbee.web.login_link import mint
 from tests.web_fakes import FakeClock, snapshot_of
 from tests_e2e.browser_errors import BrowserErrors
-from tests_e2e.flows import DERIVED_DEVICE, log_in_with_pin
+from tests_e2e.flows import DERIVED_DEVICE, log_in_with_pin, open_settings
 from tests_e2e.server import E2EServer
 
 

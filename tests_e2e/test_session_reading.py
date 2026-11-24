@@ -7,12 +7,10 @@ from collections.abc import Callable
 from pathlib import Path
 
 import pytest
-from tests_e2e.flows import open_settings
-
 from playwright.sync_api import Page, WebSocketRoute, expect
 
 from tests.web_fakes import wait_until
-from tests_e2e.flows import log_in_with_pin
+from tests_e2e.flows import log_in_with_pin, open_settings
 from tests_e2e.server import E2EServer
 
 SESSION = "33333333-3333-4333-8333-333333333333"

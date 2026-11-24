@@ -5,12 +5,11 @@ from __future__ import annotations
 import re
 
 import pytest
-from tests_e2e.flows import open_settings
-
 from playwright.sync_api import Page, expect
 
 from jailbee.orchestration.view import ChildView, GrantView
 from tests.web_fakes import container, repo_group, snapshot_of
+from tests_e2e.flows import open_settings
 from tests_e2e.server import E2EServer
 
 

@@ -20,7 +20,7 @@ def test_menu_context_paging_and_live_preferences(
     page: Page, make_server: Callable[..., E2EServer], tmp_path: Path, width: int, profile: str
 ) -> None:
     page.set_viewport_size({"width": width, "height": 600})
-    server, transcript = open_transcript(page, make_server, tmp_path)
+    server, _transcript = open_transcript(page, make_server, tmp_path)
     server.push(snapshot_of(repo_group("work", container("work-main", "work"))))
     if profile == "eink":
         open_settings(page)

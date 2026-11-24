@@ -10,12 +10,11 @@ from pathlib import Path
 from urllib.parse import urljoin
 
 import pytest
-from tests_e2e.flows import open_settings
-
 from playwright.sync_api import Page, expect
 
 from jailbee.agent_status import AgentSummary
 from tests.web_fakes import container, repo_group, snapshot_of
+from tests_e2e.flows import open_settings
 from tests_e2e.server import E2EServer
 from tests_e2e.sessions import SESSION_ID, append_entry, open_session, session_path
 
