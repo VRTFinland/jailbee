@@ -517,8 +517,9 @@ def test_outbox_batch_delete_progress_rows_and_deferred_refresh(
 
 @pytest.mark.parametrize("separate_batches", [False, True])
 @pytest.mark.parametrize("first_fails", [False, True])
+@pytest.mark.parametrize("refresh_fails", [False, True])
 def test_finished_proposal_can_be_deleted_again_while_another_drop_runs(
-    mocker, tmp_path, separate_batches, first_fails
+    mocker, tmp_path, separate_batches, first_fails, refresh_fails
 ):
     import asyncio
     from threading import Event
@@ -528,7 +529,10 @@ def test_finished_proposal_can_be_deleted_again_while_another_drop_runs(
     from tests.dashboard_pilot import container_menu_keys, make_app
     from tests.test_dashboard_outbox import _action, _container, _listing, _proposal
 
-    proposals = [_proposal("pr/a.json", actions=[_action(0), _action(1)]), _proposal("pr/b.json")]
+    proposals = [
+        _proposal("pr/a.json", actions=[_action(0, body="first"), _action(1, body="keep")]),
+        _proposal("pr/b.json"),
+    ]
     entered, release = Event(), Event()
     first_entered, first_release = Event(), Event()
     drops = []
@@ -541,7 +545,9 @@ def test_finished_proposal_can_be_deleted_again_while_another_drop_runs(
                 assert first_release.wait(10), "test did not release a"
                 if first_fails:
                     return tsession.da.CliResult(False, "locked")
-                proposals[0]["actions"].pop(1)
+                proposals[0]["actions"].pop(0)
+                proposals[0]["actions"][0]["index"] = 0
+                proposals[0]["actions"][0]["delete_scope"] = [0]
                 proposals[0]["revision"] = "r2"
                 return tsession.da.CliResult(True, "done", "")
             if argv[3] == "pr/a.json":
@@ -552,6 +558,8 @@ def test_finished_proposal_can_be_deleted_again_while_another_drop_runs(
                 assert release.wait(10), "test did not release b"
             proposals[:] = [p for p in proposals if p["id"] != argv[3]]
             return tsession.da.CliResult(True, "done", "")
+        if refresh_fails and len(drops) == 1 and not first_fails:
+            return tsession.da.CliResult(False, "listing unavailable")
         return tsession.da.CliResult(True, "done", _listing(_container(*proposals)))
 
     mocker.patch.object(tsession.da, "run_cli_quiet", side_effect=quiet)
@@ -568,7 +576,7 @@ def test_finished_proposal_can_be_deleted_again_while_another_drop_runs(
                 if first_fails:
                     select = ()
                 else:
-                    select = ("enter", "down", "down")  # a's last action
+                    select = ("enter", "down")  # a's first action
                 if separate_batches:
                     await pilot.press(*select, "d", "down", "enter")
                     assert await asyncio.to_thread(first_entered.wait, 2)
@@ -576,17 +584,30 @@ def test_finished_proposal_can_be_deleted_again_while_another_drop_runs(
                 else:
                     await pilot.press(*select, "space", "end", "space", "d", "down", "enter")
                     assert await asyncio.to_thread(first_entered.wait, 2)
+                if not first_fails:
+                    await pilot.press("home", "down", "down", "space")
                 first_release.set()
                 async with asyncio.timeout(5):
                     while not entered.is_set():
                         app.session.jobs.poll()
                         app.refresh_frame()
                         await pilot.pause(0.001)
+                if not first_fails and not refresh_fails:
+                    assert controller.state.marks == frozenset({("alpha-x", "pr/a.json", 0, None)})
+                    await pilot.press("home", "down", "space")  # unmark the same remaining action
+                elif not first_fails:
+                    assert not controller.state.marks  # cannot retain marks without a fresh revision
                 await pilot.press("home", "p")
                 assert controller.state.status == (
                     "publish must wait for the delete queue to finish",
                 )
                 await pilot.press("d")
+                if refresh_fails and not first_fails:
+                    assert controller.state.question is None
+                    assert controller.state.status == ("pr/a.json: refresh required after deletion",)
+                    release.set()
+                    await _settle_outbox(app, pilot, controller)
+                    await pilot.press("d")
                 assert controller.state.question is not None
                 await pilot.press("down", "enter")
                 assert controller.state.question is None

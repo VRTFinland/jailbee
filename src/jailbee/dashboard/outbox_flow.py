@@ -409,6 +409,7 @@ class OutboxController:
             tuple[frozenset[dob.RowKey], tuple[dob.ContainerListing, ...]]
         ] = []
         self._deleting: set[tuple[str, str]] = set()
+        self._delete_stale: set[tuple[str, str]] = set()
         self._delete_running = False
         self._delete_total = 0
         self._delete_attempted = 0
@@ -503,6 +504,8 @@ class OutboxController:
         for key in [k for k in marks if k[3] is None]:
             marks |= _subtree(containers, key)
         # Local row removals reuse metadata; only a real listing re-reads it.
+        if refresh_metadata:
+            self._delete_stale.clear()
         sent_state = self._fresh_sent() if refresh_metadata else self.state
         # Nothing pending but records sent: open on the Sent tab, unless the user chose.
         empty = not any(c.proposals for c in containers)
@@ -808,6 +811,12 @@ class OutboxController:
                 *(f"{_safe(k[1])}: already in the delete queue" for k in sorted(conflicts, key=str))
             )
             return
+        if any((k[0], k[1]) in self._delete_stale for k in keys):
+            self._status(
+                *(f"{_safe(k[1])}: refresh required after deletion" for k in sorted(keys, key=str)
+                  if (k[0], k[1]) in self._delete_stale)
+            )
+            return
         refused = [(k, r) for k in sorted(keys, key=str) if (r := _block_reason(self.state, k))]
         if refused:
             self._status(*(f"{_safe(k[1])}: {_safe(r)}" for k, r in refused))
@@ -957,9 +966,31 @@ class OutboxController:
                 # proposal before releasing it for another confirmed delete.
                 fetched = self._parse((yield self._ls_argv()))
                 if isinstance(fetched, str):
+                    self._delete_stale.add((name, pid))
+                    self.state = replace(
+                        self.state,
+                        marks=frozenset(k for k in self.state.marks if k[:2] != (name, pid)),
+                    )
                     status.append(fetched)
                 else:
                     fresh = _find(fetched, name, pid)
+                    previous = _find(self.state.containers, name, pid)
+                    marks = set(self.state.marks)
+                    for marked in self.state.marks:
+                        if marked[:2] != (name, pid) or marked[2] is None:
+                            continue
+                        marks.discard(marked)
+                        if fresh is None or previous is None:
+                            continue
+                        matches = [
+                            candidate
+                            for candidate in _keys_of((dob.ContainerListing(name, None, (), (fresh,)),))
+                            if candidate[2] is not None
+                            and _fingerprint(fresh, candidate) == _fingerprint(previous, marked)
+                        ]
+                        if len(matches) == 1:
+                            marks.add(matches[0])
+                    self.state = replace(self.state, marks=frozenset(marks))
                     containers = tuple(
                         replace(
                             c,
