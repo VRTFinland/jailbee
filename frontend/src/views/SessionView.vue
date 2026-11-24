@@ -69,16 +69,21 @@ const byCall = computed(() => {
     return {results, subagents, calls}
 })
 
-/** The entries shown in the flow: results and subagents fold into their call. */
-const shown = computed<RenderedEntry[]>(() =>
-    (transcript.value?.entries ?? []).filter((e) => {
+function visibleEntries(entries: RenderedEntry[], calls: Set<string>): RenderedEntry[] {
+    return entries.filter((e) => {
         if (e.kind === "thinking") return thinking.value
-        if (e.kind === "tool_result" || e.kind === "subagent") {
-            return !byCall.value.calls.has(e.call_id)
-        }
+        if (e.kind === "tool_result" || e.kind === "subagent") return !calls.has(e.call_id)
         return true
-    }),
-)
+    })
+}
+
+/** The entries shown in the flow: results and subagents fold into their call. */
+const shown = computed(() => visibleEntries(transcript.value?.entries ?? [], byCall.value.calls))
+const pendingVisible = computed(() => {
+    const calls = new Set([...transcript.value?.entries ?? [], ...pending.value]
+        .filter((e) => e.kind === "tool_call").map((e) => e.call_id))
+    return visibleEntries(pending.value, calls)
+})
 
 const latestAnswer = computed(() => {
     const entries = transcript.value?.entries ?? []
@@ -92,6 +97,7 @@ const atTranscriptEnd = ref(false)
 const following = ref(false)
 let lastScrollY = window.scrollY
 let programmaticScroll = false
+let userScrollIntent = false
 const answerAhead = ref(false)
 const unseen = ref<RenderedEntry | null>(null)
 const autoFollow = computed(() => !eink.value || settings.einkFollow)
@@ -101,7 +107,7 @@ const jumpAction = computed<"new" | "answer" | "bottom" | null>(() => {
     return answerAhead.value ? "answer" : "bottom"
 })
 const jumpLabel = computed(() => jumpAction.value === null ? null : {
-    new: pending.value.length ? `${pending.value.length} new ${pending.value.length === 1 ? "message" : "messages"} ↓` : "New messages ↓",
+    new: pendingVisible.value.length ? `${pendingVisible.value.length} new ${pendingVisible.value.length === 1 ? "message" : "messages"} ↓` : "New messages ↓",
     answer: "Latest answer ↓",
     bottom: "Scroll to bottom ↓",
 }[jumpAction.value])
@@ -126,8 +132,14 @@ function measureVisibility() {
 function onScroll() {
     measureVisibility()
     if (atTranscriptEnd.value) following.value = true
-    else if (!programmaticScroll && window.scrollY < lastScrollY) following.value = false
+    else if (!programmaticScroll && userScrollIntent && window.scrollY < lastScrollY) following.value = false
     lastScrollY = window.scrollY
+    userScrollIntent = false
+}
+
+function markScrollIntent() { userScrollIntent = true }
+function markScrollKey(event: KeyboardEvent) {
+    if (["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key)) markScrollIntent()
 }
 
 watch(shown, () => void nextTick(measureVisibility))
@@ -136,6 +148,10 @@ watch(eink, () => void nextTick(measureVisibility))
 let layoutObserver: ResizeObserver | null = null
 onMounted(() => {
     window.addEventListener("scroll", onScroll, {passive: true})
+    window.addEventListener("wheel", markScrollIntent, {passive: true})
+    window.addEventListener("touchmove", markScrollIntent, {passive: true})
+    window.addEventListener("pointerdown", markScrollIntent, {passive: true})
+    window.addEventListener("keydown", markScrollKey)
     window.addEventListener("resize", measureVisibility)
     if (typeof ResizeObserver !== "undefined") {
         layoutObserver = new ResizeObserver(measureVisibility)
@@ -145,6 +161,10 @@ onMounted(() => {
 })
 onBeforeUnmount(() => {
     window.removeEventListener("scroll", onScroll)
+    window.removeEventListener("wheel", markScrollIntent)
+    window.removeEventListener("touchmove", markScrollIntent)
+    window.removeEventListener("pointerdown", markScrollIntent)
+    window.removeEventListener("keydown", markScrollKey)
     window.removeEventListener("resize", measureVisibility)
     layoutObserver?.disconnect()
 })
@@ -181,11 +201,7 @@ async function onLiveAppend(entries: RenderedEntry[]) {
     const follow = autoFollow.value && following.value
     const calls = new Set([...transcript.value.entries, ...pending.value, ...entries]
         .filter((e) => e.kind === "tool_call").map((e) => e.call_id))
-    const visible = entries.filter((e) => {
-        if (e.kind === "thinking") return thinking.value
-        if (e.kind === "tool_result" || e.kind === "subagent") return !calls.has(e.call_id)
-        return true
-    })
+    const visible = visibleEntries(entries, calls)
     if (!follow && unseen.value === null) unseen.value = visible[0] ?? null
     if (eink.value && !follow && (pending.value.length > 0 || visible.length > 0)) {
         pending.value.push(...entries)
@@ -239,6 +255,7 @@ onBeforeUnmount(() => {
 })
 
 async function jump() {
+    following.value = true
     const firstUnseen = unseen.value
     const target = firstUnseen
         ? (firstUnseen.kind === "assistant" ? firstUnseen.id : null)

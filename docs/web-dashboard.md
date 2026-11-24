@@ -448,8 +448,8 @@ in a compact header while you read. One context-aware button handles navigation:
   **Scroll to bottom ↓**, which jumps to the end and resumes follow.
 - **New messages ↓** takes priority when entries arrive while follow is off. It
   jumps to the first unseen entry's start if that entry is an answer; otherwise
-  it jumps to the end. A jump to a long answer's start does not resume follow
-  until you reach the end. E-ink keeps the new entries held until this tap.
+  it jumps to the end. The button resumes follow; e-ink keeps the new entries
+  held until this tap.
 
 A truncated title keeps its full text as a tooltip and accessible heading name.
 Page turns reserve the header, bottom controls and device safe-area inset, even

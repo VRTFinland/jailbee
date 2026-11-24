@@ -221,6 +221,9 @@ describe("SessionView live follow", () => {
         const call: RenderedEntry = {kind: "tool_call", id: "c1", timestamp: null, call_id: "c", name: "Bash", summary: "Bash", input_html: "", model: null}
         await append(sessionKey, [call])
         await wrapper.get(".new-messages").trigger("click")
+        Object.defineProperty(window, "scrollY", {value: 50, configurable: true})
+        window.dispatchEvent(new Event("wheel"))
+        window.dispatchEvent(new Event("scroll"))
         await append(sessionKey, [{kind: "thinking", id: "t1", timestamp: null, html: "", model: null}, {kind: "tool_result", id: "r1", timestamp: null, call_id: "c", html: "", truncated: false, full_length: 0, is_error: false}])
         expect(wrapper.find(".new-messages").exists()).toBe(false)
         await append(sessionKey, [answer])
@@ -265,6 +268,7 @@ describe("SessionView live follow", () => {
         await append(sessionKey, [answer])
         expect(scrollTo).toHaveBeenCalled()
         y = 100
+        window.dispatchEvent(new Event("wheel"))
         window.dispatchEvent(new Event("scroll"))
         scrollTo.mockClear()
         bottom = 4500
@@ -324,7 +328,7 @@ describe("SessionView in the e-ink profile", () => {
         expect(wrapper.get(".new-messages").text()).toBe("2 new messages ↓")
         expect(scrollTo).not.toHaveBeenCalled()
 
-        await append(sessionKey, [{...answer, id: "a3"}])
+        await append(sessionKey, [{...answer, id: "a3"}, {kind: "thinking", id: "t2", timestamp: null, html: "", model: null}])
         expect(wrapper.get(".new-messages").text()).toBe("3 new messages ↓")
     })
 
