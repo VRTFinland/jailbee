@@ -120,8 +120,12 @@ def global_menu_actions(
     return [
         item
         for item in items
-        if (argv := global_action_argv(item[1])) is None
-        or permitted(argv, policy, transport=transport)
+        # The terminal config editor has no remote SSH hand-off, even on an unrestricted host.
+        if not (transport == "ssh" and item[1] == "global-config-edit-global")
+        and (
+            (argv := global_action_argv(item[1])) is None
+            or permitted(argv, policy, transport=transport)
+        )
     ]
 
 

@@ -124,7 +124,8 @@ The global menu belongs to no row and opens even with an empty table.
 `Stop all…` runs `jailbee stop --all`; `Resume…` runs `jailbee resume`,
 without a repo selector. Both use the action runner: CLI confirmation questions
 appear as modals, and output and results stay in the notification queue.
-Escape or a click outside closes the menu, like a container menu.
+Escape or a click outside closes the menu, like a container menu. Global config
+is unavailable over remote SSH, as with the existing `E` shortcut.
 
 ![The global menu](images/dashboard/dashboard-global-menu.png)
 

@@ -72,9 +72,22 @@ def test_existing_shortcuts_select_global_entries(mocker, tmp_path, key):
 
     group = RepoGroup("alpha", str(tmp_path), None, [])
     fake_accounts_cli(mocker)
-    mocker.patch.object(tsession.subprocess, "run", return_value=mocker.Mock(returncode=0))
+    child = mocker.patch.object(tsession.subprocess, "run", return_value=mocker.Mock(returncode=0))
     run = drive(mocker, ["g", key], [group])
-    assert not isinstance(run.trace[2].overlay, GlobalMenuState)
+    overlay = run.trace[2].overlay
+    if key == "A":
+        assert isinstance(overlay, tsession.da.AccountsState)
+    elif key == "Q":
+        assert isinstance(overlay, tsession.Picker) and overlay.purpose == "queue"
+    elif key in ("f2", "S"):
+        assert isinstance(overlay, tsession.SettingsState)
+    elif key in ("h", "question_mark"):
+        assert overlay == "help"
+    else:
+        assert overlay is None
+        child.assert_called_once_with(
+            ["jailbee", "config", "edit", "--global"], check=False, cwd=tmp_path
+        )
 
 
 def test_restrictive_ssh_menu_hides_disallowed_commands_on_the_pilot(mocker):
@@ -89,6 +102,14 @@ def test_restrictive_ssh_menu_hides_disallowed_commands_on_the_pilot(mocker):
     assert "[Q] Notifications" in run.screens[1]
     assert "[F2] Settings" in run.screens[1]
     assert "Stop all" not in run.screens[1]
+
+
+def test_ssh_menu_omits_terminal_config_editor_even_when_command_policy_allows_it(mocker):
+    policy = RemoteSSHConfig(restrict_host=False, commands={"mode": "full"})
+    run = drive(mocker, ["g"], [], remote=True, transport="ssh", ssh_policy=policy)
+    verbs = [item[1] for item in run.trace[1].overlay.actions]
+    assert "global-stop-all" in verbs and "global-resume" in verbs
+    assert "global-config-edit-global" not in verbs
 
 
 def test_shared_global_menu_filters_commands_with_the_remote_policy():
