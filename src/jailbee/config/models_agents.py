@@ -15,12 +15,14 @@ from pydantic import (
     ConfigDict,
     Field,
     SecretStr,
+    ValidationError,
     ValidationInfo,
     field_validator,
     model_validator,
 )
 
 from jailbee.config.common import CONTAINER_USERNAME
+from jailbee.config.errors import ConfigError
 from jailbee.config.models_net import _reject_offline
 
 # An agent name becomes a tmux window name and a `jailbee doctor` label —
@@ -56,6 +58,23 @@ class AgentModelGuidance(BaseModel):
     model_policy: str = Field(
         default="", description="General rules for choosing subagent and child-runner models."
     )
+
+    @field_validator("models", mode="before")
+    @classmethod
+    def _models_mapping(cls, value: object) -> object:
+        if value is None:
+            return {}
+        if isinstance(value, dict) and {"preset", *AgentConfig.model_fields}.intersection(value):
+            try:
+                # Model aliases may legitimately share an agent field's name.
+                for key in {"preset", *AgentConfig.model_fields}.intersection(value):
+                    ModelGuidance.model_validate(value[key])
+            except ValidationError:
+                raise ConfigError(
+                    "`agents.models` is reserved for model guidance; rename the agent "
+                    "(for example to `models-agent`) and update references to it"
+                ) from None
+        return value
 
 
 class AutostartStep(BaseModel):

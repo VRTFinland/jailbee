@@ -940,7 +940,9 @@ changes runner validation nor grants model access. A repo layer can override a
 single field without losing other fields or models; host-local
 `repos/<prefix>.yaml` overrides repo, which overrides global.
 
-Both keys have separate config-editor fields, not agent entries. In any
+Both keys have separate config-editor fields, not agent entries. `models` is
+reserved: rename any agent with that name and update its references.
+`models: null` is accepted as an empty map. In any
 container, `jailbee agent models [--json]` reads the effective map and policy
 live through the broker. Host edits appear on the next query with no `apply`
 or restart. Consult the command and follow `model_policy` when selecting models

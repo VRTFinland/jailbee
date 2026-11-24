@@ -13,7 +13,10 @@ before editing `## Unreleased`.
 - `agents.models` and `agents.model_policy` describe user-defined model aliases
   and selection rules, with field-level repo overrides. In any container,
   `jailbee agent models [--json]` reads this guidance live through the broker;
-  host config changes need no `apply` or restart. JailBee ships no model opinions
+  host config changes need no `apply` or restart. Unchanged layers are cached
+  without git detection, and slow host-status refreshes cannot block model
+  queries. The agent name `models` is reserved; existing agents with that name
+  must be renamed. JailBee ships no model opinions
   ([#149](https://github.com/VRTFinland/jailbee/issues/149)).
 - `jailbee host status [--json]` lets any container check live host load and CPU
   count, total/available memory, free space in its Incus storage pool, and the

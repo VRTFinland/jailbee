@@ -10,6 +10,7 @@ import os
 import threading
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from time import monotonic
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -47,6 +48,14 @@ class LiveQuery:
         }
 
 
+@dataclass(frozen=True)
+class _ModelCache:
+    paths: tuple[Path, ...]
+    stamps: tuple[tuple[int, int, int] | None, ...]
+    result: dict[str, Any]
+    prefix: str
+
+
 def host_queries(incus: Incus) -> dict[str, LiveQuery]:
     """The production registry; later queries use this same transport and policy."""
 
@@ -54,14 +63,24 @@ def host_queries(incus: Incus) -> dict[str, LiveQuery]:
     expires = 0.0
     inventory: list[dict[str, Any]] = []
     inventory_error: IncusError | None = None
+    missing_callers: dict[str, float] = {}
     pools: dict[str, tuple[float, dict[str, Any] | IncusError]] = {}
 
     def readings(uuid: str) -> tuple[list[dict[str, Any]], str | None, int | None]:
         nonlocal expires, inventory, inventory_error
         # One refresh at a time across containers; failures share the same short TTL.
         with lock:
-            refresh = monotonic() >= expires
+            refresh = monotonic() >= expires or (
+                inventory_error is None
+                and monotonic() >= missing_callers.get(uuid, 0.0)
+                and not any(
+                    (row.get("config") or {}).get("volatile.uuid") == uuid for row in inventory
+                )
+            )
             if refresh:
+                for caller, until in list(missing_callers.items()):
+                    if monotonic() >= until:
+                        del missing_callers[caller]
                 for pool, (until, _) in list(pools.items()):
                     if monotonic() >= until:
                         del pools[pool]
@@ -84,6 +103,7 @@ def host_queries(incus: Incus) -> dict[str, LiveQuery]:
             None,
         )
         if caller is None:
+            missing_callers[uuid] = monotonic() + 2.0
             raise wire.WireError(wire.STORE, "calling container is no longer listed; retry shortly")
         devices = caller.get("expanded_devices") or {}
         pool = next(
@@ -133,14 +153,57 @@ def host_queries(incus: Incus) -> dict[str, LiveQuery]:
             ),
         }
 
+    model_lock = threading.Lock()
+    model_cache: dict[Path, _ModelCache] = {}
+
+    def fingerprint(paths: tuple[Path, ...]) -> tuple[tuple[int, int, int] | None, ...]:
+        stamps: list[tuple[int, int, int] | None] = []
+        for path in paths:
+            try:
+                st = path.stat()
+            except FileNotFoundError:
+                stamps.append(None)
+            else:
+                stamps.append((st.st_mtime_ns, st.st_size, st.st_ino))
+        return tuple(stamps)
+
     def models(uuid: str, view: ContainerSnapshot) -> Mapping[str, object]:
-        from jailbee.config import load_repo_config
+        from jailbee.config.loader import load_repo_config_without_git
+        from jailbee.config.local_layer import local_config_path
+        from jailbee.global_config import default_global_config_path
+        from jailbee.paths import REPO_CONFIG_DIRS
 
         if view.project_config is None:
-            raise wire.WireError(wire.STORE, "calling container has no repository config")
-        # The snapshot identifies the repo only: never return its cached settings.
-        cfg = load_repo_config(view.project_config.repo_root)
-        return cfg.agent_models().model_dump(mode="json")
+            raise wire.WireError(wire.REFUSED, "calling container has no repository config")
+        root = view.project_config.repo_root
+        # Independent of the slow Incus lock; only changed layers are parsed again.
+        with model_lock:
+            cached = model_cache.get(root)
+            if cached is not None and fingerprint(cached.paths) == cached.stamps:
+                return cached.result
+            paths = (
+                default_global_config_path(),
+                *(root / directory / "config.yaml" for directory in REPO_CONFIG_DIRS),
+                local_config_path(
+                    cached.prefix if cached is not None else view.project_config.container_prefix
+                ),
+            )
+            before = fingerprint(paths)
+            cfg = load_repo_config_without_git(root)
+            result = cfg.agent_models().model_dump(mode="json")
+            # Never stamp a result with a version that changed while it was read.
+            if local_config_path(cfg.container_prefix) == paths[-1]:
+                model_cache[root] = _ModelCache(paths, before, result, cfg.container_prefix)
+            else:
+                # A prefix edit selects a different host-local layer. Re-read once
+                # before caching so its stamp also precedes the load.
+                paths = (*paths[:-1], local_config_path(cfg.container_prefix))
+                before = fingerprint(paths)
+                cfg = load_repo_config_without_git(root)
+                result = cfg.agent_models().model_dump(mode="json")
+                if local_config_path(cfg.container_prefix) == paths[-1]:
+                    model_cache[root] = _ModelCache(paths, before, result, cfg.container_prefix)
+            return result
 
     return {
         AGENT_MODELS: LiveQuery(models, {"models": "all", "model_policy": "all"}),

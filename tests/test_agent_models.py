@@ -97,6 +97,49 @@ def test_container_model_guidance_output(broker: FakeBroker, sockdir, monkeypatc
     assert [(r.op, r.args) for r in broker.requests] == [("agent.models", {})]
 
 
+@pytest.mark.parametrize(
+    "entry",
+    [{"command": "my-agent", "preset": "codex"}, {"env": {"FOO": "bar"}}],
+)
+def test_agent_named_models_gets_actionable_config_error(tmp_path, entry):
+    with pytest.raises(ConfigError, match=r"reserved.*rename") as error:
+        load_config_from_layers(
+            {},
+            {"agents": {"models": entry}},
+            tmp_path / "repo" / ".jailbee" / "config.yaml",
+            origin="repo",
+            local_raw={},
+            skip_git=True,
+        )
+    assert "validation error" not in str(error.value)
+
+
+def test_invalid_guidance_beside_agent_field_alias_reports_the_actual_model(tmp_path):
+    with pytest.raises(ConfigError) as error:
+        load_config_from_layers(
+            {},
+            {"agents": {"models": {"env": {"label": "Environment"}, "haiku": {"typo": "x"}}}},
+            tmp_path / "repo" / ".jailbee" / "config.yaml",
+            origin="repo",
+            local_raw={},
+            skip_git=True,
+        )
+    assert "haiku.typo" in str(error.value)
+    assert "rename" not in str(error.value)
+
+
+def test_null_models_is_an_empty_map(tmp_path):
+    cfg = load_config_from_layers(
+        {},
+        {"agents": {"models": None}},
+        tmp_path / "repo" / ".jailbee" / "config.yaml",
+        origin="repo",
+        local_raw={},
+        skip_git=True,
+    )
+    assert cfg.agent_models().model_dump() == {"models": {}, "model_policy": ""}
+
+
 def test_model_guidance_defaults_are_opinion_free(tmp_path):
     cfg = load_config_from_layers(
         {},

@@ -74,7 +74,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from jailbee.orchestration import wire
-from jailbee.orchestration.live_query import LIVE_OPS
+from jailbee.orchestration.live_query import AGENT_MODELS, LIVE_OPS
 from jailbee.orchestration.query import QUERY_OPS, SNAPSHOT_OPS
 
 if TYPE_CHECKING:
@@ -134,7 +134,7 @@ class _Conn:
     close_after_flush: bool = False
     in_flight: bool = False
     store_held: bool = False
-    live_held: bool = False
+    live_held: str | None = None
     # The line at the head of ``inbuf`` is an outbox put holding its
     # container's outbox slot (it may grow to the outbox cap).
     slot_line: bool = False
@@ -190,9 +190,10 @@ class Listener:
         self._queries = queries
         self._query_queue: queue.Queue[RequestEvent] = queue.Queue(maxsize=_QUERY_QUEUE_CAP)
         self._live_queue: queue.Queue[RequestEvent] = queue.Queue(maxsize=_QUERY_QUEUE_CAP)
+        self._models_queue: queue.Queue[RequestEvent] = queue.Queue(maxsize=_QUERY_QUEUE_CAP)
         self._live_threads: list[threading.Thread] = []
-        self._live_queries: dict[str, int] = {}
-        self._live_pending: set[int] = set()
+        self._live_queries: dict[tuple[str, str], int] = {}
+        self._live_pending: dict[int, str] = {}
         self._query_stop = threading.Event()
         self._query_lock = threading.Lock()  # orders worker handoffs against shutdown
         self._query_threads: list[threading.Thread] = []
@@ -234,6 +235,7 @@ class Listener:
             for work_queue, threads, count, name in (
                 (self._query_queue, self._query_threads, _QUERY_WORKERS, "query"),
                 (self._live_queue, self._live_threads, _LIVE_WORKERS, "live"),
+                (self._models_queue, self._live_threads, 1, "models"),
             ):
                 for i in range(count):
                     worker = threading.Thread(
@@ -262,7 +264,7 @@ class Listener:
         deadline = time.monotonic() + 0.2
         for worker in (*self._query_threads, *self._live_threads):
             worker.join(timeout=max(0.0, deadline - time.monotonic()))
-        for work_queue in (self._query_queue, self._live_queue):
+        for work_queue in (self._query_queue, self._live_queue, self._models_queue):
             while True:
                 try:
                     work_queue.get_nowait()
@@ -625,8 +627,9 @@ class Listener:
                 and self._store_queries.get(conn.uuid, 0) >= MAX_STORE_QUERIES_PER_CONTAINER
             )
             or (
-                conn.live_held
-                and self._live_queries.get(conn.uuid, 0) >= MAX_LIVE_QUERIES_PER_CONTAINER
+                conn.live_held is not None
+                and self._live_queries.get((conn.uuid, conn.live_held), 0)
+                >= MAX_LIVE_QUERIES_PER_CONTAINER
             )
         )
 
@@ -682,12 +685,13 @@ class Listener:
             live_query = self._queries is not None and request.op in LIVE_OPS
             if (
                 live_query
-                and self._live_queries.get(conn.uuid, 0) >= MAX_LIVE_QUERIES_PER_CONTAINER
+                and self._live_queries.get((conn.uuid, request.op), 0)
+                >= MAX_LIVE_QUERIES_PER_CONTAINER
             ):
-                conn.live_held = True
+                conn.live_held = request.op
                 self._update_interest(conn)
                 return
-            conn.live_held = False
+            conn.live_held = None
             store_query = (
                 self._queries is not None
                 and request.op in QUERY_OPS
@@ -706,8 +710,9 @@ class Listener:
             # A dispatched put keeps the slot until it is answered or released.
             conn.slot_line = False
             if live_query:
-                self._live_pending.add(conn.conn_id)
-                self._live_queries[conn.uuid] = self._live_queries.get(conn.uuid, 0) + 1
+                self._live_pending[conn.conn_id] = request.op
+                key = (conn.uuid, request.op)
+                self._live_queries[key] = self._live_queries.get(key, 0) + 1
             if store_query:
                 self._store_pending.add(conn.conn_id)
                 self._store_queries[conn.uuid] = self._store_queries.get(conn.uuid, 0) + 1
@@ -724,7 +729,10 @@ class Listener:
                     self.respond(conn.conn_id, self._queries.answer(conn.uuid, request))
                 else:
                     try:
-                        work_queue = self._live_queue if live_query else self._query_queue
+                        if request.op == AGENT_MODELS:
+                            work_queue = self._models_queue
+                        else:
+                            work_queue = self._live_queue if live_query else self._query_queue
                         work_queue.put_nowait(event)
                     except queue.Full:
                         self.respond(conn.conn_id, wire.fail(wire.BUSY, "query workers are busy"))
@@ -789,12 +797,13 @@ class Listener:
         if uuid is None:
             return
         if conn_id in self._live_pending:
-            self._live_pending.remove(conn_id)
-            live_left = self._live_queries[uuid] - 1
+            op = self._live_pending.pop(conn_id)
+            key = (uuid, op)
+            live_left = self._live_queries[key] - 1
             if live_left > 0:
-                self._live_queries[uuid] = live_left
+                self._live_queries[key] = live_left
             else:
-                self._live_queries.pop(uuid)
+                self._live_queries.pop(key)
         if conn_id in self._store_pending:
             self._store_pending.remove(conn_id)
             store_left = self._store_queries[uuid] - 1

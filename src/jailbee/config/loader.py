@@ -767,7 +767,9 @@ def load_config_from_text(text: str, path: Path) -> Config:
     return _load_config_from_repo_raw(_parse_yaml_text(text, str(path)), path, origin=str(path))
 
 
-def _load_config_from_repo_raw(repo_raw: dict[str, object], path: Path, *, origin: str) -> Config:
+def _load_config_from_repo_raw(
+    repo_raw: dict[str, object], path: Path, *, origin: str, skip_git: bool = False
+) -> Config:
     """Build a validated `Config` from an already-parsed repo layer.
 
     The shared body of `load_config_from_text` (repo layer from YAML text) and
@@ -786,7 +788,7 @@ def _load_config_from_repo_raw(repo_raw: dict[str, object], path: Path, *, origi
     from jailbee.global_config import default_global_config_path
 
     global_raw = _read_yaml_or_empty(default_global_config_path())
-    return load_config_from_layers(global_raw, repo_raw, path, origin=origin)
+    return load_config_from_layers(global_raw, repo_raw, path, origin=origin, skip_git=skip_git)
 
 
 def load_config_from_layers(
@@ -1242,6 +1244,17 @@ def load_orphan_base_config(repo_root: Path) -> Config:
         )
         cfg._synthetic = True
         return _sanitize_columns(cfg)
+
+
+def load_repo_config_without_git(repo_root: Path) -> Config:
+    """Load current layers for read-only queries that need no branch or remote."""
+    path = repo_config_path_warned(repo_root)
+    if path is None:
+        raw = synthesized_repo_layer(repo_root)
+        path = repo_root / REPO_CONFIG_DIRS[0] / "config.yaml"
+    else:
+        raw = _parse_yaml_text(path.read_text(), str(path))
+    return _load_config_from_repo_raw(raw, path, origin=str(path), skip_git=True)
 
 
 def load_repo_config_unsanitized(repo_root: Path) -> Config:
