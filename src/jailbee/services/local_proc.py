@@ -97,8 +97,12 @@ def _control_lines(
 class LocalProc:
     """Execute container-local service operations."""
 
-    def tmux(self, args: Sequence[str]) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(["tmux", *args], capture_output=True, text=True, check=False)
+    def tmux(
+        self, args: Sequence[str], *, timeout: float | None = None
+    ) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["tmux", *args], capture_output=True, text=True, check=False, timeout=timeout
+        )
 
     def follow_pane(
         self,

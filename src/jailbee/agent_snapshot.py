@@ -1,5 +1,6 @@
 """Capture and consume container-local agent sessions across restarts."""
 
+import fcntl
 import json
 import os
 import pwd
@@ -7,14 +8,16 @@ import re
 import stat
 import sys
 import tempfile
+import time
 from collections.abc import Mapping
 from pathlib import Path
-
-from jailbee.services.local_proc import LocalProc
+from subprocess import TimeoutExpired
 
 SNAPSHOT_RELPATH = ".local/state/jailbee/agent-sessions.json"
 LAUNCHERS_RELPATH = ".local/state/jailbee/launchers"
 SESSIONS_RELPATH = ".claude/sessions"
+REGISTRY_RELPATH = ".local/state/jailbee/live-agent-sessions.json"
+PROC = Path("/proc")
 _LIMIT = 65536
 _UUID = re.compile(r"[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}\Z")
 
@@ -130,20 +133,169 @@ def _write_snapshot(path: Path, payload: bytes) -> None:
     try:
         with os.fdopen(fd, "wb") as stream:
             stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
         os.replace(name, path)
+        directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
     finally:
         if os.path.exists(name):
             os.unlink(name)
 
 
+def _hook_process(home: Path, proc: Path) -> tuple[str, str, list[str], str | None]:
+    pid = str(os.getppid())
+    for _ in range(32):
+        start = _start(proc, pid)
+        args = _argv(proc / pid / "cmdline")
+        if (
+            len(args) > 1
+            and Path(args[0]).name in {"node", "nodejs", "bun"}
+            and (
+                Path(args[1]).name == "claude"
+                or args[1].endswith("/@anthropic-ai/claude-code/cli.js")
+            )
+        ):
+            args = ["claude", *args[2:]]
+        if start is None:
+            break
+        launcher = _launcher(home, pid, start, args)
+        data = _record(home / SESSIONS_RELPATH / f"{pid}.json")
+        matching_record = data is not None and str(data["procStart"]) == start
+        if _valid_launcher(args) or launcher != ["claude"] or matching_record:
+            tmux = data.get("tmux") if data and matching_record else None
+            return pid, start, launcher, tmux if isinstance(tmux, str) else None
+        raw = _read(proc / pid / "stat")
+        if raw is None:
+            break
+        try:
+            parent = raw.decode().rsplit(")", 1)[1].split()[1]
+        except (UnicodeError, IndexError):
+            break
+        if parent == pid or parent == "0":
+            break
+        pid = parent
+    return "", "", ["claude"], None
+
+
+def _lock(fd: int) -> None:
+    # Serialize ordinary concurrent hooks, but never wait on a stuck owner.
+    deadline = time.monotonic() + 0.2
+    while True:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return
+        except BlockingIOError:
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(0.005)
+
+
+def register_session(
+    home: Path,
+    data: Mapping[str, object],
+    *,
+    ended: bool = False,
+    windows: Mapping[str, str] | None = None,
+) -> None:
+    """Persist a hook session without relying on Claude's transient PID files."""
+    sid, cwd = data.get("session_id"), data.get("cwd")
+    if not isinstance(sid, str) or not _UUID.fullmatch(sid):
+        return
+    if not ended and (
+        not isinstance(cwd, str) or not os.path.isabs(cwd) or any(c in cwd for c in "\0\n\r")
+    ):
+        return
+    pid, start, launcher, tmux = _hook_process(home, PROC)
+    record = _record(home / SESSIONS_RELPATH / f"{pid}.json") if pid else None
+    if (
+        not ended
+        and record
+        and str(record["procStart"]) == start
+        and record["kind"] != "interactive"
+    ):
+        return
+    match = re.fullmatch(r"autostart(?:-\d+)?:(@\d+)\.%\d+", tmux) if tmux else None
+    window = (windows or {}).get(match[1]) if match else None
+    path = home / REGISTRY_RELPATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(path.with_suffix(".lock"), os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    try:
+        _lock(fd)
+        registry = _json(path)
+        rows = registry.get("sessions", []) if isinstance(registry, dict) else []
+        if not isinstance(rows, list):
+            rows = []
+        rows = [
+            row
+            for row in rows
+            if isinstance(row, dict)
+            and row.get("session_id") != sid
+            and (
+                not row.get("ended")
+                or (
+                    isinstance(row.get("pid"), str)
+                    and bool(row["pid"])
+                    and _start(PROC, row["pid"]) == row.get("procStart")
+                )
+            )
+            and (ended or not pid or (row.get("pid"), row.get("procStart")) != (pid, start))
+        ]
+        rows.append(
+            {
+                "agent": "claude",
+                "session_id": sid,
+                "cwd": cwd,
+                "launcher": launcher,
+                "window": window,
+                "pid": pid,
+                "procStart": start,
+                "ended": ended,
+            }
+        )
+        _write_snapshot(
+            path, json.dumps({"version": 1, "source": "capture", "sessions": rows}).encode()
+        )
+        if not ended:
+            (home / SNAPSHOT_RELPATH).unlink(missing_ok=True)
+    finally:
+        os.close(fd)
+
+
 def capture(home: Path, *, proc: Path = Path("/proc"), windows: Mapping[str, str]) -> int:
-    sessions: list[dict[str, object]] = []
+    path = home / REGISTRY_RELPATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(path.with_suffix(".lock"), os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    try:
+        _lock(fd)
+        frozen = _json(home / SNAPSHOT_RELPATH)
+        if isinstance(frozen, dict) and isinstance(frozen.get("sessions"), list):
+            return len(frozen["sessions"])
+        return _capture(home, proc=proc, windows=windows)
+    finally:
+        os.close(fd)
+
+
+def _capture(home: Path, *, proc: Path, windows: Mapping[str, str]) -> int:
+    registry = _json(home / REGISTRY_RELPATH)
+    rows = registry.get("sessions", []) if isinstance(registry, dict) else []
+    registered = [row for row in rows if isinstance(row, dict)] if isinstance(rows, list) else []
+    sessions: list[dict[str, object]] = [row for row in registered if not row.get("ended")]
     for path in _entries(home / SESSIONS_RELPATH):
         data = _record(path)
         if data is None or data.get("kind") != "interactive":
             continue
         pid, start = str(data["pid"]), str(data["procStart"])
         if _start(proc, pid) != start:
+            continue
+        if any(
+            row.get("session_id") == data["sessionId"]
+            or (row.get("pid"), row.get("procStart")) == (pid, start)
+            for row in registered
+        ):
             continue
         tmux = data.get("tmux")
         # An attached client runs in a session grouped with autostart, which
@@ -157,7 +309,7 @@ def capture(home: Path, *, proc: Path = Path("/proc"), windows: Mapping[str, str
         sessions.append(
             _item(data, _launcher(home, pid, start, _argv(proc / pid / "cmdline")), window)
         )
-    if sessions:
+    if sessions or isinstance(registry, dict):
         payload = json.dumps({"version": 1, "source": "capture", "sessions": sessions}).encode(
             "utf-8"
         )
@@ -175,7 +327,29 @@ def _unlink_stale(path: Path) -> bool:
 
 
 def boot(home: Path, *, proc: Path = Path("/proc")) -> dict[str, object]:
-    path = home / SNAPSHOT_RELPATH
+    registry = home / REGISTRY_RELPATH
+    if _read(registry) is None:
+        return _boot(home, proc=proc, path=home / SNAPSHOT_RELPATH)
+    try:
+        fd = os.open(registry.with_suffix(".lock"), os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            frozen = home / SNAPSHOT_RELPATH
+            if _read(frozen) is not None:
+                result = _boot(home, proc=proc, path=frozen)
+                remaining = _read(frozen)
+                _write_snapshot(
+                    registry, remaining or b'{"version":1,"source":"capture","sessions":[]}'
+                )
+                return result
+            return _boot(home, proc=proc, path=registry, registry=True)
+        finally:
+            os.close(fd)
+    except (OSError, ValueError):
+        return {"version": 1, "source": "capture", "sessions": []}
+
+
+def _boot(home: Path, *, proc: Path, path: Path, registry: bool = False) -> dict[str, object]:
     has_snapshot = (path.exists() or path.is_symlink()) and not path.is_dir()
     result: dict[str, object] = {
         "version": 1,
@@ -246,7 +420,11 @@ def boot(home: Path, *, proc: Path = Path("/proc")) -> dict[str, object]:
             and isinstance(item.get("session_id"), str)
             and item["session_id"] in unconsumed
         ]
-        emitted = [item for item in entries if item not in blocked]
+        emitted = [
+            item
+            for item in entries
+            if item not in blocked and not (isinstance(item, dict) and item.get("ended"))
+        ]
         while (
             len(json.dumps({**result, "sessions": emitted}, separators=(",", ":")).encode()) + 1
             > _LIMIT
@@ -257,7 +435,7 @@ def boot(home: Path, *, proc: Path = Path("/proc")) -> dict[str, object]:
                 print("agent snapshot: dropping oversized snapshot session", file=sys.stderr)
             else:
                 blocked.insert(0, item)
-        if blocked:
+        if blocked or registry:
             remaining = {**result, "sessions": blocked}
             try:
                 _write_snapshot(path, json.dumps(remaining, separators=(",", ":")).encode())
@@ -267,19 +445,30 @@ def boot(home: Path, *, proc: Path = Path("/proc")) -> dict[str, object]:
         elif not _unlink_stale(path):
             emitted = []
         result["sessions"] = emitted
+    entries = result["sessions"]
+    if isinstance(entries, list):
+        result["sessions"] = [
+            {key: value for key, value in row.items() if key not in {"pid", "procStart", "ended"}}
+            if isinstance(row, dict)
+            else row
+            for row in entries
+        ]
     return result
 
 
-def window_names() -> dict[str, str]:
+def window_names(*, timeout: float | None = None) -> dict[str, str]:
+    from jailbee.services.local_proc import LocalProc
+
     try:
-        result = LocalProc().tmux(
-            ["list-windows", "-a", "-F", "#{session_name}\t#{window_id}\t#{window_name}"]
+        args = ["list-windows", "-a", "-F", "#{session_name}\t#{window_id}\t#{window_name}"]
+        result = (
+            LocalProc().tmux(args) if timeout is None else LocalProc().tmux(args, timeout=timeout)
         )
         if result.returncode:
             return {}
         rows = (line.split("\t", 2) for line in result.stdout.splitlines())
         return {row[1]: row[2] for row in rows if len(row) == 3 and row[0] == "autostart"}
-    except (OSError, ValueError):
+    except (OSError, ValueError, TimeoutExpired):
         return {}
 
 

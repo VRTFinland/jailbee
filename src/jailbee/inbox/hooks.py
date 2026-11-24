@@ -46,7 +46,10 @@ def stop(data: dict[str, Any], role: str) -> dict[str, Any] | None:
 
 def read_input() -> dict[str, Any]:
     try:
-        data = json.load(sys.stdin)
+        raw = sys.stdin.read(65537)
+        if len(raw) > 65536:
+            return {}
+        data = json.loads(raw)
         return data if isinstance(data, dict) else {}
-    except (ValueError, OSError, UnicodeError):
+    except (ValueError, OSError, UnicodeError, RecursionError):
         return {}

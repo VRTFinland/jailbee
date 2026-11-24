@@ -298,7 +298,7 @@ def test_rejects_unsafe_files_and_invalid_snapshot(tmp_path: Path) -> None:
     os.mkfifo(path)
     assert snapshot.capture(tmp_path, proc=tmp_path / "proc", windows={}) == 0
     target = tmp_path / snapshot.SNAPSHOT_RELPATH
-    target.parent.mkdir(parents=True)
+    target.parent.mkdir(parents=True, exist_ok=True)
     target.symlink_to(path)
     assert snapshot.boot(tmp_path, proc=tmp_path / "proc") == {
         "version": 1,
@@ -332,20 +332,22 @@ def test_boot_consumes_malformed_and_oversized_records(tmp_path: Path) -> None:
 def test_window_names_and_failure(monkeypatch: pytest.MonkeyPatch) -> None:
     from subprocess import CompletedProcess
 
+    from jailbee.services.local_proc import LocalProc
+
     calls = []
 
     def tmux(self: object, args: list[str]) -> CompletedProcess[str]:
         calls.append(args)
         return CompletedProcess(args, 0, "autostart\t@3\tclaude\nother\t@4\tignore\ninvalid\n", "")
 
-    monkeypatch.setattr(snapshot.LocalProc, "tmux", tmux)
+    monkeypatch.setattr(LocalProc, "tmux", tmux)
     assert snapshot.window_names() == {"@3": "claude"}
     assert calls == [["list-windows", "-a", "-F", "#{session_name}\t#{window_id}\t#{window_name}"]]
 
     def failure(self: object, args: list[str]) -> CompletedProcess[str]:
         raise OSError("tmux unavailable")
 
-    monkeypatch.setattr(snapshot.LocalProc, "tmux", failure)
+    monkeypatch.setattr(LocalProc, "tmux", failure)
     assert snapshot.window_names() == {}
 
 
