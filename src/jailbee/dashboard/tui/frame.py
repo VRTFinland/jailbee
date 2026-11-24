@@ -92,16 +92,18 @@ def update_line(notice: UpdateNotice, *, hover: dhit.Hit | None = None) -> Text:
     return line
 
 
-def queue_badge(counts: QueueCounts) -> Text:
+def queue_badge(counts: QueueCounts, *, accent: str, frame: int = 0) -> Text:
     """The notification queue's badge: ``⟳ running · ⚠ needs attention``, one click target.
 
-    A zero count is dim; a non-zero one is bold, the attention count also red,
-    so it reads in light, dark and monochrome themes alike.
+    Non-zero counts are bold: running uses the theme accent, attention red.
+    Only a running queue cycles through frames; an idle one keeps its static glyph.
     """
     hit = Style(meta={dhit.HIT_KEY: dhit.Hit("queue").meta_value()})
     badge = Text()
+    glyph = ("⟳", "◷", "◶", "◵")[frame % 4] if counts.running else "⟳"
     badge.append(
-        f"⟳ {counts.running}", style=Style(bold=counts.running > 0, dim=not counts.running) + hit
+        f"{glyph} {counts.running}",
+        style=(Style(color=accent, bold=True) if counts.running else Style(dim=True)) + hit,
     )
     badge.append(" · ", style=Style(dim=True) + hit)
     badge.append(
@@ -146,13 +148,14 @@ def help_lines() -> list[str]:
         "  [bold red]∞[/bold red] [bold dark_orange]>4h[/bold dark_orange]"
         " [bold yellow]<4h[/bold yellow] [bold green]<1h[/bold green]"
         " [bold cyan]<15m[/bold cyan]; names and times in the details panel.",
-        "AGE: container age; AI: agent status (◆ waiting, ● busy, ◐ shell, ○ idle;",
+        "AGE: container age; AI: agent status (✖ API error, ◆ waiting, ● busy, ◐ shell, ○ idle;",
         "  age: latest event; bright ○: activity <30 min ago). OUTBOX ✉N: staged PR/issue actions.",
         "ROLE: orch orchestrator, child (child! orchestrator not running);"
         " CHILDREN running/limit +queued; INBOX ✉N actionable unread.",
         "BASE ↗: remote-tracking base; MODE: cln clone, mnt mount.",
-        "WT / DIFF / L DIFF: ✓ clean; DIFF vs host target, L DIFF vs host HEAD.",
-        "DIFF ↑ ↓ MERGE vs the sync target: pr = PR head; pr? = PR head not fetched, host branch;",
+        "WT / SYNC diff / L DIFF: ✓ clean; L DIFF vs host HEAD.",
+        "SYNC: target marker, ↑ahead, ↓behind, diff; MERGE uses the same target.",
+        "  pr = PR head; pr? = PR head not fetched, host branch;",
         "  ⑂ = parent container (↑ not imported); ⑂? = parent not seen running, host branch.",
         "DOING ×N: process count; JOB auto:stage: autostart stage.",  # noqa: RUF001 - intentional multiplication sign
         "Menus: the key in brackets picks that entry, like Enter on it.",
@@ -250,6 +253,7 @@ class DashboardView:
     show_system: bool = True
     # The notification queue's badge counts; None while the queue is empty.
     queue: QueueCounts | None = None
+    queue_frame: int = 0
     # Content rows scrolled off the top of the details panel.
     details_scroll: int = 0
     # The details panel's chosen content height; None: the built-in one.

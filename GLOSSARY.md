@@ -70,8 +70,8 @@ independently of its theme.
 _Avoid_: e-ink mode, e-ink theme (for the behaviour)
 
 **Sync target**:
-The ref a container's DIFF/↑/↓/MERGE compare against; chosen automatically:
-parent, PR head, or host branch.
+The reference a container's committed changes and commit counts are compared
+against; chosen automatically from its parent, PR head, or host branch.
 _Avoid_: base — that is `base_branch`
 
 **Prompt channel**:

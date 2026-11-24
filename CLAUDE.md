@@ -131,7 +131,13 @@ uv run pytest                # run all tests (fast, all mocked)
 uv run pytest -n auto        # same, across every core (~2x, messier output)
 uv run pytest -xvs           # stop on first failure, verbose
 uv run pytest tests/test_X.py # single file
+make web-test                # browser app unit tests (Vitest; needs Node)
+make web-e2e                 # web dashboard end-to-end suite in Chrome (needs Node)
 ```
+
+A change to the browser app (`frontend/`) or the web server package
+(`src/jailbee/web/`) runs `make web-e2e` before it is done; the ordinary
+pytest suite does not cover the browser.
 
 ### Lint and type-check
 ```bash

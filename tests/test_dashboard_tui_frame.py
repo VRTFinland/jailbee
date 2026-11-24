@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import replace
 
 import pytest
@@ -493,23 +494,196 @@ def test_every_saved_view_state_keeps_a_stored_show_system_preference(mocker, tm
 # --- the notification queue badge ----------------------------------------------
 
 
-def test_the_queue_badge_leads_the_system_row(tmp_path):
+def test_the_queue_badge_is_at_the_right_end_of_the_title(tmp_path):
     from jailbee.dashboard.notifications import QueueCounts
 
     view = view_of(
         [_long(tmp_path, 3)], system=_system(), show_system=True, queue=QueueCounts(2, 1)
     )
     lines = paint(view, size=(100, 25))
-    assert "⟳ 2 · ⚠ 1" in lines[1] and "Mem" in lines[1]
+    assert lines[0].endswith(" ⟳ 2 · ⚠ 1 ─╮")
+    assert "Mem" in lines[1] and "⚠" not in lines[1]
     assert "NAME" in lines[2]
 
 
-def test_the_queue_badge_keeps_its_row_while_the_status_is_hidden(tmp_path):
+def test_the_queue_badge_takes_no_body_row_while_the_status_is_hidden(tmp_path):
     from jailbee.dashboard.notifications import QueueCounts
 
     view = view_of(
         [_long(tmp_path, 3)], system=_system(), show_system=False, queue=QueueCounts(0, 0)
     )
     lines = paint(view, size=(100, 25))
-    assert "⟳ 0 · ⚠ 0" in lines[1] and "Mem" not in lines[1]
-    assert "NAME" in lines[2]
+    assert lines[0].endswith(" ⟳ 0 · ⚠ 0 ─╮")
+    assert "NAME" in lines[1] and "Mem" not in lines[1]
+
+
+@pytest.mark.parametrize("width", [20, 32, 42, 80])
+def test_a_narrow_title_ellipsises_before_the_queue_badge(tmp_path, width):
+    from jailbee.dashboard.notifications import QueueCounts
+
+    lines = paint(view_of([_long(tmp_path)], queue=QueueCounts(12, 34)), size=(width, 12))
+    assert lines[0].endswith("…  ⟳ 12 · ⚠ 34 ─╮")
+    assert all(cell_len(line) == width for line in lines)
+
+
+@pytest.mark.parametrize(
+    ("width", "label"),
+    [
+        (18, " ⟳ 12 · ⚠ 34"),
+        (17, "⟳ 12 · ⚠ 34"),
+        (16, "⟳ 12 · ⚠ …"),
+        (10, "⟳ 1…"),
+        (7, "…"),
+        (6, ""),
+    ],
+)
+def test_a_tiny_title_keeps_the_badge_instead_of_the_dashboard_name(tmp_path, width, label):
+    from jailbee.dashboard.notifications import QueueCounts
+
+    lines = paint(view_of([_long(tmp_path)], queue=QueueCounts(12, 34)), size=(width, 12))
+    assert lines[0] == (f"╭─ {label} ─╮" if label else "╭" + "─" * (width - 2) + "╮")
+    assert all(cell_len(line) == width for line in lines)
+
+
+@pytest.mark.parametrize("running", [0, 2])
+@pytest.mark.parametrize("theme", ["colour", "monochrome"])
+def test_the_badge_has_accent_and_non_colour_emphasis(
+    mocker, tmp_path, monkeypatch, theme, running
+):
+    from textual.color import Color
+    from textual.theme import BUILTIN_THEMES
+
+    from jailbee.dashboard.hit import Hit
+    from tests.dashboard_pilot import hit_offset, make_app
+
+    assert BUILTIN_THEMES["nord"].accent != BUILTIN_THEMES["gruvbox"].accent
+    if theme == "monochrome":
+        monkeypatch.setenv("NO_COLOR", "1")
+    else:
+        monkeypatch.delenv("NO_COLOR")
+    app = make_app(mocker, [_long(tmp_path, 3)])
+    entry = app.session.queue.start("jailbee doctor", "alpha")
+    app.session.queue.finish(entry, status=1, output="failed")
+    for _ in range(running):
+        app.session.queue.start("jailbee doctor", "alpha")
+
+    async def script():
+        async with app.run_test(size=(100, 25)) as pilot:
+            seen = {}
+            for active_theme in ("nord", "gruvbox", "nord"):
+                app.theme = active_theme
+                await pilot.pause()
+                x, y = hit_offset(app, Hit("queue"))
+                assert y == 0 and x > 80
+                glyph = app.screen.get_style_at(x, y)
+                attention = app.screen.get_style_at(x + 6, y)
+                assert attention.bold
+                assert glyph.bold if running else glyph.dim and not glyph.bold
+                if theme == "monochrome":
+                    for strip in app.screen._compositor.render_strips():
+                        for segment in strip:
+                            if segment.style:
+                                for color in (segment.style.color, segment.style.bgcolor):
+                                    assert color is None or color.is_default
+                elif running:
+                    expected = Color.parse(app.get_css_variables()["accent"]).rich_color
+                    assert glyph.color == expected
+                    seen[active_theme] = glyph.color
+                if theme != "monochrome":
+                    assert attention.color.number == 1  # ANSI red
+            if theme == "colour" and running:
+                assert seen["nord"] != seen["gruvbox"]  # the glyph really follows the theme
+
+    asyncio.run(script())
+
+
+def test_spinner_only_refreshes_do_not_redraw_the_body(mocker, tmp_path):
+    from tests.dashboard_pilot import FROZEN_NOW, make_app, screen_text
+
+    mocker.patch.object(tsession, "_now", return_value=FROZEN_NOW)
+    app = make_app(mocker, [_long(tmp_path, 3)])
+    app.session.queue.start("jailbee doctor", "alpha")
+
+    async def script():
+        async with app.run_test(size=(100, 25)) as pilot:
+            await pilot.pause()
+            app.refresh_frame()
+            await pilot.pause()
+            shown = mocker.spy(app.frame, "show")
+            before = screen_text(app).splitlines()
+            app._timer_tick()
+            await pilot.pause()
+            after = screen_text(app).splitlines()
+            assert after[0] != before[0] and after[1:] == before[1:]
+            shown.assert_not_called()
+            app.session.handle_key("down")
+            app.refresh_frame()
+            await pilot.pause()
+            shown.assert_called_once()
+
+    asyncio.run(script())
+
+
+def test_the_queue_spinner_uses_timer_ticks_and_stops_when_idle(mocker, tmp_path):
+    from datetime import timedelta
+
+    from tests.dashboard_pilot import FROZEN_NOW, make_app, screen_text
+
+    now = [FROZEN_NOW]
+    mocker.patch.object(tsession, "_now", side_effect=lambda: now[0])
+    app = make_app(mocker, [_long(tmp_path, 3)])
+    entry = app.session.queue.start("jailbee doctor", "alpha")
+    tops = []
+
+    async def script():
+        async with app.run_test(size=(100, 25)) as pilot:
+            await pilot.pause()
+            app._timer_tick()
+            await pilot.pause()
+            for delay in (0, 100, 600, 1100, 250):
+                tops.append(screen_text(app).splitlines()[0])
+                now[0] += timedelta(milliseconds=delay)
+                app._timer_tick()
+                await pilot.pause()
+            app.session.queue.finish(entry, status=1, output="failed")
+            app.refresh_frame()
+            await pilot.pause()
+            idle = screen_text(app).splitlines()[0]
+            assert idle.endswith(" ⟳ 0 · ⚠ 1 ─╮")
+            shown = mocker.spy(app.frame, "show")
+            for _ in range(3):
+                now[0] += timedelta(milliseconds=250)
+                app.refresh_frame()
+                await pilot.pause()
+                assert screen_text(app).splitlines()[0] == idle
+            assert shown.call_count == 0
+
+    asyncio.run(script())
+    glyphs = [top[-12] for top in tops]
+    cycle = "⟳◷◶◵"
+    start = cycle.index(glyphs[0])
+    assert "".join(glyphs) == (cycle * 2)[start : start + 5]
+
+
+def test_spinner_advances_only_on_timer_ticks(mocker, tmp_path):
+    from tests.dashboard_pilot import make_app
+
+    app = make_app(mocker, [_long(tmp_path, 3)])
+    entry = app.session.queue.start("jailbee doctor", "alpha")
+
+    async def script():
+        async with app.run_test(size=(100, 25)) as pilot:
+            await pilot.pause()
+            app._timer_tick()
+            frame = app.session._queue_frame
+            for _ in range(5):  # hover, keys, scroll, resize
+                app.refresh_frame()
+            assert app.session._queue_frame == frame
+            for step in (1, 2):
+                app._timer_tick()
+                assert app.session._queue_frame == (frame + step) % 4
+            app.session.queue.finish(entry, status=0, output="ok")
+            app._timer_tick()
+            assert app.session._queue_frame == 0
+
+    asyncio.run(script())

@@ -741,9 +741,11 @@ and keeps drawing while it runs; the status line names the running command.
   start, restart or destroy runs as a background job and has no entry: its
   job row is what the queue shows, red if it fails.
   An action refused by the policy or
-  that could not start is only a notice. The badge `⟳ R · ⚠ A` at the top of
-  the dashboard (R running, A needs attention: failed or awaiting an answer) appears once
-  anything has run; coming back from a tmux hand-off opens the queue at once
+  that could not start is only a notice. The badge `⟳ R · ⚠ A` at the top-right
+  of the dashboard title (R running, A needs attention: failed or awaiting an answer)
+  appears once anything has run. The bold accent running glyph animates while R is
+  non-zero; attention stays red and bold, and a narrow title shortens before the badge.
+  Coming back from a tmux hand-off opens the queue at once
   when something *new* needs attention (a failed job row that was already
   there does not reopen it); a click
   on it, or `Q`, opens the queue list (a click outside closes it). Choosing an
@@ -757,7 +759,11 @@ and keeps drawing while it runs; the status line names the running command.
   shows, whoever started them, are listed above the entries as read-only
   rows (`target: phase · job`): they cannot be dismissed, count as running
   in the badge (a failed job or a dead worker counts as ⚠) and go when the
-  job does. Choosing one offers `Show job log` (`l`).
+  job does. Liveness belongs to the gathered snapshot: a normally finishing
+  worker does not turn its older row into a dead-job warning between refreshes.
+  A worker killed mid-job is reported as dead on the next snapshot while its
+  tracking row remains. `jailbee ls` and `jailbee job ls` use the same observation
+  rule. Choosing one offers `Show job log` (`l`).
 - **Critical actions open as a modal and block hand-offs.** `merge` (also `git merge`),
   `git push --merge`, `git pull` and `pr push` (typed on the command line with the verb first) open at once in their entry's
   expanded live screen, so a conflict, a question or a result is not missed.

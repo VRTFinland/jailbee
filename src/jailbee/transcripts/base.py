@@ -6,16 +6,18 @@ entries below, so a dashboard renders every agent's session the same way. A
 new agent is a new source module that calls `register`, not a change here.
 
 Standard library only: the terminal dashboard reads transcripts too, and must
-not need the `web` extra to do so.
+not need the web dashboard to do so.
 """
 
 from __future__ import annotations
 
+import os
+import threading
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Collection, Sequence
     from datetime import datetime
     from pathlib import Path
 
@@ -29,6 +31,10 @@ class UserMessage:
     was read whole or incrementally."""
     timestamp: datetime | None
     text: str
+    meta: bool = False
+    """The agent wrote this into the person's turn (a compaction summary or an
+    interruption notice), so it is shown as context and never becomes a session
+    title."""
     kind: Literal["user"] = "user"
 
 
@@ -82,6 +88,9 @@ class ToolResult:
     full_length: int = 0
     """Length of the untruncated text, in characters."""
     is_error: bool = False
+    context: str = ""
+    """Agent context Claude Code appended to the result (``<system-reminder>``
+    blocks), kept apart from ``text``; cut to the same limit."""
     kind: Literal["tool_result"] = "tool_result"
 
 
@@ -132,31 +141,114 @@ class SessionInfo:
     last_activity: datetime | None
     models: tuple[str, ...]
     """Every model that answered, in first-use order."""
+    cwd: str | None = None
+    """The directory the session started in, from its first record naming one."""
+    git_branch: str | None = None
+    """The git branch checked out where the session started (that same record's),
+    None when it named none. With ``cwd`` and ``started``, what attributes a
+    session to a container nobody saw it run in."""
+
+
+SESSION_INFO_FORMAT = 3
+"""Bump when what a source derives for a `SessionInfo` changes (how the title
+is chosen, which models are named, which fields are kept), so infos a
+`SessionInfoStore` kept from an older reader are read again instead of served."""
+
+Stamp = tuple[int, int]
+"""A transcript file's ``(size, mtime_ns)``: while it is unchanged, so is its info."""
+
+
+class SessionInfoStore(Protocol):
+    """Where a `SessionInfoCache` keeps its entries beyond the process (a database)."""
+
+    def load_dir(self, directory: Path) -> dict[Path, tuple[Stamp, SessionInfo]]:
+        """The stored infos of the transcripts directly in `directory`, by path,
+        with the stamp each was read at. Never raises."""
+        ...
+
+    def prune_missing(self) -> None:
+        """Forget every stored info whose transcript no longer exists (or may
+        not be looked at), and any an older reader stored. Never raises."""
+        ...
+
+    def save(self, entries: Sequence[tuple[Path, Stamp, SessionInfo]]) -> bool:
+        """Remember these infos, all at once; False when they were not stored.
+        Never raises."""
+        ...
 
 
 class SessionInfoCache:
     """Remembers `SessionInfo` by the file's path, size and mtime.
 
     Listing reads every transcript; a long-lived caller (the web server) passes
-    one cache so only a file that grew or was rewritten is read again. Owned by
-    the caller, never a module global.
+    one cache so only a file that grew or was rewritten is read again. With a
+    `store`, what was read survives a restart: a transcript directory's stored
+    entries are loaded on the first use of a file in it (so the first listing
+    of one repository loads no other's), and what was read since is written
+    back by `flush` (one write per listing, not per file). `prune` drops the
+    entries of deleted transcripts; a long-lived caller runs it off the
+    request path. Owned by the caller, never a module
+    global. Safe to share between threads.
     """
 
-    def __init__(self) -> None:
-        self._entries: dict[Path, tuple[tuple[int, int], SessionInfo | None]] = {}
+    def __init__(self, store: SessionInfoStore | None = None) -> None:
+        self._entries: dict[Path, tuple[Stamp, SessionInfo | None]] = {}
+        self._store = store
+        self._loaded: set[Path] = set()
+        self._unsaved: dict[Path, tuple[Stamp, SessionInfo]] = {}
+        self._lock = threading.Lock()
 
     def get(
-        self, path: Path, load: Callable[[], SessionInfo | None], stamp: tuple[int, int] | None
+        self, path: Path, load: Callable[[], SessionInfo | None], stamp: Stamp | None
     ) -> SessionInfo | None:
         """`load()`'s result, reused while `stamp` (size, mtime_ns) is unchanged."""
         if stamp is None:
             return load()
+        self._load_dir(path.parent)
         hit = self._entries.get(path)
         if hit is not None and hit[0] == stamp:
             return hit[1]
         info = load()
-        self._entries[path] = (stamp, info)
+        with self._lock:
+            self._entries[path] = (stamp, info)
+            if info is not None and self._store is not None:
+                self._unsaved[path] = (stamp, info)
         return info
+
+    def flush(self) -> None:
+        """Write what was read since the last flush to the store."""
+        if self._store is None:
+            return
+        with self._lock:
+            unsaved, self._unsaved = self._unsaved, {}
+        if not unsaved:
+            return
+        if not self._store.save([(path, stamp, info) for path, (stamp, info) in unsaved.items()]):
+            with self._lock:  # kept for the next flush; anything newer wins
+                self._unsaved = {**unsaved, **self._unsaved}
+
+    def prune(self) -> None:
+        """Forget the entries of transcripts that no longer exist, here and in
+        the store. Stats every remembered file: not for a request path."""
+        with self._lock:
+            paths = list(self._entries)
+        gone = [path for path in paths if not os.path.exists(path)]
+        with self._lock:
+            for path in gone:
+                self._entries.pop(path, None)
+                self._unsaved.pop(path, None)
+        if self._store is not None:
+            self._store.prune_missing()
+
+    def _load_dir(self, directory: Path) -> None:
+        if self._store is None or directory in self._loaded:
+            return
+        with self._lock:
+            if directory in self._loaded:
+                return
+            for path, entry in self._store.load_dir(directory).items():
+                self._entries.setdefault(path, entry)
+            self._loaded.add(directory)
 
 
 @runtime_checkable
@@ -175,11 +267,16 @@ class TranscriptSource(Protocol):
         ...
 
     def list_sessions(
-        self, config_home: Path, cache: SessionInfoCache | None = None
+        self,
+        config_home: Path,
+        cache: SessionInfoCache | None = None,
+        cwds: Collection[str] | None = None,
     ) -> list[SessionInfo]:
         """Every session under `config_home`, newest activity first.
 
-        With a `cache`, a transcript unchanged since the last call is not read."""
+        With a `cache`, a transcript unchanged since the last call is not read.
+        With `cwds`, only sessions started in one of those directories (or
+        below one) are listed, and no other transcript is read."""
         ...
 
     def session_info(

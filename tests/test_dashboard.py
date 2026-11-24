@@ -3153,8 +3153,29 @@ def test_seed_view_state_migrates_retired_diff_with_visible_notice(mocker):
     assert "--incoming" in notice
     shown: list[str] = []
     state = dcolumns.seed_view_state(engine, FRONTEND_TUI, on_migration=shown.append)
+    assert state.columns == ("name", "sync")
+    # The v4 migration follows, so exactly one notice, naming what the user gets.
+    assert len(shown) == 1
+    assert "ahead_diff → sync" in shown[0]
+    assert "target_diff" not in shown[0]
+
+
+def test_seed_view_state_retired_diff_notice_when_no_v4_migration_follows():
+    from sqlmodel import SQLModel, create_engine
+
+    from jailbee.db.view_prefs import FRONTEND_TUI, ViewState, save_view_state
+
+    engine = create_engine("sqlite:///:memory:")
+    SQLModel.metadata.create_all(engine)
+    save_view_state(
+        engine,
+        FRONTEND_TUI,
+        ViewState(columns=("name", "ahead_diff"), columns_version=dcolumns.COLUMNS_VERSION),
+    )
+    shown: list[str] = []
+    state = dcolumns.seed_view_state(engine, FRONTEND_TUI, on_migration=shown.append)
     assert state.columns == ("name", "target_diff")
-    assert shown == [notice]
+    assert shown == [dcolumns.stored_column_migration_notice(("name", "ahead_diff"))]
 
 
 def test_seed_view_state_persists_retired_diff_migration_so_notice_shows_once(mocker):
@@ -3170,14 +3191,14 @@ def test_seed_view_state_persists_retired_diff_migration_so_notice_shows_once(mo
     first: list[str] = []
     dcolumns.seed_view_state(engine, FRONTEND_QT, on_migration=first.append)
     stored = load_view_state(engine, FRONTEND_QT)
-    assert stored.columns == ("name", "target_diff")
+    assert stored.columns == ("name", "sync")
     assert stored.folded == folded
 
     second: list[str] = []
     state = dcolumns.seed_view_state(engine, FRONTEND_QT, on_migration=second.append)
     assert len(first) == 1
     assert second == []
-    assert state.columns == ("name", "target_diff")
+    assert state.columns == ("name", "sync")
 
 
 def test_dashboard_config_migration_notice_is_visible_not_debug_only(mocker):
@@ -6845,7 +6866,7 @@ def test_seed_view_state_migrates_a_pre_version_set_once_with_one_notice(fronten
         "inbox",
         "pr",
     )
-    assert row.columns_version == dcolumns.COLUMNS_VERSION == 3
+    assert row.columns_version == dcolumns.COLUMNS_VERSION == 4
     assert row.folded == frozenset({"p"})
 
     second: list[str] = []
@@ -6892,7 +6913,7 @@ def test_seed_view_state_bumps_a_set_without_retired_names_silently():
 
     assert state.columns == ("name", "state")
     assert shown == []
-    assert load_view_state(engine, FRONTEND_TUI).columns_version == 3
+    assert load_view_state(engine, FRONTEND_TUI).columns_version == dcolumns.COLUMNS_VERSION
 
 
 def test_seed_view_state_migration_survives_a_fold_save_and_a_readded_column():
@@ -6911,7 +6932,7 @@ def test_seed_view_state_migration_survives_a_fold_save_and_a_readded_column():
 
     assert shown == []
     assert state.columns == ("name", "mem_used", "mem_pct", "mem")
-    assert load_view_state(engine, FRONTEND_QT).columns_version == 3
+    assert load_view_state(engine, FRONTEND_QT).columns_version == dcolumns.COLUMNS_VERSION
 
 
 def test_seed_view_state_first_launch_seed_starts_at_the_current_version(mocker):
@@ -6977,9 +6998,9 @@ def test_seed_view_state_runs_the_diff_rename_and_the_column_set_migration_toget
     shown: list[str] = []
     state = dcolumns.seed_view_state(engine, FRONTEND_TUI, on_migration=shown.append)
 
-    assert state.columns == ("name", "target_diff", "mem_used", "mem_pct")
-    assert len(shown) == 2
-    assert "ahead_diff" in shown[0] and "mem → mem_used + mem_pct" in shown[1]
+    assert state.columns == ("name", "sync", "mem_used", "mem_pct")
+    assert len(shown) == 1
+    assert "ahead_diff → sync" in shown[0] and "mem → mem_used + mem_pct" in shown[0]
 
 
 def test_columns_version_is_the_newest_migration_rule():
@@ -7590,7 +7611,7 @@ def test_web_dashboard_offers_the_actions_its_own_policy_permits():
     ]
 
 
-def test_dashboard_clean_diff_cell_keeps_the_pr_target_marker():
+def test_dashboard_clean_diff_cell_leaves_the_marker_to_sync():
     from rich.text import Text
 
     from jailbee.dashboard.format import dashboard_cell
@@ -7625,9 +7646,9 @@ def test_dashboard_clean_diff_cell_keeps_the_pr_target_marker():
         return Text.from_markup(dashboard_cell(specs[name], c, now)).plain
 
     assert [plain(n, pr) for n in ("target_diff", "ahead_count", "conflict")] == [
-        "✓ pr",
-        "1 pr",
-        "ok pr",
+        "✓",
+        "1",
+        "ok",
     ]
     assert [plain(n, host) for n in ("target_diff", "wt")] == ["✓", "✓"]
 
@@ -7652,8 +7673,8 @@ def test_pr_container_level_with_its_pr_head_still_offers_git_pull_and_diff():
     assert "git diff" in verbs
 
 
-def test_dashboard_sync_columns_are_wide_enough_for_the_target_marker():
-    """At default widths a PR row's ↑12 / ↓4 / conflict keep their ``pr`` marker."""
+def test_dashboard_sync_column_is_wide_enough_for_the_target_marker():
+    """At default widths SYNC keeps its marker, counts and clean diff."""
     from rich.text import Text
 
     from jailbee.git_status import GitStatus
@@ -7685,12 +7706,12 @@ def test_dashboard_sync_columns_are_wide_enough_for_the_target_marker():
         enabled=None,
         folded=frozenset(),
         column_widths=None,
-        shown_columns=("ahead_count", "behind_count", "conflict"),
+        shown_columns=("sync", "conflict"),
     )
     for spec, width in zip(fields, widths, strict=True):
         cell = Text.from_markup(spec.cell(c))
         assert cell.cell_len <= width, (spec.name, cell.plain, width)
-    assert Text.from_markup(fields[0].cell(c)).plain == "12 pr"
+    assert Text.from_markup(fields[0].cell(c)).plain == "pr  ↑12 ↓4 ✓"
 
 
 def test_container_picker_title_and_ls_git_status_carry_the_pr_marker():

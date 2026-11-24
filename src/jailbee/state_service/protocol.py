@@ -17,7 +17,7 @@ from typing import Any
 
 from pydantic import TypeAdapter, ValidationError
 
-from jailbee.accounts.models import ActivityEvent, AgentActivity
+from jailbee.accounts.models import ActivityEvent, AgentActivity, AgentApiError
 from jailbee.agent_status import AgentSummary, SessionMark
 from jailbee.dashboard.model import AppMenuEntry, RepoAdvisory, RepoGroup
 from jailbee.dashboard.system import PoolStatus, SystemStatus
@@ -62,7 +62,10 @@ from jailbee.update_check import UpdateNotice
 # 36 adds SyncTarget kind "parent" and .parent, .ahead_sha, .seen_at: children and
 # forks compare with their parent container.
 # 37 adds SyncTarget.parent_unknown: the parent's head is unknown (no gather pass).
-PROTOCOL = 37
+# 38 makes ContainerInfo.job_live nullable: None means no gathered observation.
+# 39 adds AgentActivity.api_error (AgentApiError): the API error a session is stuck on.
+# 40 adds ContainerInfo.branch, the branch the container was created on.
+PROTOCOL = 40
 
 
 class ProtocolError(ValueError):
@@ -143,6 +146,7 @@ _NAMESPACE: dict[str, Any] = {
     for cls in (
         ActivityEvent,
         AgentActivity,
+        AgentApiError,
         AgentSummary,
         AppMenuEntry,
         ChildView,

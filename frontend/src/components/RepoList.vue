@@ -1,7 +1,15 @@
 <script setup lang="ts">
+import {computed} from "vue"
 import type {FrontPageView} from "../protocol"
 
-defineProps<{view: FrontPageView}>()
+const props = withDefaults(defineProps<{
+    view: FrontPageView
+    showHeadings?: boolean
+    listedContainers?: string[]
+}>(), {showHeadings: true})
+const listed = computed(() => new Set(props.listedContainers ?? props.view.repos.flatMap(
+    repo => repo.containers.map(row => row.name),
+)))
 
 const AGENT_LABELS: Record<string, string> = {
     waiting: "waiting for you",
@@ -10,7 +18,17 @@ const AGENT_LABELS: Record<string, string> = {
     shell: "shell",
 }
 
+const ERROR_PREFIX = "error:"
+
+/** `error:<kind>` states share one style; the kind is only worded. */
+function agentFamily(state: string): string {
+    return state.startsWith(ERROR_PREFIX) ? "error" : state
+}
+
 function agentLabel(state: string): string {
+    if (state.startsWith(ERROR_PREFIX)) {
+        return `API error: ${state.slice(ERROR_PREFIX.length)}`
+    }
     return AGENT_LABELS[state] ?? state
 }
 </script>
@@ -18,7 +36,7 @@ function agentLabel(state: string): string {
 <template>
     <p v-if="view.repos.length === 0" class="muted">No repositories.</p>
     <section v-for="repo in view.repos" :key="repo.prefix" class="repo" :data-repo="repo.prefix">
-        <h2 class="repo-heading">
+        <h2 v-if="showHeadings" class="repo-heading">
             <router-link :to="{name: 'repo', params: {prefix: repo.prefix}}">{{
                 repo.prefix
             }}</router-link>
@@ -29,8 +47,9 @@ function agentLabel(state: string): string {
                 v-for="c in repo.containers"
                 :key="c.name"
                 class="row"
+                :class="{nested: c.depth > 0}"
                 :data-container="c.name"
-                :data-agent="c.agent ?? undefined"
+                :data-agent="c.agent ? agentFamily(c.agent) : undefined"
                 :data-state="c.state"
                 :data-phase="c.phase ?? undefined"
             >
@@ -40,15 +59,24 @@ function agentLabel(state: string): string {
                         >{{ c.cells[0] }}</router-link
                     >
                     <span v-if="c.phase" class="phase">{{ c.phase }}</span>
-                    <span v-if="c.agent" class="agent" :class="`agent-${c.agent}`">{{
+                    <span v-else-if="c.state === 'Stopped'" class="phase">Stopped</span>
+                    <span v-if="c.agent" class="agent" :class="`agent-${agentFamily(c.agent)}`">{{
                         agentLabel(c.agent)
                     }}</span>
                 </div>
+                <p v-if="c.orchestrator || c.child_count" class="orchestration">
+                    Orchestrator · {{ c.child_count }} {{ c.child_count === 1 ? 'child' : 'children' }}
+                </p>
+                <p v-if="c.child" class="orchestration">
+                    Child of <router-link v-if="c.child.orchestrator" :to="{name: 'container', params: {name: c.child.orchestrator}}">{{ c.child.orchestrator_short_name }}</router-link><span v-else>{{ c.child.orchestrator_short_name }}</span>
+                    · {{ c.child.state }}<template v-if="c.child.runner"> · {{ c.child.runner }}</template>
+                    <template v-if="!listed.has(c.child.orchestrator ?? '')"> · orchestrator not listed</template>
+                </p>
                 <dl class="cells">
                     <template v-for="(col, i) in view.columns" :key="col.name">
                         <div v-if="i > 0 && c.cells[i] !== ''" class="cell">
                             <dt>{{ col.header }}</dt>
-                            <dd>{{ c.cells[i] }}</dd>
+                            <dd><pre v-if="col.name === 'sync'">{{ c.cells[i] }}</pre><template v-else>{{ c.cells[i] }}</template></dd>
                         </div>
                     </template>
                 </dl>
@@ -91,8 +119,22 @@ function agentLabel(state: string): string {
     background: var(--surface);
     margin-bottom: var(--space-2);
 }
+.row.nested {
+    margin-left: var(--space-3);
+}
+.orchestration {
+    margin: var(--space-2) 0 0;
+    font-size: 0.85rem;
+    overflow-wrap: anywhere;
+}
+.orchestration a {
+    color: inherit;
+}
 .row[data-agent="waiting"] {
     border-left-color: var(--accent);
+}
+.row[data-agent="error"] {
+    border-left-color: var(--danger);
 }
 /* Row phase: the dashboard core's phases (the terminal dashboard's palette),
    mapped onto each theme's --phase-* tokens. Stopped is dim, as in the TUI.
@@ -155,6 +197,7 @@ function agentLabel(state: string): string {
     display: flex;
     align-items: baseline;
     justify-content: space-between;
+    flex-wrap: wrap;
     gap: var(--space-3);
 }
 .name {
@@ -181,6 +224,10 @@ a.name:hover {
     font-weight: 700;
     color: var(--accent);
 }
+.agent-error {
+    font-weight: 700;
+    color: var(--danger);
+}
 .agent-busy,
 .agent-idle,
 .agent-shell {
@@ -196,12 +243,23 @@ a.name:hover {
 .cell {
     display: flex;
     gap: var(--space-1);
+    max-width: 100%;
 }
 dt {
     color: var(--muted);
+    flex-shrink: 0;
 }
 dd {
     margin: 0;
     font-family: var(--font-mono);
+    overflow-wrap: anywhere;
+    min-width: 0;
+}
+dd pre {
+    margin: 0;
+    font: inherit;
+    white-space: pre;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 </style>

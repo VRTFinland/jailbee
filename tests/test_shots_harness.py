@@ -56,7 +56,8 @@ def test_docs_shots_show_their_content(tmp_path: Path, monkeypatch: pytest.Monke
     assert "⟳" not in hero  # no queue badge before the fixture's queue is seeded
     queue = texts["dashboard-queue"]
     assert "Notifications" in queue
-    assert "⟳ 1" in queue and "⚠ 1" in queue  # the badge: one running, one failed
+    # A running badge may be captured at any refresh frame: one running, one failed.
+    assert any(f"{glyph} 1" in queue for glyph in "⟳◷◶◵") and "⚠ 1" in queue
     for line in ("✓ storefront-theme-dark", "✗ invoicer-csv-import", "⟳ invoicer"):
         assert line in queue
     entry = texts["dashboard-queue-entry"]

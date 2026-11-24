@@ -546,7 +546,7 @@ web_auth_app.add_typer(web_auth_sessions_app)
 
 @contextlib.contextmanager
 def _web_auth_errors() -> Iterator[None]:
-    """Map refused actions and a missing `web` extra to a message and exit 1."""
+    """Map refused actions and missing web dependencies to a message and exit 1."""
     from jailbee.web.auth_admin import AuthAdminError
     from jailbee.web.errors import WebDependencyError, web_extra_required
 
@@ -556,6 +556,16 @@ def _web_auth_errors() -> Iterator[None]:
     except (AuthAdminError, WebDependencyError) as exc:
         error_plain(str(exc))
         raise typer.Exit(1) from exc
+
+
+def _printable(text: str) -> str:
+    """``text`` with control and format characters (Cc, Cf) shown as escapes."""
+    import unicodedata
+
+    return "".join(
+        c.encode("unicode_escape").decode("ascii") if unicodedata.category(c) in ("Cc", "Cf") else c
+        for c in text
+    )
 
 
 def _web_time(at: datetime) -> str:
@@ -722,7 +732,7 @@ def remote_web_auth_sessions_ls_cmd() -> None:
 
     for s in auth_admin.list_sessions(get_engine()):
         typer.echo(
-            f"{s.id}\t{s.device_name}\tlast used {_web_time(s.last_used_at)}"
+            f"{s.id}\t{_printable(s.device_name)}\tlast used {_web_time(s.last_used_at)}"
             f"\tsince {_web_time(s.created_at)}"
         )
 
@@ -746,8 +756,8 @@ def remote_web_auth_sessions_revoke_cmd(
             [
                 prompting.Option(
                     s.id,
-                    f"{s.id}  {s.device_name}  (last used {_web_time(s.last_used_at)})",
-                    f"{s.id} ({s.device_name})",
+                    f"{s.id}  {_printable(s.device_name)}  (last used {_web_time(s.last_used_at)})",
+                    f"{s.id} ({_printable(s.device_name)})",
                 )
                 for s in auth_admin.list_sessions(engine)
             ],
@@ -756,7 +766,7 @@ def remote_web_auth_sessions_revoke_cmd(
         )
     with _web_auth_errors():
         revoked = auth_admin.revoke_session(engine, session_id)
-    typer.echo(f"Revoked session {revoked.id} ({revoked.device_name}).")
+    typer.echo(f"Revoked session {revoked.id} ({_printable(revoked.device_name)}).")
 
 
 @web_auth_app.command("log")
@@ -768,10 +778,8 @@ def remote_web_auth_log_cmd(
     from jailbee.web import auth_admin
 
     for e in auth_admin.recent_events(get_engine(), limit):
-        typer.echo(
-            f"{_web_time(e.at)}\t{e.event}\t{e.method or '-'}\t{e.device_name or '-'}"
-            f"\t{e.source or '-'}"
-        )
+        device = _printable(e.device_name) if e.device_name else "-"
+        typer.echo(f"{_web_time(e.at)}\t{e.event}\t{e.method or '-'}\t{device}\t{e.source or '-'}")
 
 
 @app.command("_remote-console", hidden=True)
@@ -2224,8 +2232,8 @@ def list_cmd(
                 "full_name, alias, repo, mode, base, state, created, job, network, "
                 "ttl, loose_until, mounts, ip, memory_limit, mem, mem_used, mem_pct, "
                 "cpu, doing, agent, agent_compact, "
-                "wt, target_diff, ahead_count, behind_count, conflict, host_ahead, host_behind, "
-                "local_diff, local_count, "
+                "wt, sync, target_diff, ahead_count, behind_count, conflict, "
+                "host_ahead, host_behind, local_diff, local_count, "
                 "git_status, "
                 "group, pr, issues, outbox, role, children, inbox, autostart_profile."
             ),
@@ -2287,7 +2295,9 @@ def list_cmd(
     for notice in tracking_notices(containers):
         warn(notice)
     now = _now()
-    all_fields = ls_field_specs(now=now, all_repos=all_repos, show_submodules=show_submodules)
+    all_fields = ls_field_specs(
+        now=now, all_repos=all_repos, show_submodules=show_submodules, containers=containers
+    )
     # `_load_global()` rather than `load_global_config()` directly: a
     # host-level validation error in global.yaml (bad YAML, a malformed
     # docker_registry_mirror, ...) passes `load_config` (which only merges
@@ -2353,7 +2363,9 @@ def list_cmd(
         console=console,
         title="🐝 jailbee containers" if fmt == "table" else None,
         empty_message="[dim](no containers found)[/dim]",
-        sub_rows=submodule_sub_rows if show_submodules else None,
+        sub_rows=(
+            (lambda c: submodule_sub_rows(c, containers=containers)) if show_submodules else None
+        ),
         fit_order=LS_FIT_DROP_ORDER if fit else None,
     )
 

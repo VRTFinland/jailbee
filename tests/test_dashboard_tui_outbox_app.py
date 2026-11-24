@@ -96,7 +96,7 @@ def drive(app: OutboxApp, scenario, size=(100, 30)):  # type: ignore[no-untyped-
 async def listed(app: OutboxApp, pilot) -> None:  # type: ignore[no-untyped-def]
     """Wait for the background listing (it arrives on the app's poll timer)."""
     for _ in range(100):
-        if app.controller.state.busy != LOADING:
+        if app.controller.state.busy is None:
             # The poll clears busy before OptionList has laid out the new rows.
             await pilot.pause()
             return
@@ -341,7 +341,7 @@ def test_publish_pr_creation_in_all_repos_view_is_addressed_at_the_containers_re
 
     async def scenario(pilot):  # type: ignore[no-untyped-def]
         await pilot.press("down", "p")  # the beta-one proposal
-        await pilot.pause()
+        await listed(app, pilot)
 
     drive(app, scenario, size=(160, 30))
     assert handed == [
@@ -360,7 +360,7 @@ def test_publish_pr_creation_refused_when_the_containers_repo_is_unknown(mocker,
 
     async def scenario(pilot):  # type: ignore[no-untyped-def]
         await pilot.press("down", "p")
-        await pilot.pause()
+        await listed(app, pilot)
 
     drive(app, scenario, size=(160, 30))
     fg.assert_not_called()
@@ -445,3 +445,57 @@ def test_reader_opens_scrolls_and_closes_with_the_cursor_kept(quiet):
     assert cursor is not None and kept == cursor
     assert "f full" in listed_again
     assert "ISS o/r#42" in listed_again
+
+
+@pytest.mark.parametrize("quit_key", ["escape", "q", "ctrl+c"])
+def test_quit_during_a_delete_is_refused_and_the_delete_completes(mocker, quit_key):
+    """Leaving mid-delete would stop it half-way with no report: the app waits instead."""
+    from threading import Event
+
+    entered, release = Event(), Event()
+    calls: list[list[str]] = []
+    listing = [LISTING]
+
+    def run(argv, *, cwd, timeout=60.0):  # type: ignore[no-untyped-def]
+        calls.append(list(argv))
+        if argv[:2] == ["outbox", "drop"]:
+            entered.set()
+            assert release.wait(5), "test did not release the drop"
+            listing[0] = _listing(_container(_proposal("issue/b.json")))
+            return da.CliResult(True, "done", "")
+        return da.CliResult(True, "done", listing[0])
+
+    mocker.patch.object(da, "run_cli_quiet", side_effect=run)
+    app = make()
+
+    async def scenario(pilot):  # type: ignore[no-untyped-def]
+        try:
+            await pilot.press("d", "down", "enter")  # No is the default; Yes, delete is second
+            assert await asyncio.to_thread(entered.wait, 2), "the drop never started"
+            await pilot.press(quit_key)
+            await pilot.pause()
+            refused = (app.is_running, app.controller.state.status)
+        finally:
+            release.set()
+        await listed(app, pilot)
+        return refused
+
+    still_running, status = drive(app, scenario)
+    assert still_running
+    assert status == ("busy: Deleting 1 from the outbox… — wait for it to finish",)
+    assert sum(argv[:2] == ["outbox", "drop"] for argv in calls) == 1
+    assert app.controller.state.status == ("Deleted 1 from the outbox.",)
+    assert app.return_value is None  # drive's exit, not the refused quit
+
+
+def test_stale_mutation_flag_without_a_busy_line_does_not_trap_quit(quiet):
+    app = make()
+
+    async def scenario(pilot):  # type: ignore[no-untyped-def]
+        app.controller.mutation_running = True
+        assert app.controller.state.busy is None
+        await pilot.press("q")
+        await pilot.pause()
+
+    drive(app, scenario)
+    assert app.return_value == 0

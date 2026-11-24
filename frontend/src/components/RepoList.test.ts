@@ -18,8 +18,8 @@ const view: FrontPageView = {
         {
             prefix: "alpha",
             containers: [
-                {name: "alpha-1", indent: "", agent: "waiting", state: "Running", phase: "booting", cells: ["1", "▶", "◆ 5m", ""]},
-                {name: "alpha-2", indent: "└ ", agent: null, state: "Stopped", phase: null, cells: ["2", "■", "—", "#7"]},
+                {name: "alpha-1", indent: "", agent: "waiting", state: "Running", phase: "booting", depth: 0, orchestrator: false, child_count: 0, child: null, cells: ["1", "▶", "◆ 5m", ""]},
+                {name: "alpha-2", indent: "└ ", agent: null, state: "Stopped", phase: null, depth: 0, orchestrator: false, child_count: 0, child: null, cells: ["2", "■", "—", "#7"]},
             ],
         },
         {prefix: "empty", containers: []},
@@ -31,6 +31,54 @@ function mountList() {
 }
 
 describe("RepoList", () => {
+    it("visibly nests children and shows orchestration facts without colour", async () => {
+        const wrapper = mountList()
+        const parent = {...view.repos[0].containers[0], orchestrator: true, child_count: 2}
+        const child = {...view.repos[0].containers[1], depth: 1,
+            child: {orchestrator: parent.name, orchestrator_short_name: "1", state: "done", runner: "codex/opus"}}
+        await wrapper.setProps({view: {...view, repos: [{prefix: "alpha", containers: [parent, child]}]}})
+        const rows = wrapper.findAll("li.row")
+        expect(rows[0].text()).toContain("Orchestrator · 2 children")
+        expect(rows[1].classes()).toContain("nested")
+        expect(rows[1].text()).toContain("Child of 1 · done · codex/opus")
+        expect(rows[1].get(".orchestration a").attributes("href")).toBe("/containers/alpha-1")
+    })
+
+    it("keeps an absent orchestrator's child visible with its short name", async () => {
+        const wrapper = mountList()
+        const orphan = {...view.repos[0].containers[1], child: {
+            orchestrator: "alpha-missing-parent", orchestrator_short_name: "missing-parent", state: "working", runner: null,
+        }}
+        await wrapper.setProps({view: {...view, repos: [{prefix: "alpha", containers: [orphan]}]}})
+        const row = wrapper.get("li.row")
+        expect(row.classes()).not.toContain("nested")
+        expect(row.text()).toContain("Child of missing-parent · working")
+        expect(row.text()).toContain("orchestrator not listed")
+    })
+
+    it("finds a listed orchestrator in another repository, including a repo-only view", async () => {
+        const wrapper = mountList()
+        const parent = view.repos[0].containers[0]
+        const child = {...view.repos[0].containers[1], name: "beta-task", child: {
+            orchestrator: parent.name, orchestrator_short_name: "1", state: "working", runner: null,
+        }}
+        const beta = {prefix: "beta", containers: [child]}
+        await wrapper.setProps({view: {...view, repos: [view.repos[0], beta]}})
+        expect(wrapper.get('[data-container="beta-task"]').text()).not.toContain("orchestrator not listed")
+        await wrapper.setProps({view: {...view, repos: [beta]}, listedContainers: [parent.name, child.name]})
+        expect(wrapper.get('[data-container="beta-task"]').text()).not.toContain("orchestrator not listed")
+    })
+
+    it("labels a hidden orchestrator without creating a link", async () => {
+        const wrapper = mountList()
+        const child = {...view.repos[0].containers[1], child: {
+            orchestrator: null, orchestrator_short_name: "hidden orchestrator", state: "working", runner: null,
+        }}
+        await wrapper.setProps({view: {...view, repos: [{prefix: "alpha", containers: [child]}]}})
+        expect(wrapper.get(".orchestration").text()).toContain("Child of hidden orchestrator")
+        expect(wrapper.find(".orchestration a").exists()).toBe(false)
+    })
+
     it("groups containers under a heading per repository", () => {
         const wrapper = mountList()
         const repos = wrapper.findAll("section.repo")
@@ -64,6 +112,16 @@ describe("RepoList", () => {
         expect(rows[1].find(".agent").exists()).toBe(false)
     })
 
+    it("words an API-error agent state and styles it like a waiting one", async () => {
+        const wrapper = mountList()
+        const stuck = {...view.repos[0].containers[0], agent: "error:quota"}
+        await wrapper.setProps({view: {...view, repos: [{prefix: "alpha", containers: [stuck]}]}})
+        const row = wrapper.get("li.row")
+        expect(row.attributes("data-agent")).toBe("error")
+        expect(row.get(".agent").text()).toBe("API error: quota")
+        expect(row.get(".agent").classes()).toContain("agent-error")
+    })
+
     it("marks each row with its row phase and state for the theme to style", () => {
         const rows = mountList().findAll("li.row")
         expect(rows[0].attributes("data-phase")).toBe("booting")
@@ -72,10 +130,25 @@ describe("RepoList", () => {
         expect(rows[1].attributes("data-state")).toBe("Stopped")
     })
 
-    it("names the phase in text so it does not rely on colour (e-ink)", () => {
+    it("names the phase and stopped state in text so neither relies on colour (e-ink)", () => {
         const rows = mountList().findAll("li.row")
         expect(rows[0].get(".phase").text()).toBe("booting")
-        expect(rows[1].find(".phase").exists()).toBe(false)
+        expect(rows[1].get(".phase").text()).toBe("Stopped")
+    })
+
+    it("preserves sync padding in a preformatted value", () => {
+        const syncView: FrontPageView = {
+            ...view,
+            columns: [{name: "name", header: "NAME"}, {name: "sync", header: "SYNC"}],
+            repos: [{prefix: "alpha", containers: [
+                {...view.repos[0].containers[0], cells: ["1", "    ↑  1 ↓123 +1 -0"]},
+                {...view.repos[0].containers[1], cells: ["2", "pr  ↑123 ↓  2 +42 -7"]},
+            ]}],
+        }
+        const wrapper = mount(RepoList, {props: {view: syncView}, global: {plugins: [createAppRouter(createMemoryHistory())]}})
+        expect(wrapper.findAll("dd pre").map((value) => value.element.textContent)).toEqual([
+            "    ↑  1 ↓123 +1 -0", "pr  ↑123 ↓  2 +42 -7",
+        ])
     })
 
     it("shows the core's cells under their headers and skips empty ones", () => {

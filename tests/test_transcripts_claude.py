@@ -128,6 +128,36 @@ def test_a_long_tool_result_is_truncated_and_says_so(tmp_path: Path, source: Cla
     assert long_output.startswith(result.text)
 
 
+def test_a_reminder_appended_to_a_long_result_survives_the_cut(
+    tmp_path: Path, source: ClaudeSource
+) -> None:
+    """The reminder is split off before truncation, so it never leaks half-cut
+    into the output and never counts toward its length."""
+    path = tmp_path / "t.jsonl"
+    reminder = "<system-reminder>note</system-reminder>"
+    content = [
+        {"type": "text", "text": "x" * 10_000},
+        {"type": "text", "text": reminder},
+    ]
+    _write(
+        path,
+        {
+            "type": "user",
+            "uuid": "r1",
+            "message": {
+                "content": [{"type": "tool_result", "tool_use_id": "toolu_1", "content": content}]
+            },
+        },
+    )
+
+    (result,) = source.read(path).entries
+
+    assert isinstance(result, ToolResult)
+    assert result.full_length == 10_000
+    assert "system-reminder" not in result.text
+    assert result.context == reminder
+
+
 def test_a_subagent_reference_follows_the_agent_tool_result(
     home: Path, source: ClaudeSource
 ) -> None:
@@ -307,6 +337,183 @@ def test_session_metadata_comes_from_the_transcript(home: Path, source: ClaudeSo
     assert info.models == ("claude-opus-5-5", "claude-sonnet-5")
 
 
+def test_session_title_uses_the_typed_prompt_after_local_command_records(
+    home: Path, source: ClaudeSource
+) -> None:
+    _write(
+        _transcript(home),
+        _user_text(
+            "command",
+            "<command-name>/clear</command-name>"
+            " <command-message>clear</command-message> <command-args></command-args>",
+        ),
+        _user_text("caveat", "<local-command-caveat>Ignore local output</local-command-caveat>"),
+        _user_text("stdout", "<local-command-stdout>Cleared</local-command-stdout>"),
+        _user_text("prompt", "Fix the session titles"),
+    )
+
+    info = next(s for s in source.list_sessions(home) if s.session_id == SID)
+
+    assert info.title == "Fix the session titles"
+
+
+def test_a_command_only_session_uses_its_first_command_as_the_title(
+    home: Path, source: ClaudeSource
+) -> None:
+    _write(
+        _transcript(home),
+        _user_text("caveat", "<local-command-caveat>Ignore local output</local-command-caveat>"),
+        _user_text(
+            "command",
+            "<command-name>/model</command-name>"
+            " <command-message>model</command-message> <command-args>opus</command-args>",
+        ),
+        _user_text("stdout", "<local-command-stdout>Model changed</local-command-stdout>"),
+        _user_text("next", "<command-name>/clear</command-name>"),
+    )
+
+    info = next(s for s in source.list_sessions(home) if s.session_id == SID)
+
+    assert info.title == "/model"
+
+
+@pytest.mark.parametrize(
+    "preamble",
+    [
+        _user_text("caveat", "<local-command-caveat>Local only</local-command-caveat>"),
+        _user_text("stdout", "<local-command-stdout>Output</local-command-stdout>"),
+        _user_text("reminder", "  <system-reminder>Injected\ncontext</system-reminder>"),
+        _user_text("task", "<task-notification>Agent finished</task-notification>"),
+        _user_text("bash", "<bash-input>pwd</bash-input>"),
+        {
+            "type": "user",
+            "message": {
+                "content": [
+                    {"type": "text", "text": "<command-name>/model</command-name>"},
+                    {"type": "text", "text": "Fix the session titles"},
+                ]
+            },
+        },
+    ],
+)
+def test_session_title_skips_each_kind_of_agent_preamble(
+    home: Path, source: ClaudeSource, preamble: object
+) -> None:
+    _write(
+        _transcript(home),
+        preamble,
+        _user_text("prompt", "Fix the session titles"),
+        _user_text("later", "A later prompt"),
+    )
+
+    info = next(s for s in source.list_sessions(home) if s.session_id == SID)
+
+    assert info.title == "Fix the session titles"
+
+
+@pytest.mark.parametrize(
+    ("content", "expected"),
+    [
+        ("<example>broken</example>", "<example>broken</example>"),
+        (
+            "<system-reminder>Injected</system-reminder>\nFix the session titles",
+            "Fix the session titles",
+        ),
+        (
+            [
+                {"type": "text", "text": "<command-name>/model</command-name>"},
+                {"type": "text", "text": "Fix the session titles"},
+            ],
+            "Fix the session titles",
+        ),
+    ],
+)
+def test_the_first_typed_text_survives_markup_and_text_block_boundaries(
+    home: Path, source: ClaudeSource, content: object, expected: str
+) -> None:
+    _write(
+        _transcript(home),
+        {"type": "user", "message": {"content": content}},
+        _user_text("later", "A later prompt"),
+    )
+
+    info = next(s for s in source.list_sessions(home) if s.session_id == SID)
+
+    assert info.title == expected
+
+
+def test_listing_parses_only_candidate_lines_even_when_commands_precede_a_large_session(
+    home: Path, source: ClaudeSource, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write(
+        _transcript(home),
+        _user_text("command", "<command-name>/model</command-name>"),
+        *({"type": "assistant", "message": {"content": "x" * 10_000}} for _ in range(200)),
+        _user_text("prompt", "Fix the session titles"),
+    )
+    loads = json.loads
+    parsed: list[object] = []
+
+    def count_loads(data: object) -> object:
+        parsed.append(data)
+        return loads(data)
+
+    monkeypatch.setattr(json, "loads", count_loads)
+
+    info = source.session_info(SID, _transcript(home))
+
+    assert info is not None and info.title == "Fix the session titles"
+    assert len(parsed) == 2
+
+
+def test_command_only_sessions_have_a_bounded_title_parse_budget(
+    home: Path, source: ClaudeSource, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write(
+        _transcript(home),
+        _user_text("command", "<command-name>/model</command-name>"),
+        *(
+            _user_text(str(i), "<local-command-stdout>Output</local-command-stdout>")
+            for i in range(500)
+        ),
+    )
+    loads = json.loads
+    parsed = 0
+
+    def count_loads(data: object) -> object:
+        nonlocal parsed
+        parsed += 1
+        return loads(data)
+
+    monkeypatch.setattr(json, "loads", count_loads)
+
+    info = source.session_info(SID, _transcript(home))
+
+    assert info is not None and info.title == "/model"
+    assert parsed <= 32
+
+
+@pytest.mark.parametrize(
+    ("candidate", "expected"), [(32, "A prompt at the boundary"), (33, "/model")]
+)
+def test_the_title_budget_keeps_prompts_at_but_not_beyond_its_boundary(
+    home: Path, source: ClaudeSource, candidate: int, expected: str
+) -> None:
+    _write(
+        _transcript(home),
+        _user_text("command", "<command-name>/model</command-name>"),
+        *(
+            _user_text(str(i), "<local-command-stdout>Output</local-command-stdout>")
+            for i in range(candidate - 2)
+        ),
+        _user_text("prompt", "A prompt at the boundary"),
+    )
+
+    info = source.session_info(SID, _transcript(home))
+
+    assert info is not None and info.title == expected
+
+
 def test_a_claude_jb_session_reports_its_gateway_model_names(
     home: Path, source: ClaudeSource
 ) -> None:
@@ -383,3 +590,187 @@ def test_a_synthetic_message_names_no_model(tmp_path: Path, source: ClaudeSource
     assert info.models == ()
     assert isinstance(entry, AssistantText)
     assert entry.model is None
+
+
+def _bytes_read() -> int:
+    """This process's `rchar`: every byte a read syscall returned."""
+    with open("/proc/self/io") as stream:
+        for line in stream:
+            if line.startswith("rchar:"):
+                return int(line.split()[1])
+    raise AssertionError("no rchar")
+
+
+def _large_session(path: Path, *, prompt: str | None, middle_bytes: int) -> None:
+    """A session of about `middle_bytes`: an opening, a long middle, a recent close."""
+    blob = "x" * 8000
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as stream:
+        opening = {
+            "type": "user",
+            "timestamp": "2026-11-01T10:00:00.000Z",
+            "message": {
+                "content": prompt if prompt is not None else "<command-name>/x</command-name>"
+            },
+        }
+        stream.write(json.dumps(opening) + "\n")
+        early = {
+            "type": "assistant",
+            "timestamp": "2026-11-01T10:00:01.000Z",
+            "message": {"model": "claude-early", "content": [{"type": "text", "text": "hi"}]},
+        }
+        stream.write(json.dumps(early) + "\n")
+        written = 0
+        while written < middle_bytes:
+            middle = {
+                "type": "assistant",
+                "timestamp": "2026-11-01T11:00:00.000Z",
+                "message": {"model": "claude-middle", "content": [{"type": "text", "text": blob}]},
+            }
+            line = json.dumps(middle) + "\n"
+            stream.write(line)
+            written += len(line)
+        late = {
+            "type": "assistant",
+            "timestamp": "2026-11-02T09:30:00.000Z",
+            "message": {"model": "claude-late", "content": [{"type": "text", "text": "bye"}]},
+        }
+        stream.write(json.dumps(late) + "\n")
+
+
+@pytest.mark.skipif(not Path("/proc/self/io").exists(), reason="needs Linux /proc/self/io")
+@pytest.mark.parametrize(
+    ("prompt", "bound"),
+    [("Fix the slow list", 512 * 1024), (None, 5 * 1024 * 1024)],
+    ids=["typed-prompt", "no-prompt"],
+)
+def test_session_info_reads_a_bounded_head_and_tail_of_a_large_transcript(
+    tmp_path: Path, source: ClaudeSource, prompt: str | None, bound: int
+) -> None:
+    path = tmp_path / "projects" / "-p" / f"{SID}.jsonl"
+    _large_session(path, prompt=prompt, middle_bytes=40 * 1024 * 1024)
+
+    before = _bytes_read()
+    info = source.session_info(SID, path)
+    read = _bytes_read() - before
+
+    assert info is not None
+    assert read < bound
+    assert info.title == (prompt or "/x")
+    assert info.started == datetime(2026, 11, 1, 10, 0, 0, tzinfo=UTC)
+    assert info.last_activity == datetime(2026, 11, 2, 9, 30, 0, tzinfo=UTC)
+    # Models come from what the head and the tail read; the most recent is last.
+    assert info.models[-1] == "claude-late"
+
+
+def test_the_last_activity_is_found_behind_one_huge_last_record(
+    tmp_path: Path, source: ClaudeSource
+) -> None:
+    # Claude writes `timestamp` near the end of a record, after the message: a
+    # pasted image makes the last line longer than the whole tail budget.
+    path = tmp_path / "projects" / "-p" / f"{SID}.jsonl"
+    _large_session(path, prompt="Fix it", middle_bytes=2 * 1024 * 1024)
+    image = {"type": "image", "source": {"type": "base64", "data": "y" * 5_000_000}}
+    huge = {
+        "parentUuid": "p",
+        "isSidechain": False,
+        "type": "user",
+        "message": {"role": "user", "content": [image]},
+        "uuid": "u",
+        "timestamp": "2026-11-03T08:00:00.000Z",
+    }
+    with path.open("a", encoding="utf-8") as stream:
+        stream.write(json.dumps(huge) + "\n")
+
+    counted = Path("/proc/self/io").exists()
+    before = _bytes_read() if counted else 0
+    info = source.session_info(SID, path)
+    read = _bytes_read() - before if counted else 0
+
+    assert info is not None
+    assert info.last_activity == datetime(2026, 11, 3, 8, 0, 0, tzinfo=UTC)
+    assert read < 1024 * 1024
+
+
+class _FlakyStore:
+    """A `SessionInfoStore` whose first save fails."""
+
+    def __init__(self) -> None:
+        self.saved: dict[Path, object] = {}
+        self.attempts = 0
+
+    def load_dir(self, directory: Path) -> dict[Path, object]:
+        return {}
+
+    def save(self, entries: list[tuple[Path, object, object]]) -> bool:
+        self.attempts += 1
+        if self.attempts == 1:
+            return False
+        self.saved.update({path: info for path, _stamp, info in entries})
+        return True
+
+
+def test_infos_a_failed_save_lost_are_saved_by_the_next_flush(
+    home: Path, source: ClaudeSource
+) -> None:
+    from jailbee.transcripts.base import SessionInfoCache
+
+    store = _FlakyStore()
+    cache = SessionInfoCache(store)  # type: ignore[arg-type]  # a duck-typed fake store
+    source.list_sessions(home, cache)
+    cache.flush()
+    assert store.saved == {}
+
+    cache.flush()
+
+    assert sorted(p.stem for p in store.saved) == [SID, OTHER_SID]
+
+
+def _started_in(home: Path, project: str, session_id: str, cwd: str | None) -> None:
+    record: dict[str, object] = {**_user_text("u", f"in {cwd}")}
+    if cwd is not None:
+        record["cwd"] = cwd
+    _write(home / "projects" / project / f"{session_id}.jsonl", record)
+
+
+def test_a_dash_extended_directory_lists_only_sessions_whose_cwd_is_below_the_repo(
+    tmp_path: Path, source: ClaudeSource
+) -> None:
+    _started_in(tmp_path, "-r-a-b", SID, "/r/a/b")
+    _started_in(tmp_path, "-r-a-b", OTHER_SID, "/r/a-b")  # a sibling repository
+    _started_in(tmp_path, "-r-a-c", "33333333-3333-4333-8333-333333333333", None)
+    _started_in(tmp_path, "-r-a-d-e", "44444444-4444-4444-8444-444444444444", '/r/a/d"e')
+
+    listed = source.list_sessions(tmp_path, cwds=["/r/a"])
+
+    # Without a recorded cwd, a dash-extended directory cannot be told apart.
+    assert sorted(s.cwd or "" for s in listed) == ["/r/a/b", '/r/a/d"e']
+
+
+def test_session_info_names_where_and_on_which_branch_the_session_started(
+    tmp_path: Path, source: ClaudeSource
+) -> None:
+    path = tmp_path / "projects" / "-home-dev-repo" / f"{SID}.jsonl"
+    _write(
+        path,
+        {"type": "file-history-snapshot", "messageId": "m"},
+        {**_user_text("one", "Fix it"), "cwd": "/home/dev/repo", "gitBranch": "feat/x"},
+        {**_user_text("two", "And this"), "cwd": "/home/dev/repo/sub", "gitBranch": "other"},
+    )
+
+    info = source.session_info(SID, path)
+
+    assert info is not None
+    assert (info.cwd, info.git_branch) == ("/home/dev/repo", "feat/x")
+
+
+def test_session_info_without_a_cwd_or_branch_names_none(
+    tmp_path: Path, source: ClaudeSource
+) -> None:
+    path = tmp_path / "projects" / "-r" / f"{SID}.jsonl"
+    _write(path, {**_user_text("one", "Fix it"), "cwd": "/r", "gitBranch": ""})
+
+    info = source.session_info(SID, path)
+
+    assert info is not None
+    assert (info.cwd, info.git_branch) == ("/r", None)

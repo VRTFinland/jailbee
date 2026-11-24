@@ -53,7 +53,7 @@ def block_web_extra(mocker: MockerFixture) -> None:
 
 
 @pytest.mark.parametrize("argv", SERVE_COMMANDS)
-def test_serve_without_the_web_extra_names_it(
+def test_serve_without_the_web_dependencies_says_reinstall(
     argv: list[str], global_config: GlobalConfig, mocker: MockerFixture
 ) -> None:
     block_web_extra(mocker)
@@ -62,8 +62,8 @@ def test_serve_without_the_web_extra_names_it(
 
     assert result.exit_code == 1
     message = flat_output(result.stderr)
-    assert "optional 'web' extra" in message
-    assert "jailbee[web]" in message
+    assert "dependencies are missing" in message
+    assert "uv tool install --reinstall jailbee" in message
     assert "Traceback" not in message
 
 

@@ -4,6 +4,7 @@ import {createMemoryHistory} from "vue-router"
 import {setToken} from "../api"
 import type {TranscriptView} from "../protocol"
 import {createAppRouter} from "../router"
+import {withDashboardMode} from "../test-http"
 import SessionView from "./SessionView.vue"
 
 function jsonResponse(status: number, body: unknown): Response {
@@ -61,7 +62,7 @@ const child: TranscriptView = {
     last_activity: null,
     models: ["claude-haiku-5"],
     entries: [
-        {kind: "user", id: "u1", timestamp: null, html: "<p>Review it.</p>", meta: false},
+        {kind: "user", id: "u1", timestamp: null, html: "<p>Review it.</p>", meta: false, label: null, expandable: false},
         {
             kind: "assistant",
             id: "a1",
@@ -72,9 +73,9 @@ const child: TranscriptView = {
     ],
 }
 
-async function mountAt(path: string, fetchMock: ReturnType<typeof vi.fn>) {
+async function mountAt(path: string, fetchMock: ReturnType<typeof vi.fn<typeof fetch>>) {
     setToken("tok")
-    vi.stubGlobal("fetch", fetchMock)
+    vi.stubGlobal("fetch", withDashboardMode(fetchMock))
     const router = createAppRouter(createMemoryHistory())
     await router.push(path)
     await router.isReady()
@@ -113,7 +114,7 @@ describe("subagent transcripts", () => {
             fetchMock,
         )
         expect(fetchMock.mock.calls[0][0]).toBe(
-            "/api/repos/alpha/sessions/claude/s-1/subagents/a1b2c3",
+            "/api/repos/alpha/sessions/claude/s-1/subagents/a1b2c3?meta=hidden",
         )
         expect(wrapper.get("h1").text()).toBe("Review auth")
         expect(wrapper.get(".entry.assistant").html()).toContain("<p>Looks fine.</p>")

@@ -14,6 +14,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
+from pydantic import PrivateAttr
 from sqlalchemy import Boolean, Column, DateTime, Dialect, Integer, TypeDecorator
 from sqlmodel import Field, SQLModel
 
@@ -146,6 +147,21 @@ class BackgroundJob(SQLModel, table=True):
     # a persisted SQLModel field renames its column, which would need a
     # schema migration for something no user ever sees.
     __tablename__ = "background_op"
+
+    # Read-time observation, never a database column or a persisted worker claim.
+    _observed_live: bool | None = PrivateAttr(default=None)
+
+    @property
+    def observed_live(self) -> bool | None:
+        # Rows loaded by SQLAlchemy skip pydantic's __init__, so
+        # __pydantic_private__ is None and the PrivateAttr default never applies.
+        private = getattr(self, "__pydantic_private__", None)
+        return None if private is None else private.get("_observed_live")
+
+    def observe_live(self, live: bool) -> None:
+        if getattr(self, "__pydantic_private__", None) is None:
+            object.__setattr__(self, "__pydantic_private__", {})
+        self._observed_live = live
 
     container_name: str = Field(primary_key=True)
     container_prefix: str = Field(index=True)
@@ -454,7 +470,8 @@ class WebAuthEvent(SQLModel, table=True):
     """One entry of the web dashboard's login audit log (#109).
 
     `event` is login, login_failed, backoff (a PIN or TOTP wait lengthened),
-    logout, revoke or key_added (a FIDO2 key registered in setup mode);
+    logout, revoke, rename (a session renamed in Settings) or key_added (a FIDO2 key
+    registered in setup mode);
     `method` the login method tried (pin, totp, link, fido2, setup-pin) or
     "cli" for a revocation from the command line;
     `source` the client address when there was one. Pruned to the newest
@@ -515,3 +532,32 @@ class WebFido2Key(SQLModel, table=True):
     last_used_at: datetime | None = Field(
         default=None, sa_column=Column(_UTCDateTime, nullable=True)
     )
+
+
+class SessionInfoRow(SQLModel, table=True):
+    """One agent transcript's session-list row, as last read (#152).
+
+    The web dashboard's `SessionInfoCache` keeps these so a restarted server
+    does not read every transcript again: a row answers while the file's
+    `size` and `mtime_ns` are unchanged. `format` is the reader's
+    `SESSION_INFO_FORMAT`; a row of another format is read again. `models` is
+    a JSON list. `cwd` and `git_branch` say where the session started, which
+    attributes it to a container (ticket 28). Rebuildable: losing the table
+    costs one slow listing.
+    """
+
+    __tablename__ = "session_info_cache"
+
+    path: str = Field(primary_key=True)
+    size: int
+    mtime_ns: int
+    format: int
+    session_id: str
+    title: str
+    started: datetime | None = Field(default=None, sa_column=Column(_UTCDateTime, nullable=True))
+    last_activity: datetime | None = Field(
+        default=None, sa_column=Column(_UTCDateTime, nullable=True)
+    )
+    models: str = "[]"
+    cwd: str | None = None
+    git_branch: str | None = None

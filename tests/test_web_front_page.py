@@ -95,6 +95,102 @@ def test_containers_are_grouped_under_their_repo(
     ]
 
 
+def test_orchestration_relation_survives_the_web_snapshot(
+    started: tuple[TestClient, str], factory: FakeSourceFactory
+) -> None:
+    from jailbee.orchestration.view import ChildView, GrantView
+
+    client, token = started
+    parent = container("alpha-orch", grant=GrantView(4, (), (), False, ()))
+    child = container(
+        "alpha-task",
+        child=ChildView("alpha-orch", "working", (), False, (), "codex/opus"),
+    )
+    snap = snapshot_of(repo_group("alpha", child, parent))
+    page = json.loads(first_page(client, token, factory, snap))
+    assert page["v"] == PROTOCOL_VERSION
+    rows = page["view"]["repos"][0]["containers"]
+    assert [row["name"] for row in rows] == ["alpha-orch", "alpha-task"]
+    assert rows[0]["orchestrator"] is True
+    assert rows[0]["child_count"] == 1
+    assert rows[0]["child"] is None
+    assert rows[1]["depth"] == 1
+    assert rows[1]["child"] == {
+        "orchestrator": "alpha-orch",
+        "orchestrator_short_name": "orch",
+        "state": "working",
+        "runner": "codex/opus",
+    }
+
+
+def test_interleaved_children_stay_with_their_own_orchestrator(
+    started: tuple[TestClient, str], factory: FakeSourceFactory
+) -> None:
+    from jailbee.orchestration.view import ChildView, GrantView
+
+    client, token = started
+    snap = snapshot_of(
+        repo_group(
+            "alpha",
+            container("alpha-a", grant=GrantView(4, (), (), False, ())),
+            container("alpha-b", grant=GrantView(4, (), (), False, ())),
+            container("alpha-a1", child=ChildView("alpha-a", "working", (), False, ())),
+            container("alpha-b1", child=ChildView("alpha-b", "working", (), False, ())),
+            container("alpha-a2", child=ChildView("alpha-a", "working", (), False, ())),
+            container("alpha-b2", child=ChildView("alpha-b", "working", (), False, ())),
+        )
+    )
+    view = json.loads(first_page(client, token, factory, snap))["view"]
+    rows = view["repos"][0]["containers"]
+    assert [(row["name"], row["depth"], row["child_count"]) for row in rows] == [
+        ("alpha-a", 0, 2),
+        ("alpha-a1", 1, 0),
+        ("alpha-a2", 1, 0),
+        ("alpha-b", 0, 2),
+        ("alpha-b1", 1, 0),
+        ("alpha-b2", 1, 0),
+    ]
+
+
+def test_absent_orchestrator_keeps_the_child_relation(
+    started: tuple[TestClient, str], factory: FakeSourceFactory
+) -> None:
+    from jailbee.orchestration.view import ChildView
+
+    client, token = started
+    child = container(
+        "alpha-task", child=ChildView("alpha-missing-parent", "imported", (), False, ())
+    )
+    snap = snapshot_of(repo_group("alpha", child))
+    row = json.loads(first_page(client, token, factory, snap))["view"]["repos"][0]["containers"][0]
+    assert row["depth"] == 0
+    assert row["child"] == {
+        "orchestrator": "alpha-missing-parent",
+        "orchestrator_short_name": "missing-parent",
+        "state": "imported",
+        "runner": None,
+    }
+
+
+def test_child_removal_updates_the_orchestrators_count(
+    started: tuple[TestClient, str], factory: FakeSourceFactory
+) -> None:
+    from jailbee.orchestration.view import ChildView, GrantView
+
+    client, token = started
+    parent = container("alpha-orch", grant=GrantView(4, (), (), False, ()))
+    child = container("alpha-task", child=ChildView("alpha-orch", "working", (), False, ()))
+    with client.websocket_connect("/api/ws") as ws:
+        ws.send_text(json.dumps({"type": "auth", "v": PROTOCOL_VERSION, "token": token}))
+        ws.receive_json()
+        factory.only.push(snapshot_of(repo_group("alpha", parent, child), seq=1))
+        assert ws.receive_json()["view"]["repos"][0]["containers"][0]["child_count"] == 1
+        factory.only.push(snapshot_of(repo_group("alpha", parent), seq=2))
+        rows = ws.receive_json()["view"]["repos"][0]["containers"]
+        assert [row["name"] for row in rows] == ["alpha-orch"]
+        assert rows[0]["child_count"] == 0
+
+
 def test_cells_equal_the_dashboard_core_for_the_same_snapshot(
     started: tuple[TestClient, str], factory: FakeSourceFactory
 ) -> None:
@@ -119,6 +215,20 @@ def test_cells_equal_the_dashboard_core_for_the_same_snapshot(
     assert row["name"] == "alpha-1", "the full name stays the row identity"
     assert cells["state"] == "▶"
     assert cells["agent_compact"].startswith("◆")
+
+
+def test_row_carries_an_api_error_state_and_cell(
+    started: tuple[TestClient, str], factory: FakeSourceFactory
+) -> None:
+    client, token = started
+    info = container("alpha-1", agent_status=(agent("error:<b>quota"),))
+    view = json.loads(first_page(client, token, factory, snapshot_of(repo_group("alpha", info))))[
+        "view"
+    ]
+    row = view["repos"][0]["containers"][0]
+    cells = dict(zip((c["name"] for c in view["columns"]), row["cells"], strict=True))
+    assert row["agent"] == "error:<b>quota"  # the browser renders it as text
+    assert cells["agent_compact"].startswith("✖ <b>quota")
 
 
 @pytest.mark.parametrize("state", ["waiting", "busy", "idle"])
@@ -192,6 +302,94 @@ def test_excluded_repo_appears_nowhere_in_the_message(factory: FakeSourceFactory
         raw = first_page(client, token, factory, snap)
     assert "alpha-1" in raw
     assert "secret" not in raw
+
+
+def test_excluded_orchestrator_is_redacted_from_a_visible_child(
+    factory: FakeSourceFactory,
+) -> None:
+    from jailbee.orchestration.view import ChildView
+
+    snap = snapshot_of(
+        repo_group(
+            "alpha",
+            container("alpha-task", child=ChildView("secret-orch", "working", (), False, ())),
+        ),
+        repo_group("secret", container("secret-orch", repo="secret")),
+    )
+    for client, token in open_client(factory, frozenset({"secret"})):
+        raw = first_page(client, token, factory, snap)
+    assert "secret" not in raw
+    relation = json.loads(raw)["view"]["repos"][0]["containers"][0]["child"]
+    assert relation["orchestrator"] is None
+    assert relation["orchestrator_short_name"] == "hidden orchestrator"
+
+
+def test_present_orchestrator_repo_wins_over_an_excluded_longer_prefix(
+    factory: FakeSourceFactory,
+) -> None:
+    from jailbee.orchestration.view import ChildView
+
+    snap = snapshot_of(
+        repo_group(
+            "web",
+            container("web-admin-fix", repo="web"),
+            container(
+                "web-task", repo="web", child=ChildView("web-admin-fix", "working", (), False, ())
+            ),
+        ),
+        repo_group("web-admin"),
+    )
+    for client, token in open_client(factory, frozenset({"web-admin"})):
+        view = json.loads(first_page(client, token, factory, snap))["view"]
+    child = next(row for row in view["repos"][0]["containers"] if row["name"] == "web-task")
+    assert child["child"]["orchestrator"] == "web-admin-fix"
+    assert child["child"]["orchestrator_short_name"] == "admin-fix"
+
+
+def test_orchestrator_counts_children_across_visible_repositories(
+    factory: FakeSourceFactory,
+) -> None:
+    from jailbee.orchestration.view import ChildView
+
+    snap = snapshot_of(
+        repo_group("alpha", container("alpha-orch")),
+        repo_group(
+            "beta",
+            container(
+                "beta-task", repo="beta", child=ChildView("alpha-orch", "working", (), False, ())
+            ),
+        ),
+        repo_group(
+            "secret",
+            container(
+                "secret-task",
+                repo="secret",
+                child=ChildView("alpha-orch", "working", (), False, ()),
+            ),
+        ),
+    )
+    for client, token in open_client(factory, frozenset({"secret"})):
+        view = json.loads(first_page(client, token, factory, snap))["view"]
+    assert view["repos"][0]["containers"][0]["child_count"] == 1
+    assert "secret" not in json.dumps(view)
+
+
+def test_cross_repo_orchestrator_uses_its_own_repo_prefix(
+    started: tuple[TestClient, str], factory: FakeSourceFactory
+) -> None:
+    from jailbee.orchestration.view import ChildView
+
+    client, token = started
+    snap = snapshot_of(
+        repo_group(
+            "alpha",
+            container("alpha-task", child=ChildView("other-repo-orch", "working", (), False, ())),
+        ),
+        repo_group("other-repo"),
+    )
+    page = json.loads(first_page(client, token, factory, snap))
+    child = page["view"]["repos"][0]["containers"][0]["child"]
+    assert child["orchestrator_short_name"] == "orch"
 
 
 def test_the_page_updates_on_each_snapshot(

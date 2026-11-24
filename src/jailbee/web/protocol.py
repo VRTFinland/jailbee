@@ -25,12 +25,14 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 
-PROTOCOL_VERSION = 3
+PROTOCOL_VERSION = 5
 
 CLOSE_UNAUTHORIZED = 4001
 """No valid session token: the browser goes back to the login page."""
 CLOSE_PROTOCOL_MISMATCH = 4002
 """The browser speaks another protocol version: it should reload the app."""
+CLOSE_SETUP_MODE = 4003
+"""The server runs FIDO2 setup mode, not the dashboard: the browser opens the setup view."""
 CLOSE_BAD_MESSAGE = 4400
 """A message that is not valid JSON or not a known message type."""
 
@@ -52,6 +54,14 @@ class ClientAuth(_Message):
     token: str
 
 
+MetaMode = Literal["hidden", "collapsed", "shown"]
+"""The *Agent context* display setting: what the server sends of the agent's own
+wrapper records (task notifications, reminders, command output, ...). ``hidden``
+(the default) omits them, ``collapsed`` sends only a label and the content is
+fetched on expand, ``shown`` sends everything. A slash command the user typed
+and an interruption notice keep their label line in every mode."""
+
+
 class FollowKey(BaseModel):
     """Which transcript a subscription follows: a session, or one of its
     subagents when ``subagent_id`` is set. Hashable, so it keys a connection's
@@ -71,6 +81,8 @@ class Subscribe(_Message):
     type: Literal["subscribe"] = "subscribe"
     key: FollowKey
     offset: int = Field(ge=0)
+    meta: MetaMode = "hidden"
+    """The Agent context setting the appends are rendered with."""
 
 
 class Unsubscribe(_Message):
@@ -102,6 +114,16 @@ class ColumnHead(BaseModel):
     header: str
 
 
+class ChildRelation(BaseModel):
+    """Display-only orchestration facts, without grant or child rights."""
+
+    model_config = ConfigDict(frozen=True)
+    orchestrator: str | None
+    orchestrator_short_name: str
+    state: str
+    runner: str | None
+
+
 class ContainerRow(BaseModel):
     """One container: its name, fork-tree indent glyphs, agent state and cells.
 
@@ -120,6 +142,10 @@ class ContainerRow(BaseModel):
     state: str
     phase: str | None
     cells: list[str]
+    depth: int = 0
+    orchestrator: bool = False
+    child_count: int = 0
+    child: ChildRelation | None = None
 
 
 class RepoRow(BaseModel):
@@ -159,11 +185,19 @@ class _Rendered(BaseModel):
 
 class RenderedUser(_Rendered):
     """A prompt. ``meta`` marks an agent's own wrapper text (``<command-name>``,
-    ``<system-reminder>``, ...), shown verbatim and muted."""
+    ``<system-reminder>``, ...). A meta record carries a short ``label`` ("Task
+    notification", "Command: /model", "Shell: ls"); its ``html`` is the wrapper
+    text verbatim when the Agent context setting is ``shown``, and empty
+    otherwise. ``expandable`` says the content was withheld and `EntryContent`
+    serves it. Context split off another entry (wrappers before a typed prompt,
+    ``<system-reminder>`` blocks appended to a tool result) is its own record
+    with the id ``<entry id>:meta``."""
 
     kind: Literal["user"] = "user"
     html: str
     meta: bool = False
+    label: str | None = None
+    expandable: bool = False
 
 
 class RenderedAssistant(_Rendered):
@@ -228,6 +262,15 @@ RenderedEntry = Annotated[
 WebSocket's live appends carry the same shape."""
 
 
+class EntryContent(BaseModel):
+    """`GET .../entries/{entry_id}`: one entry's full rendering, for a
+    withheld meta record the browser expands."""
+
+    model_config = ConfigDict(frozen=True)
+    id: str
+    html: str
+
+
 class TranscriptView(BaseModel):
     """`GET /api/repos/{prefix}/sessions/{agent}/{session_id}`: a whole session."""
 
@@ -271,7 +314,9 @@ class Status(_Message):
 
 class TranscriptAppend(_Message):
     """Entries a followed transcript gained; ``offset`` is where the next read
-    starts. Never sent empty, and a partly written line waits until complete."""
+    starts. Sent only when the offset moved: ``entries`` is empty when the Agent
+    context setting left out everything read. A partly written line waits until
+    complete."""
 
     type: Literal["append"] = "append"
     key: FollowKey

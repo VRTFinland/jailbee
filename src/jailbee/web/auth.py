@@ -148,6 +148,20 @@ class SessionStore:
             s.refresh(row)
             return _info(row)
 
+    def rename(self, token: str, device_name: str) -> SessionInfo | None:
+        """Give the session ``token`` names a new ``device_name``; None if there is none."""
+        with Session(self._engine) as s:
+            row = s.exec(
+                select(WebSession).where(WebSession.token_hash == token_hash(token))
+            ).first()
+            if row is None:
+                return None
+            row.device_name = device_name
+            s.add(row)
+            s.commit()
+            s.refresh(row)
+            return _info(row)
+
     def is_active(self, token: str) -> bool:
         """Whether ``token`` still names a live session, without sliding its expiry.
 

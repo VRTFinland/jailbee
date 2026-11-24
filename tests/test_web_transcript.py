@@ -20,8 +20,12 @@ from fastapi.testclient import TestClient
 
 from jailbee.db import get_engine
 from jailbee.remote_ssh.repo_scope import RemoteRepoScope
+from jailbee.transcripts.base import UserMessage
+from jailbee.transcripts.claude import ClaudeSource
 from jailbee.web.app import WebDeps, create_app
 from jailbee.web.auth import PinHolder
+from jailbee.web.protocol import RenderedUser
+from jailbee.web.transcript_render import RenderCache, render_entries
 from tests.web_fakes import FakeClock, FakeSourceFactory, pin_sequence
 
 SESSION = "33333333-3333-4333-8333-333333333333"
@@ -167,7 +171,7 @@ URL = f"/api/repos/alpha/sessions/claude/{SESSION}"
 
 
 def entries(client: TestClient) -> list[dict[str, object]]:
-    res = client.get(URL)
+    res = client.get(URL, params={"meta": "shown"})
     assert res.status_code == 200, res.text
     got: list[dict[str, object]] = res.json()["entries"]
     return got
@@ -255,6 +259,278 @@ def test_an_agent_wrapper_prompt_is_meta_and_shown_verbatim(client: TestClient) 
     html = str(wrapper["html"])
     assert "<command-name>" not in html
     assert "&lt;command-name&gt;/clear&lt;/command-name&gt;" in html
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "<command-name>/model</command-name> <command-message>model</command-message>",
+        "<local-command-caveat>Local only</local-command-caveat>",
+        "<local-command-stdout>Model changed</local-command-stdout>",
+        "  <system-reminder>Injected\ncontext</system-reminder>",
+        "<bash-stdout>/work/repo</bash-stdout>",
+        "<bash-stderr>No such file</bash-stderr>",
+        "<user-prompt-submit-hook>Hook context</user-prompt-submit-hook>",
+        "<local-command-stderr>Command failed</local-command-stderr>",
+        "<command-extra>Command context</command-extra>",
+        '<teammate-message teammate_id="reviewer">Review finished</teammate-message>',
+        "<ide_selection>Selected code</ide_selection>",
+        '<terminal name="build">Build output</terminal>',
+        '<coordinator-task nonce="abc">Task context</coordinator-task>',
+        "<task_notification>Monitor event</task_notification>",
+        "<webhook-payload>Event context</webhook-payload>",
+    ],
+)
+def test_agent_preambles_are_meta_in_the_rendered_transcript(
+    client: TestClient, home: Path, text: str
+) -> None:
+    path = home / "projects" / "-work-repo" / f"{SESSION}.jsonl"
+    path.write_text(json.dumps(_record(1, "user", text)) + "\n")
+
+    (entry,) = of_kind(client, "user")
+
+    assert entry["meta"] is True
+    assert '<pre class="meta">' in str(entry["html"])
+    assert "&lt;" in str(entry["html"])
+
+
+@pytest.mark.parametrize("wrapper", ["task-notification", "bash-input"])
+def test_injected_user_records_are_meta_and_cannot_supply_session_titles(
+    client: TestClient, home: Path, wrapper: str
+) -> None:
+    if wrapper == "task-notification":
+        corpus = (
+            Path(__file__).parent
+            / "fixtures/transcripts/claude-corpus/projects/-work-toy"
+            / "00000003-0000-4000-8000-000000000003.jsonl"
+        )
+        record = json.loads(corpus.read_text().splitlines()[6])
+    else:
+        record = _record(1, "user", "<bash-input>pwd</bash-input>")
+    path = home / "projects" / "-work-repo" / f"{SESSION}.jsonl"
+    path.write_text(
+        json.dumps(record) + "\n" + json.dumps(_record(2, "user", "Fix the title")) + "\n"
+    )
+
+    response = client.get(URL, params={"meta": "shown"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert (body["entries"][0]["meta"], body["title"]) == (True, "Fix the title")
+
+
+def _compacted_session(home: Path) -> None:
+    """A recorded compaction summary followed by a typed prompt."""
+    corpus = (
+        Path(__file__).parent
+        / "fixtures/transcripts/claude-corpus/projects/-work-toy"
+        / "00000001-0000-4000-8000-000000000001.jsonl"
+    )
+    (summary,) = [
+        record
+        for line in corpus.read_text().splitlines()
+        if (record := json.loads(line)).get("isCompactSummary") is True
+    ]
+    path = home / "projects" / "-work-repo" / f"{SESSION}.jsonl"
+    path.write_text(
+        json.dumps(summary) + "\n" + json.dumps(_record(2, "user", "Fix the title")) + "\n"
+    )
+
+
+def test_a_collapsed_compaction_summary_expands_through_the_entries_endpoint(
+    client: TestClient, home: Path
+) -> None:
+    _compacted_session(home)
+
+    summarised, _ = client.get(URL, params={"meta": "collapsed"}).json()["entries"]
+    assert (summarised["label"], summarised["html"], summarised["expandable"]) == (
+        "Agent context",
+        "",
+        True,
+    )
+    res = client.get(f"{URL}/entries/{summarised['id']}")
+
+    assert res.status_code == 200
+    assert "This session is being continued" in res.json()["html"]
+
+
+def test_a_compaction_summary_is_meta_and_cannot_supply_the_session_title(
+    client: TestClient, home: Path
+) -> None:
+    _compacted_session(home)
+
+    body = client.get(URL, params={"meta": "shown"}).json()
+
+    assert body["title"] == "Fix the title"
+    summarised, typed = body["entries"]
+    assert summarised["meta"] is True
+    assert '<pre class="meta">' in summarised["html"]
+    assert "This session is being continued" in summarised["html"]
+    assert typed["meta"] is False
+
+
+@pytest.mark.parametrize(
+    "notice", ["[Request interrupted by user]", "[Request interrupted by user for tool use]"]
+)
+def test_an_interruption_notice_is_meta_and_cannot_supply_the_session_title(
+    client: TestClient, home: Path, notice: str
+) -> None:
+    path = home / "projects" / "-work-repo" / f"{SESSION}.jsonl"
+    path.write_text(
+        json.dumps(_record(1, "user", [{"type": "text", "text": notice}]))
+        + "\n"
+        + json.dumps(_record(2, "user", "Fix the title"))
+        + "\n"
+    )
+
+    body = client.get(URL, params={"meta": "shown"}).json()
+
+    assert body["title"] == "Fix the title"
+    interrupted, typed = body["entries"]
+    assert interrupted["meta"] is True
+    assert "Request interrupted by user" in interrupted["html"]
+    assert typed["meta"] is False
+
+
+def test_a_typed_prompt_resembling_an_interruption_notice_stays_a_prompt(
+    client: TestClient, home: Path
+) -> None:
+    """Only Claude Code's bracketed notice is context, not the same words typed."""
+    path = home / "projects" / "-work-repo" / f"{SESSION}.jsonl"
+    path.write_text(json.dumps(_record(1, "user", "Request interrupted by user")) + "\n")
+
+    body = client.get(URL).json()
+
+    assert body["title"] == "Request interrupted by user"
+    (typed,) = body["entries"]
+    assert typed["meta"] is False
+
+
+@pytest.mark.parametrize(
+    "context",
+    ["Injected context", "Injected <system-reminder>nested</system-reminder> context"],
+)
+def test_a_mixed_user_record_separates_injected_context_from_the_typed_prompt(
+    client: TestClient, home: Path, context: str
+) -> None:
+    path = home / "projects" / "-work-repo" / f"{SESSION}.jsonl"
+    path.write_text(
+        json.dumps(
+            _record(1, "user", f"<system-reminder>{context}</system-reminder>\nFix **titles**")
+        )
+        + "\n"
+        + json.dumps(_record(2, "user", "A later prompt"))
+        + "\n"
+    )
+
+    body = client.get(URL, params={"meta": "shown"}).json()
+
+    assert body["title"] == "Fix **titles**"
+    injected, typed, later = body["entries"]
+    assert injected["meta"] is True
+    assert "Injected" in injected["html"] and "Fix" not in injected["html"]
+    assert typed["meta"] is False
+    assert typed["html"] == "<p>Fix <strong>titles</strong></p>"
+    assert len({injected["id"], typed["id"], later["id"]}) == 3
+
+
+def test_an_unknown_xml_tag_stays_typed_text_in_both_title_and_transcript(
+    client: TestClient, home: Path
+) -> None:
+    path = home / "projects" / "-work-repo" / f"{SESSION}.jsonl"
+    path.write_text(json.dumps(_record(1, "user", "<example>broken</example>")) + "\n")
+
+    body = client.get(URL).json()
+
+    assert body["title"] == "<example>broken</example>"
+    (entry,) = body["entries"]
+    assert entry["meta"] is False
+    assert "&lt;example&gt;broken&lt;/example&gt;" in entry["html"]
+
+
+def _meta_session(client: TestClient, home: Path) -> None:
+    path = home / "projects" / "-work-repo" / f"{SESSION}.jsonl"
+    lines = [
+        _record(1, "user", "<task-notification>Job done</task-notification>"),
+        _record(
+            2,
+            "user",
+            "<command-name>/model</command-name><command-args>opus</command-args>"
+            "<command-message>model</command-message>",
+        ),
+        _record(3, "user", "<system-reminder>Be brief</system-reminder>\nFix **titles**"),
+    ]
+    path.write_text("".join(json.dumps(r) + "\n" for r in lines))
+
+
+def _summary(client: TestClient, mode: str | None) -> list[tuple[object, ...]]:
+    res = client.get(URL, params={"meta": mode} if mode else None)
+    assert res.status_code == 200, res.text
+    return [
+        (e["meta"], e["label"], e["html"] != "", e["expandable"]) for e in res.json()["entries"]
+    ]
+
+
+def test_agent_context_is_hidden_by_default_but_slash_commands_keep_a_label(
+    client: TestClient, home: Path
+) -> None:
+    _meta_session(client, home)
+    rows = _summary(client, None)
+    assert rows == [
+        (True, "Command: /model opus", False, False),
+        (False, None, True, False),
+    ]
+    assert rows == _summary(client, "hidden")
+    assert "Job done" not in client.get(URL).text and "Be brief" not in client.get(URL).text
+
+
+def test_collapsed_agent_context_sends_labels_without_content(
+    client: TestClient, home: Path
+) -> None:
+    _meta_session(client, home)
+    assert _summary(client, "collapsed") == [
+        (True, "Task notification", False, True),
+        (True, "Command: /model opus", False, True),
+        (True, "System reminder", False, True),
+        (False, None, True, False),
+    ]
+    text = client.get(URL, params={"meta": "collapsed"}).text
+    assert "Job done" not in text and "Be brief" not in text
+
+
+def test_shown_agent_context_sends_labels_and_content(client: TestClient, home: Path) -> None:
+    _meta_session(client, home)
+    assert _summary(client, "shown") == [
+        (True, "Task notification", True, False),
+        (True, "Command: /model opus", True, False),
+        (True, "System reminder", True, False),
+        (False, None, True, False),
+    ]
+
+
+def test_an_unknown_agent_context_mode_is_rejected(client: TestClient) -> None:
+    assert client.get(URL, params={"meta": "bogus"}).status_code == 422
+
+
+def test_a_withheld_meta_record_is_fetched_on_expand(client: TestClient, home: Path) -> None:
+    _meta_session(client, home)
+    first = client.get(URL, params={"meta": "collapsed"}).json()["entries"][0]
+    res = client.get(f"{URL}/entries/{first['id']}")
+    assert res.status_code == 200
+    assert res.json()["id"] == first["id"]
+    assert "Job done" in res.json()["html"]
+    mixed = client.get(URL, params={"meta": "collapsed"}).json()["entries"][2]
+    assert mixed["id"].endswith(":meta")
+    assert "Be brief" in client.get(f"{URL}/entries/{mixed['id']}").json()["html"]
+
+
+def test_entry_content_is_404_for_a_typed_prompt_or_unknown_id(
+    client: TestClient, home: Path
+) -> None:
+    _meta_session(client, home)
+    typed = client.get(URL, params={"meta": "shown"}).json()["entries"][-1]
+    assert client.get(f"{URL}/entries/{typed['id']}").status_code == 404
+    assert client.get(f"{URL}/entries/nope").status_code == 404
 
 
 def test_a_subagent_is_referenced_as_data(client: TestClient) -> None:
@@ -349,3 +625,266 @@ def test_committed_highlight_stylesheet_is_current() -> None:
     css = committed.read_text()
     for theme in ("light", "dark", "eink"):
         assert f':root[data-theme="{theme}"] .highlight' in css
+
+
+CORPUS = Path(__file__).parent / "fixtures/transcripts/claude-corpus"
+
+
+def test_no_corpus_user_record_starting_with_a_tag_renders_as_a_typed_prompt() -> None:
+    """Guard over every recorded session and subagent: Claude Code's own XML-like
+    user records are meta (or split), never typed prompts or session titles.
+
+    The recorder's scripted prompts (corpus.json) never start with ``<``.
+    """
+    scripted = [
+        p
+        for s in json.loads((CORPUS / "corpus.json").read_text())["sessions"]
+        for p in s["prompts"]
+    ]
+    assert scripted and not any(p.lstrip().startswith("<") for p in scripted)
+    source = ClaudeSource()
+    transcripts = sorted((CORPUS / "projects").rglob("*.jsonl"))
+    assert any("subagents" in p.parts for p in transcripts)
+    tagged = 0
+    for path in transcripts:
+        for entry in source.read(path).entries:
+            if not (isinstance(entry, UserMessage) and re.match(r"\s*<[a-z]", entry.text)):
+                continue
+            tagged += 1
+            first = render_entries([entry], RenderCache())[0]
+            assert isinstance(first, RenderedUser) and first.meta, (path.name, entry.text[:80])
+    assert tagged
+    sessions = source.list_sessions(CORPUS)
+    assert sessions
+    assert not [s.title for s in sessions if s.title.startswith("<")]
+
+
+# ---- agent context: review rework (ticket 33) --------------------------------
+
+REMINDER = "<system-reminder>\nWarning: the file is shorter than the offset.\n</system-reminder>"
+
+
+def _write(home: Path, *records: dict[str, object]) -> None:
+    path = home / "projects" / "-work-repo" / f"{SESSION}.jsonl"
+    path.write_text("".join(json.dumps(r) + "\n" for r in records))
+
+
+def _reminder_session(home: Path, output: str = "line one\nline two") -> None:
+    _write(
+        home,
+        _record(
+            1,
+            "assistant",
+            [{"type": "tool_use", "id": "toolu_read", "name": "Read", "input": {"file_path": "x"}}],
+        ),
+        _record(
+            2,
+            "user",
+            [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "toolu_read",
+                    "content": output + "\n\n" + REMINDER,
+                }
+            ],
+        ),
+    )
+
+
+def _kinds(client: TestClient, mode: str) -> list[dict[str, object]]:
+    res = client.get(URL, params={"meta": mode})
+    assert res.status_code == 200, res.text
+    got: list[dict[str, object]] = res.json()["entries"]
+    return got
+
+
+def test_a_reminder_inside_a_tool_result_is_hidden_by_default(
+    client: TestClient, home: Path
+) -> None:
+    _reminder_session(home)
+    res = client.get(URL)
+    assert "shorter than the offset" not in res.text
+    (result,) = [e for e in res.json()["entries"] if e["kind"] == "tool_result"]
+    assert result["html"] == '<pre class="tool-output">line one\nline two</pre>'
+    assert [e["kind"] for e in res.json()["entries"]] == ["tool_call", "tool_result"]
+
+
+def test_a_collapsed_tool_result_reminder_is_a_label_fetched_on_expand(
+    client: TestClient, home: Path
+) -> None:
+    _reminder_session(home)
+    entries = _kinds(client, "collapsed")
+    result, reminder = entries[1], entries[2]
+    assert result["html"] == '<pre class="tool-output">line one\nline two</pre>'
+    assert reminder["kind"] == "user"
+    assert (reminder["meta"], reminder["label"], reminder["html"], reminder["expandable"]) == (
+        True,
+        "System reminder",
+        "",
+        True,
+    )
+    assert reminder["id"] == f"{result['id']}:meta"
+    body = client.get(f"{URL}/entries/{reminder['id']}").json()
+    assert "shorter than the offset" in body["html"]
+    assert "line one" not in body["html"]
+
+
+def test_a_hidden_reminder_only_tool_result_says_why_it_is_empty(
+    client: TestClient, home: Path
+) -> None:
+    _reminder_session(home, output="")
+    (result,) = [e for e in _kinds(client, "hidden") if e["kind"] == "tool_result"]
+    assert result["html"] == '<pre class="tool-output">(output was agent context only)</pre>'
+    shown = [e for e in _kinds(client, "shown") if e["kind"] == "tool_result"]
+    assert shown[0]["html"] == '<pre class="tool-output"></pre>'
+
+
+def test_a_shown_tool_result_reminder_is_its_own_meta_entry(client: TestClient, home: Path) -> None:
+    _reminder_session(home)
+    result, reminder = _kinds(client, "shown")[1:]
+    assert "shorter than the offset" not in result["html"]
+    assert reminder["label"] == "System reminder"
+    assert "shorter than the offset" in reminder["html"]
+
+
+def test_a_reminder_tag_inside_tool_output_stays_output(client: TestClient, home: Path) -> None:
+    """A file that merely mentions the tag is the tool's own output, not context."""
+    _write(
+        home,
+        _record(
+            1,
+            "user",
+            [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "toolu_x",
+                    "content": "<system-reminder>quoted</system-reminder>\nthen more file text",
+                }
+            ],
+        ),
+    )
+    (result,) = _kinds(client, "hidden")
+    assert "quoted" in result["html"] and "more file text" in result["html"]
+
+
+def test_expanding_an_entry_does_not_render_the_whole_transcript(
+    client: TestClient, home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _meta_session(client, home)
+    ids = [e["id"] for e in _kinds(client, "collapsed") if e.get("expandable")]
+    import jailbee.web.routes.repo_routes as routes
+    import jailbee.web.transcript_render as render
+
+    def boom(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("the whole transcript was rendered")
+
+    monkeypatch.setattr(render, "render_entries", boom)
+    monkeypatch.setattr(routes, "render_entries", boom)
+    monkeypatch.setattr(render, "render_entry", boom)
+    monkeypatch.setattr(render, "render_markdown", boom)
+    monkeypatch.setattr(render, "highlight_json", boom)
+    for entry_id in ids:
+        assert client.get(f"{URL}/entries/{entry_id}").status_code == 200
+
+
+SUBAGENT_URL = f"{URL}/subagents/{AGENT_ID}"
+
+
+def _subagent_session(home: Path) -> None:
+    directory = home / "projects" / "-work-repo" / SESSION / "subagents"
+    directory.mkdir(parents=True)
+    (directory / f"agent-{AGENT_ID}.jsonl").write_text(
+        json.dumps(_record(1, "user", "<task-notification>Sub job</task-notification>"))
+        + "\n"
+        + json.dumps(_record(2, "assistant", [{"type": "text", "text": "ok"}]))
+        + "\n"
+    )
+
+
+def test_a_subagent_meta_record_is_fetched_on_expand(client: TestClient, home: Path) -> None:
+    _subagent_session(home)
+    res = client.get(SUBAGENT_URL, params={"meta": "collapsed"})
+    assert res.status_code == 200, res.text
+    first = res.json()["entries"][0]
+    assert first["expandable"] is True and "Sub job" not in res.text
+    body = client.get(f"{SUBAGENT_URL}/entries/{first['id']}")
+    assert body.status_code == 200
+    assert "Sub job" in body.json()["html"]
+    assert client.get(f"{SUBAGENT_URL}/entries/nope").status_code == 404
+
+
+@pytest.mark.parametrize("base", [URL, SUBAGENT_URL])
+def test_entry_content_requires_login(client: TestClient, home: Path, base: str) -> None:
+    _subagent_session(home)
+    client.headers.pop("Authorization")
+    assert client.get(f"{base}/entries/r0000001-0000-4000-8000-000000000000:0").status_code == 401
+
+
+@pytest.mark.parametrize("base", [URL, SUBAGENT_URL])
+def test_entry_content_of_an_excluded_repo_is_404_and_never_resolved(
+    client: TestClient, home: Path, homes: Homes, base: str
+) -> None:
+    _subagent_session(home)
+    _write(home, _record(1, "user", "<task-notification>Job done</task-notification>"))
+    entry_id = "r0000001-0000-4000-8000-000000000000:0"
+    assert client.get(f"{base}/entries/{entry_id}").status_code == 200
+    homes.calls.clear()
+    res = client.get(f"{base.replace('/alpha/', '/secret/')}/entries/{entry_id}")
+    assert res.status_code == 404
+    assert res.json() == {"detail": "Unknown session"}
+    assert "secret" not in homes.calls
+
+
+def _compaction_summary() -> dict[str, object]:
+    corpus = (
+        Path(__file__).parent
+        / "fixtures/transcripts/claude-corpus/projects/-work-toy"
+        / "00000001-0000-4000-8000-000000000001.jsonl"
+    )
+    (summary,) = [
+        record
+        for line in corpus.read_text().splitlines()
+        if (record := json.loads(line)).get("isCompactSummary") is True
+    ]
+    return summary
+
+
+def test_a_compaction_summary_follows_the_agent_context_setting(
+    client: TestClient, home: Path
+) -> None:
+    _write(home, _compaction_summary(), _record(2, "user", "Fix the title"))
+    hidden = client.get(URL, params={"meta": "hidden"})
+    assert "being continued" not in hidden.text
+    assert [e["meta"] for e in hidden.json()["entries"]] == [False]
+
+    collapsed = client.get(URL, params={"meta": "collapsed"})
+    assert "being continued" not in collapsed.text
+    summary = collapsed.json()["entries"][0]
+    assert (summary["meta"], summary["label"], summary["expandable"]) == (
+        True,
+        "Agent context",
+        True,
+    )
+    body = client.get(f"{URL}/entries/{summary['id']}").json()
+    assert "This session is being continued" in body["html"]
+
+
+@pytest.mark.parametrize("mode", ["hidden", "collapsed"])
+def test_an_interruption_notice_keeps_its_label_line(
+    client: TestClient, home: Path, mode: str
+) -> None:
+    _write(
+        home,
+        _record(
+            1, "user", [{"type": "text", "text": "[Request interrupted by user for tool use]"}]
+        ),
+        _record(2, "user", "Go on"),
+    )
+    notice, typed = _kinds(client, mode)
+    assert (notice["meta"], notice["label"], notice["html"], notice["expandable"]) == (
+        True,
+        "Request interrupted by user for tool use",
+        "",
+        False,
+    )
+    assert typed["meta"] is False

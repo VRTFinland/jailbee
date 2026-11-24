@@ -6,6 +6,7 @@ import asyncio
 from collections.abc import Callable, Sequence
 from dataclasses import replace
 from functools import cached_property
+from typing import TYPE_CHECKING
 
 from rich.console import Console, ConsoleOptions, RenderableType, RenderResult
 from rich.segment import Segment
@@ -53,7 +54,20 @@ from jailbee.dashboard.tui.menu_state import MenuState, RepoMenuState
 from jailbee.dashboard.tui.native import OverlayBox, PickerBox, build_box
 from jailbee.dashboard.tui.overlay import NativeState, Overlay, overlay_key
 
+if TYPE_CHECKING:
+    from textual.theme import Theme
+
 _CACHE_MAX = 4096
+
+# Textual's round border keeps a corner, a stroke and label padding at each end.
+FRAME_TITLE_ENDS = 2
+FRAME_TITLE_CORNER_COLS = 1
+FRAME_TITLE_STROKE_COLS = 1
+FRAME_TITLE_PADDING_COLS = 1
+FRAME_TITLE_RESERVED_COLS = FRAME_TITLE_ENDS * (
+    FRAME_TITLE_CORNER_COLS + FRAME_TITLE_STROKE_COLS + FRAME_TITLE_PADDING_COLS
+)
+FRAME_TITLE_GAP = "  "
 
 
 class _BehindDialog(LineFilter):
@@ -482,21 +496,6 @@ class _CropTop:
             yield Segment.line()
 
 
-_BADGE_GAP = "  "
-
-
-def _system_row(view: DashboardView, width: int, *, shown: bool) -> Text:
-    """The queue badge (while the queue holds entries), then the host status in what is left."""
-    line = Text(no_wrap=True, overflow="ellipsis")
-    if view.queue is not None:
-        line.append_text(queue_badge(view.queue))
-        if shown:
-            line.append(_BADGE_GAP)
-    if shown and view.system is not None:
-        line.append_text(system_line(view.system, max(0, width - line.cell_len)))
-    return line
-
-
 class DashboardFrame(Vertical):
     """The whole dashboard inside one rounded border.
 
@@ -539,6 +538,7 @@ class DashboardFrame(Vertical):
         super().__init__(id=id)
         self.mouse_enabled = mouse_enabled or (lambda: True)
         self.candidates = candidates or (lambda _text: ())
+        self._title_view: DashboardView | None = None
         self._notice_input: object = None
         self._system_input: object = None
         # How far the shown details panel scrolls; the app hands it to the session.
@@ -637,12 +637,45 @@ class DashboardFrame(Vertical):
         box.styles.height = box_height
         box.styles.offset = ((width - box_width) // 2, (height - box_height) // 2)
 
+    def show_title(self, view: DashboardView) -> None:
+        """Update only the border title, leaving body layout and overlays untouched."""
+        self._title_view = view
+        title = frame_title(
+            view.groups,
+            view.folded,
+            git_enabled=view.git_enabled,
+            now=view.now,
+            marked=len(view.marked),
+        )
+        if view.queue is not None:
+            badge = queue_badge(
+                view.queue, accent=self.app.get_css_variables()["accent"], frame=view.queue_frame
+            )
+            available = max(0, self.app.size.width - FRAME_TITLE_RESERVED_COLS)
+            title_width = available - badge.cell_len - len(FRAME_TITLE_GAP)
+            if title_width > 0:
+                title.truncate(title_width, overflow="ellipsis", pad=True)
+                title.append(FRAME_TITLE_GAP)
+                title.append_text(badge)
+            else:
+                # Below a full badge's width, clip the badge, never restore the title.
+                badge.truncate(available, overflow="ellipsis")
+                badge.pad_left(max(0, available - badge.cell_len))
+                title = badge
+        self.border_title = title
+
+    def on_mount(self) -> None:
+        self.app.theme_changed_signal.subscribe(self, self._refresh_title_theme)
+
+    def _refresh_title_theme(self, _theme: Theme) -> None:
+        if self._title_view is not None:
+            self.show_title(self._title_view)
+
     def show(self, view: DashboardView) -> None:
         width = max(0, self.app.size.width - FRAME_INSET_COLS)
         height = max(0, self.app.size.height - FRAME_BORDER_ROWS)
         system_shown = view.show_system and view.system is not None
-        # The queue badge shares the status row, and keeps it while the status is hidden.
-        system_row = int((system_shown or view.queue is not None) and height > 0)
+        system_row = int(system_shown and height > 0)
         # The status row is one line above the table; the layout budgets what is left.
         height -= system_row
         console = self.app.console
@@ -656,13 +689,7 @@ class DashboardFrame(Vertical):
                 )
             )
 
-        self.border_title = frame_title(
-            view.groups,
-            view.folded,
-            git_enabled=view.git_enabled,
-            now=view.now,
-            marked=len(view.marked),
-        )
+        self.show_title(view)
         subtitle, inline = notice_parts(view.notice, wraps=view.notice_wraps)
         if view.update is not None:
             # Below any wrapped notice, so a crop from the top keeps the row.
@@ -755,9 +782,10 @@ class DashboardFrame(Vertical):
         system = self.query_one("#system", Static)
         system.display = bool(system_row)
         if system_row:
-            system_input = (view.system if system_shown else None, view.queue, width)
+            system_input = (view.system, width)
             if system_input != self._system_input:
-                system.update(_system_row(view, width, shown=system_shown))
+                assert view.system is not None
+                system.update(system_line(view.system, width))
                 self._system_input = system_input
         table = self.table
         table.display = layout.table_rows > 0

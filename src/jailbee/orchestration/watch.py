@@ -55,6 +55,8 @@ class WatchEntry:
     idle_token: str | None = None
     last_message_kind: str | None = None
     last_message_line: str | None = None
+    api_error_key: str | None = None
+    """The open API-error episode already reported (the error record's identity)."""
 
 
 @dataclass(frozen=True)

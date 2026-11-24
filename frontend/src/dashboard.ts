@@ -7,6 +7,7 @@ import {
     PROTOCOL_VERSION,
     type ClientMessage,
     type FollowKey,
+    type MetaMode,
     type FrontPageView,
     type RenderedEntry,
     type ServerMessage,
@@ -25,6 +26,7 @@ export interface DashboardState {
     view: FrontPageView | null
     status: string | null
     connected: boolean
+    outdated: boolean
     device: string
 }
 
@@ -38,6 +40,7 @@ export interface FollowHandlers {
 interface Follow {
     key: FollowKey
     offset: number
+    meta: MetaMode
     handlers: FollowHandlers
 }
 
@@ -50,17 +53,24 @@ export class Dashboard {
         view: null,
         status: null,
         connected: false,
+        outdated: false,
         device: "",
     })
     private socket: SocketLike | null = null
     private readonly follows = new Map<string, Follow>()
     private unauthorized: () => void = () => {}
+    private setupMode: () => void = () => {}
 
     constructor(private readonly factory: SocketFactory) {}
 
     /** Where to go when the session is gone (App.vue sends the user to login). */
     onUnauthorized(handler: () => void): void {
         this.unauthorized = handler
+    }
+
+    /** Where to go when the server turns out to run setup mode (App.vue opens setup). */
+    onSetupMode(handler: () => void): void {
+        this.setupMode = handler
     }
 
     start(): void {
@@ -71,6 +81,8 @@ export class Dashboard {
                 this.state.connected = connected
             },
             onUnauthorized: () => this.unauthorized(),
+            onSetupMode: () => this.setupMode(),
+            onOutdated: () => { this.state.outdated = true },
         })
         this.socket.start()
     }
@@ -82,9 +94,9 @@ export class Dashboard {
     }
 
     /** Follow a transcript from `offset`; resubscribes after reconnects. Returns unfollow. */
-    follow(key: FollowKey, offset: number, handlers: FollowHandlers): () => void {
+    follow(key: FollowKey, offset: number, meta: MetaMode, handlers: FollowHandlers): () => void {
         const id = keyId(key)
-        const entry: Follow = {key, offset, handlers}
+        const entry: Follow = {key, offset, meta, handlers}
         this.follows.set(id, entry)
         if (this.state.connected) this.subscribe(entry)
         return () => {
@@ -102,6 +114,7 @@ export class Dashboard {
             v: PROTOCOL_VERSION,
             key: entry.key,
             offset: entry.offset,
+            meta: entry.meta,
         })
     }
 

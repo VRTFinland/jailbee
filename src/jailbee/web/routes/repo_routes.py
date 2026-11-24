@@ -9,9 +9,15 @@ from starlette.concurrency import run_in_threadpool
 
 from jailbee.web.container_sessions import session_containers
 from jailbee.web.deps import Context, RequireSession
-from jailbee.web.protocol import SessionListView, SessionView, TranscriptView
+from jailbee.web.protocol import (
+    EntryContent,
+    MetaMode,
+    SessionListView,
+    SessionView,
+    TranscriptView,
+)
 from jailbee.web.repo_sessions import SessionTranscript
-from jailbee.web.transcript_render import render_entries
+from jailbee.web.transcript_render import entry_content, render_entries
 
 router = APIRouter()
 
@@ -30,7 +36,7 @@ async def repo_sessions(prefix: str, ctx: Context, _auth: RequireSession) -> Ses
     if rows is None:
         raise HTTPException(status_code=404, detail="Unknown repository")
     containers = await run_in_threadpool(
-        session_containers, ctx.hub.latest(), prefix, ctx.deps.engine
+        session_containers, ctx.hub.latest(), prefix, ctx.deps.engine, rows
     )
     return SessionListView(
         sessions=[
@@ -48,7 +54,10 @@ async def repo_sessions(prefix: str, ctx: Context, _auth: RequireSession) -> Ses
 
 
 async def _transcript_view(
-    ctx: Context, prefix: str, load: Callable[[], SessionTranscript | None]
+    ctx: Context,
+    prefix: str,
+    load: Callable[[], SessionTranscript | None],
+    meta: MetaMode = "hidden",
 ) -> TranscriptView:
     # Unknown and excluded repositories, agents, sessions and subagents all
     # answer the same 404, so the answer reveals nothing about what exists.
@@ -66,7 +75,7 @@ async def _transcript_view(
             title=found.info.title,
             last_activity=found.info.last_activity,
             models=list(found.info.models),
-            entries=render_entries(found.entries, ctx.render_cache),
+            entries=render_entries(found.entries, ctx.render_cache, meta),
             offset=found.offset,
         )
 
@@ -78,19 +87,82 @@ async def _transcript_view(
 
 @router.get("/api/repos/{prefix}/sessions/{agent}/{session_id}")
 async def session_transcript(
-    prefix: str, agent: str, session_id: str, ctx: Context, _auth: RequireSession
+    prefix: str,
+    agent: str,
+    session_id: str,
+    ctx: Context,
+    _auth: RequireSession,
+    meta: MetaMode = "hidden",
 ) -> TranscriptView:
     return await _transcript_view(
-        ctx, prefix, lambda: ctx.repo_sessions.transcript(prefix, agent, session_id)
+        ctx, prefix, lambda: ctx.repo_sessions.transcript(prefix, agent, session_id), meta
     )
 
 
 @router.get("/api/repos/{prefix}/sessions/{agent}/{session_id}/subagents/{agent_id}")
 async def subagent_transcript(
-    prefix: str, agent: str, session_id: str, agent_id: str, ctx: Context, _auth: RequireSession
+    prefix: str,
+    agent: str,
+    session_id: str,
+    agent_id: str,
+    ctx: Context,
+    _auth: RequireSession,
+    meta: MetaMode = "hidden",
 ) -> TranscriptView:
     return await _transcript_view(
         ctx,
         prefix,
         lambda: ctx.repo_sessions.subagent_transcript(prefix, agent, session_id, agent_id),
+        meta,
+    )
+
+
+async def _entry_content(
+    ctx: Context,
+    prefix: str,
+    load: Callable[[], SessionTranscript | None],
+    entry_id: str,
+) -> EntryContent:
+    # The same 404 for an excluded repository, an unknown transcript and an
+    # entry that carries no agent context. Only the requested entry is rendered.
+    if not ctx.scope.allows(prefix):
+        raise HTTPException(status_code=404, detail="Unknown session")
+    await ctx.homes_ready()
+
+    def build() -> str | None:
+        found = load()
+        return None if found is None else entry_content(found.entries, entry_id)
+
+    html = await run_in_threadpool(build)
+    if html is None:
+        raise HTTPException(status_code=404, detail="Unknown session")
+    return EntryContent(id=entry_id, html=html)
+
+
+@router.get("/api/repos/{prefix}/sessions/{agent}/{session_id}/entries/{entry_id}")
+async def session_entry(
+    prefix: str, agent: str, session_id: str, entry_id: str, ctx: Context, _auth: RequireSession
+) -> EntryContent:
+    return await _entry_content(
+        ctx, prefix, lambda: ctx.repo_sessions.transcript(prefix, agent, session_id), entry_id
+    )
+
+
+@router.get(
+    "/api/repos/{prefix}/sessions/{agent}/{session_id}/subagents/{agent_id}/entries/{entry_id}"
+)
+async def subagent_entry(
+    prefix: str,
+    agent: str,
+    session_id: str,
+    agent_id: str,
+    entry_id: str,
+    ctx: Context,
+    _auth: RequireSession,
+) -> EntryContent:
+    return await _entry_content(
+        ctx,
+        prefix,
+        lambda: ctx.repo_sessions.subagent_transcript(prefix, agent, session_id, agent_id),
+        entry_id,
     )

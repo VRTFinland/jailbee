@@ -47,8 +47,11 @@ _COLUMN_SET_MIGRATIONS: tuple[tuple[int, str, tuple[str, ...]], ...] = (
     (1, "doing", ()),
     (2, "network", ("network", "mounts")),
     (3, "outbox", ("outbox", "role", "children", "inbox")),
+    (4, "target_diff", ("sync",)),
+    (4, "ahead_count", ()),
+    (4, "behind_count", ()),
 )
-COLUMNS_VERSION = 3
+COLUMNS_VERSION = 4
 """The newest version in `_COLUMN_SET_MIGRATIONS`; a seeded view starts here."""
 
 
@@ -132,8 +135,13 @@ def seed_view_state(
     state = load_view_state(engine, frontend)
     if state.columns is not None:
         notice = stored_column_migration_notice(state.columns)
+        # When the versioned migration follows, it replaces target_diff with
+        # `sync`; its notice then names the retired column instead of this one,
+        # so the user sees one accurate notice rather than two.
+        retired_diff = notice is not None
+        v4_follows = state.columns_version < COLUMNS_VERSION
         if notice is not None:
-            if on_migration is not None:
+            if on_migration is not None and not v4_follows:
                 on_migration(notice)
             # Persist the rename alone, so the notice is shown once rather than
             # on every launch until some unrelated action saves the view. Only
@@ -143,6 +151,8 @@ def seed_view_state(
             save_view_state(engine, frontend, state)
         if state.columns is not None and state.columns_version < COLUMNS_VERSION:
             migrated, applied = migrate_column_set(state.columns, state.columns_version)
+            if retired_diff:
+                applied = [a.replace("target_diff →", "ahead_diff →", 1) for a in applied]
             if applied and on_migration is not None:
                 on_migration(column_set_migration_notice(applied))
             # Written back even when no rule matched, so the version check is
@@ -337,7 +347,10 @@ def _select_visible_fields(
     """
 
     names = default_columns() if enabled is None else enabled
-    by_name = {spec.name: spec for spec in ls_field_specs(now=now, all_repos=False)}
+    by_name = {
+        spec.name: spec
+        for spec in ls_field_specs(now=now, all_repos=False, containers=all_containers)
+    }
     fields = [
         by_name[name]
         for name in dict.fromkeys(names)
@@ -436,11 +449,12 @@ _DASHBOARD_COLUMN_BUDGETS = {
     "mem_pct": 4,
     "mode": 5,
     "wt": 9,
-    "ahead_count": 6,
-    "behind_count": 6,
+    "sync": 24,
+    "ahead_count": 3,
+    "behind_count": 3,
     "host_ahead": 6,
     "host_behind": 6,
-    "conflict": 12,
+    "conflict": 9,
     "pr": 6,
     "issues": 3,
     "outbox": 3,
@@ -457,7 +471,7 @@ _DASHBOARD_COLUMN_BUDGETS = {
     "group": 16,
     "git_status": 36,
     "local_diff": 16,
-    "target_diff": 16,
+    "target_diff": 12,
 }
 
 

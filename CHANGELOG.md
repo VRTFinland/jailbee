@@ -10,6 +10,16 @@ before editing `## Unreleased`.
 
 ### Added
 
+- A child agent stuck on an API error (quota or usage limit exhausted, rate limit,
+  authentication, provider overloaded) is no longer shown as `alive:busy`: once the
+  agent gives up retrying, `jailbee inbox status` shows `alive:error:<kind>` with the
+  error's detail and reset time in `--json`, the broker sends the orchestrator one
+  `blocked` message per episode ("agent stopped on an API error (quota): …; resets at
+  …") instead of a later, misleading `idle`, and the error no longer counts as agent
+  activity. `jb ls` and the terminal, web and Qt dashboards show the state in the
+  AGENT column (a red `✖` and the kind, ranked before waiting), with the kind, age,
+  reset time and a short detail in place of the raw `API Error:` text
+  ([#147](https://github.com/VRTFinland/jailbee/issues/147)).
 - Container agents can stage closing or reopening pull requests with `jailbee pr state
   [N ...] closed|open`: a `state` action in the PR manifest, one manifest per PR, published
   with `jb outbox apply` or the dashboard. The plan warns `closes PR #N` / `reopens PR #N`,
@@ -154,7 +164,11 @@ before editing `## Unreleased`.
   finished, with a `Q` hint and, for a failure, the last output line. Verbs run
   for their output (diff, job log, egress list, merge, PR push, doctor,
   disk usage, the command line) open it automatically. The `⟳ running · ⚠ attention` badge
-  or `Q`, opens the queue, where an entry expands to its full output. A
+  sits at the top-right of the title, using the active theme's bold accent colour
+  for running work and red/bold for non-zero attention; zero counts stay dim.
+  Its running glyph advances once per refresh without redrawing the body and stops
+  when idle. Narrow terminals shorten or hide the title before clipping the badge ([#146](https://github.com/VRTFinland/jailbee/issues/146)).
+  A click on the badge, or `Q`, opens the queue, where an entry expands to its full output. A
   running entry shows its last output line in the list, an expanded one
   follows the output live, and an entry waiting on a question reads
   "awaiting answer"; failed and awaiting entries count as needing attention,
@@ -198,19 +212,67 @@ before editing `## Unreleased`.
   skipping routine success acks. Quiet-child notifications default to 120
   minutes and digests are off; both intervals can be tuned or disabled.
   Filtered items stay unread and ackable, and child followers stay unfiltered
-  ([#141](https://github.com/VRTFinland/jailbee/issues/141)).
+  ([#141](https://github.com/VRTFinland/jailbee/issues/141)). The follower is
+  not a background job in the AGENT column: an idle session whose only
+  background processes are inbox waiters reads idle, not `shell`, in every
+  dashboard and `jailbee ls`
+  ([#146](https://github.com/VRTFinland/jailbee/issues/146)).
 - Web dashboard: `jailbee remote web serve` (alias `jailbee serve`) runs a
-  host-side, read-only browser dashboard, installed with the `web` extra
+  host-side, read-only browser dashboard, included in every install
   ([#109](https://github.com/VRTFinland/jailbee/issues/109)). The front page
   shows repositories and containers with the terminal dashboard's core columns
-  and agent state; a container or repository opens its agent sessions, and a
-  session opens as a typeset transcript with rendered Markdown, folded tool
-  calls, optional thinking, subagent transcripts and live updates. Themes
+  and agent state. Stopped rows include a readable state label alongside their
+  distinct e-ink outline. Front-page and repository container lists nest children under
+  their orchestrator, showing child counts across all visible repositories,
+  states and runners; container pages link between children and their
+  orchestrator and reset page turns when following those links. Nesting keeps
+  e-ink phase edges distinct ([#152](https://github.com/VRTFinland/jailbee/issues/152)).
+  A container or repository opens
+  its agent sessions, and a session opens as a typeset transcript with rendered
+  Markdown, folded tool calls, optional thinking, subagent transcripts and live
+  updates. Following a subagent link or returning to its parent loads that
+  transcript and switches the live subscription instead of retaining the previous
+  document. Session titles use the first typed prompt rather than agent wrapper
+  markup, falling back to the first slash command in command-only sessions;
+  injected context, including a compaction summary or an interruption notice,
+  is shown as context rather than as a prompt.
+  Session lists read only each transcript's opening and end, keep what they
+  read in the state database across server restarts (filled in the background
+  at start-up), list only the sessions started in the repository's own
+  containers, and a container page shows its live sessions before its history
+  has loaded. A container's history also lists sessions run while no dashboard
+  was open, attributed by the branch, directory and time each started
+  ([#152](https://github.com/VRTFinland/jailbee/issues/152)). Session
+  titles and connection notices stay visible while reading; **Latest answer**
+  appears only when the newest reply is out of view and aligns its start below
+  the header, including short final replies. E-ink page turns never skip unread
+  text after partial keyboard scrolling. The agent's own wrapper records (task
+  notifications, system reminders, also those appended to tool results, command
+  output) are hidden by default; the
+  per-device **Agent context** setting can collapse them to a label that loads
+  its content on expand, or show them, while typed slash commands and
+  interruption notices always show as a label line
+  ([#152](https://github.com/VRTFinland/jailbee/issues/152)). Themes
   (light, dark, e-ink) and an e-ink display profile with page turns are chosen
-  per device, and the app installs as a PWA with no CDN assets. Login uses a
+  per device. Page numbering stays stable as the transcript header becomes
+  sticky, and page turns stop at the reachable last page rather than stalling
+  on browser scroll limits; the front-page controls wrap at phone width even
+  with e-ink margins. The app installs as a PWA with no CDN assets. The login
+  page asks for no device name: sessions are named from the browser's
+  User-Agent ("Firefox on Linux") and renamed in Settings
+  ([#152](https://github.com/VRTFinland/jailbee/issues/152)). Login uses a
   one-time PIN, TOTP or a FIDO2 key (registered in a CLI-started setup mode),
   with 30-day device sessions managed only through `jailbee remote web auth`;
-  `jailbee remote web open` logs the local browser in through a one-time link.
+  `jailbee remote web open` logs the local browser in through a one-time link,
+  including when the login page is already open. Open dashboard and login tabs
+  switch automatically to the key-registration view during FIDO2 setup, including
+  bookmarked routes and saved sessions, and the setup view returns by itself once the dashboard is running again:
+  to the page the tab was on when it holds a session, otherwise to the login page. Login errors distinguish an unavailable
+  endpoint from refused credentials and show the server's remaining rate-limit wait
+  (minutes for long waits). A protocol mismatch reloads the tab at most once per
+  minute until it connects again, then offers manual reload (above the session
+  title bar) if assets stay stale
+  ([#152](https://github.com/VRTFinland/jailbee/issues/152)).
   `remote.web` sets the listen address, port, auth and excluded repositories,
   and `enable|disable|status` manage a systemd user unit that restarts the
   server when JailBee is upgraded. Every response carries a strict
@@ -255,23 +317,30 @@ before editing `## Unreleased`.
 
 ### Changed
 
-- DIFF, ↑, ↓ and MERGE in the dashboards and `jailbee ls` compare a PR-bound
-  container with the PR head the host last fetched (`refs/jailbee/pr/<N>/head`)
-  instead of its host branch, so ↑ reads "push needed" and ↓ "someone else
-  pushed" ([#145](https://github.com/VRTFinland/jailbee/issues/145)). Those
-  cells carry a dim `pr`, or a yellow `pr?` when the host has no such ref and
-  the host branch stands in (also in the `git_status` text column and the
-  container pickers). The details card shows a git row per target (host
-  branch, PR head) with its ↑/↓ and short sha, the sync target marked, and JSON
+- The dashboards and `jailbee ls` show the sync comparison in one **SYNC**
+  column: a fixed three-terminal-cell target-marker slot, aligned ↑/↓ commit
+  counts, then the diff. PR-bound containers compare with the PR head the host
+  last fetched (`refs/jailbee/pr/<N>/head`), so ↑ reads "push needed" and ↓
+  "someone else pushed"; SYNC shows dim `pr`, or yellow `pr?` when the host
+  branch stands in ([#145](https://github.com/VRTFinland/jailbee/issues/145)).
+  Orchestration children (including PR children) and forks compare with their
+  parent ahead of a PR binding: ↑ counts commits not yet imported, ↓ the
+  parent's commits they lack (the parent's HEAD as the dashboard's previous
+  pass saw it), and SYNC shows dim `⑂` or yellow `⑂?` when the host branch
+  stands in. The target marker appears once per row, not in separate fields or
+  MERGE. The legacy `target_diff`, `ahead_count` and `behind_count` columns
+  remain explicitly selectable without markers; SYNC sorts by diff size and
+  those count fields sort by their own values. Saved dashboard sets migrate
+  once to SYNC, leaving explicit YAML lists and host-count columns unchanged.
+  SYNC is table-only (`git_status` supplies structured JSON), remains among the
+  last columns dropped in narrow listings, and truncates long diffs on phones.
+  Clean Qt cards omit the git row; standalone cards pad only their own counts.
+  Default JSON is unchanged. The details card shows a git row per target (host branch, PR
+  head) with its ↑/↓ and short sha, the sync target marked, and JSON
   `git_status` gains `sync_target`, `host_ahead_count` and `host_behind_count`.
-  An orchestration child (of any kind, PR children included) or a fork compares
-  with its parent container instead, ahead of a PR binding: ↑ counts commits not
-  yet imported, ↓ the parent's commits it lacks (the parent's HEAD as the
-  dashboard's previous pass saw it). Those cells carry a dim `⑂`, or a yellow
-  `⑂?` when the parent is stopped, missing or not yet seen and the host branch
-  stands in; the card gains a `⑂ <parent>` row with the parent's sha and the
-  pass age. Plain `jailbee ls` has no previous pass, so a PR-bound child there
-  keeps comparing with its PR head. Other containers are unchanged.
+  The card also gains a `⑂ <parent>` row with the parent's sha and pass age.
+  Plain `jailbee ls` has no previous pass, so a PR-bound child there keeps
+  comparing with its PR head.
 - `jailbee review apply` and `jailbee issue apply` are now `jailbee outbox
   apply` limited to PR or issue proposals, with the same prompts, output and
   exit codes ([#144](https://github.com/VRTFinland/jailbee/issues/144)). Each
@@ -314,6 +383,19 @@ before editing `## Unreleased`.
 
 ### Fixed
 
+- **Successful background jobs no longer flash as dead.** A snapshot now keeps
+  its gathered job liveness instead of rechecking an exited worker against an
+  older phase. Autostart, create, start/restart and destroy stay consistent in
+  the dashboards, `jailbee ls` and `jailbee job ls`; a worker killed mid-job
+  still shows as dead ([#149](https://github.com/VRTFinland/jailbee/issues/149)).
+- Deleting from the terminal dashboard's Outbox box or `jailbee outbox` no
+  longer freezes the interface. Revision checks, drops and post-mutation
+  reloads run in the background with a busy line; navigation stays usable,
+  concurrent mutations are refused, and a closed dashboard box reports the
+  result as a notice. PR-creation preflight listing is asynchronous too; a
+  `pr push` whose box was closed meanwhile is not handed the terminal (a notice
+  says so), and quitting `jailbee outbox` waits for a running mutation
+  ([#144](https://github.com/VRTFinland/jailbee/issues/144)).
 - **A dashboard left running across a JailBee upgrade stops instead of
   fighting the newer state service.** The "newer wins" rule only applied when
   both sides spoke the same protocol, so an older dashboard of a different

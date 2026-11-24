@@ -160,6 +160,62 @@ def _cc(**named):
     return CardContent(name=name, state=state, fields=fields)
 
 
+def test_default_sync_field_keeps_comparison_in_compact_cards():
+    from jailbee.git_status import GitStatus
+    from jailbee.host_target import SyncTarget
+
+    c = _container()
+    c.git_status = GitStatus(
+        "clean",
+        "clean",
+        "12",
+        "ok",
+        behind_count="4",
+        target_diff="+42 -7",
+        sync_target=SyncTarget("pr", "PR #7", "p", "pr"),
+    )
+    now = datetime(2026, 1, 1, tzinfo=UTC)
+    fields = dcolumns.visible_fields(now, [c])
+    card = m.card_content(c, fields, now)
+    assert m.git_segments(card) == [("pr  ↑12 ↓4 +42 -7", "diff")]
+    assert not m.is_git_clean(card)
+    assert ("GIT", "pr  ↑12 ↓4 +42 -7") in m.grid_rows(card)
+
+    c.git_status = GitStatus("clean", "clean", "0", "ok", behind_count="0", target_diff="clean")
+    card = m.card_content(c, dcolumns.visible_fields(now, [c]), now)
+    assert m.is_git_clean(card)
+
+    c.git_status = GitStatus(
+        "clean",
+        "clean",
+        "0",
+        "ok",
+        behind_count="0",
+        target_diff="clean",
+        sync_target=SyncTarget("pr", "PR #7", "p", "pr"),
+    )
+    card = m.card_content(c, dcolumns.visible_fields(now, [c]), now)
+    assert m.git_segments(card) == [("pr  ↑0 ↓0 ✓", "diff")]
+    assert m.is_git_clean(card)
+
+
+def test_standalone_card_sync_ignores_other_containers_count_widths():
+    from dataclasses import replace
+
+    from jailbee.git_status import GitStatus
+
+    c = _container()
+    c.git_status = GitStatus("clean", "clean", "1", "ok", behind_count="2", target_diff="+3 -4")
+    wide = replace(
+        c,
+        name="wide",
+        git_status=replace(c.git_status, ahead_count="123456", behind_count="123456"),
+    )
+    now = datetime(2026, 1, 1, tzinfo=UTC)
+    fields = dcolumns.visible_fields(now, [c, wide])
+    assert m.card_field(m.card_content(c, fields, now), "sync") == "    ↑1 ↓2 +3 -4"
+
+
 def test_git_segments_empty_when_clean():
     from jailbee.qtui.model import git_segments, is_git_clean
 
@@ -540,7 +596,7 @@ def _pr_ci(sync):
     return c
 
 
-def test_card_git_segments_ignore_the_sync_target_marker():
+def test_card_sync_marker_does_not_make_a_clean_comparison_dirty():
     from jailbee.host_target import SyncTarget
     from jailbee.lifecycle import ls_field_specs
 
@@ -550,7 +606,9 @@ def test_card_git_segments_ignore_the_sync_target_marker():
         SyncTarget("pr", "PR #7", "a" * 40, "refs/jailbee/pr/7/head"),
         SyncTarget("host", "main", "b" * 40, "refs/heads/main", fallback=True),
     ):
-        assert m.git_segments(m.card_content(_pr_ci(sync), fields, now)) == []
+        card = m.card_content(_pr_ci(sync), fields, now)
+        assert m.git_segments(card)
+        assert m.is_git_clean(card)
 
 
 def test_sync_cell_tooltip_names_the_target():
@@ -568,3 +626,26 @@ def test_sync_cell_tooltip_names_the_target():
 def test_git_segments_missing_target_shows_one_arrow():
     cc = _cc(wt="clean", behind_count="↓•")
     assert m.git_segments(cc) == [("↓•", "ahead")]
+
+
+def test_an_api_error_is_flagged_like_waiting_and_worded_in_the_tooltip():
+    from jailbee.accounts.models import AgentActivity, AgentApiError
+    from jailbee.agent_status import AgentSummary
+
+    at = datetime.now(UTC) - timedelta(minutes=5)
+    error = AgentApiError("quota", at, 429, "The usage limit has been reached", None, "k")
+    summary = AgentSummary(
+        "claude",
+        "error:quota",
+        at,
+        None,
+        1,
+        activity=AgentActivity(None, "API Error: raw", api_error=error),
+    )
+
+    content = m.card_content(_agent_container(summary), [])
+
+    assert content.agent_waiting is True
+    assert content.agent_tooltip == (
+        "stopped on an API error (quota) 5m ago\n“The usage limit has been reached”"
+    )

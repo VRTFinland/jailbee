@@ -571,6 +571,7 @@ class DashboardSession:
         self.overlay: Overlay | None = None
         # Every action started through the action runner, until dismissed.
         self.queue = NotificationQueue()
+        self._queue_frame = 0
         self._following: int | None = None  # the entry whose output screen follows it live
         self._modal_entry: int | None = None  # the critical entry whose modal is open
         # Grant edits made here, shown until the gathered snapshot catches up (see _patch_grant).
@@ -581,6 +582,8 @@ class DashboardSession:
         self.notice_until = time.monotonic() + STARTUP_NOTICE_SECONDS if startup.notice else 0.0
         # The open Outbox box's controller and the menu its Esc returns to.
         self.outbox: OutboxController | None = None
+        # Retain busy controllers across close/reopen, including visits to another box.
+        self._outbox_running: dict[str, OutboxController] = {}
         # Marks of a closed Outbox box, per container, for the next box of that container.
         self._outbox_marks: dict[str, tuple[frozenset[dob.RowKey], dict[str, str]]] = {}
         # Opens a URL in the desktop's browser; the app sets it (Textual's `App.open_url`).
@@ -625,8 +628,12 @@ class DashboardSession:
             self._optimize_widths()
             self._auto_optimize_seq = snapshot.seq
 
-    def tick(self) -> None:
-        """One refresh: finished jobs, the latest snapshot, overlays and cursor kept honest."""
+    def tick(self, *, spin: bool = False) -> None:
+        """One refresh: finished jobs, the latest snapshot, overlays and cursor kept honest.
+
+        The queue spinner steps only when ``spin`` (the periodic timer), so
+        hover, keys and resizes do not speed it up.
+        """
         self.jobs.poll()
         snapshot = self.client.latest()
         assert snapshot is not None  # `wait_first_snapshot` returned
@@ -669,6 +676,10 @@ class DashboardSession:
             self._auto_optimize_seq = None
             self._optimize_widths()
         self.column_offset = self._clamped(self.column_offset)
+        if not self.queue.counts().running:
+            self._queue_frame = 0
+        elif spin:
+            self._queue_frame = (self._queue_frame + 1) % 4
 
     def _without_dismissed(self, groups: list[RepoGroup]) -> list[RepoGroup]:
         """``groups`` minus the advisories dismissed since the snapshot was gathered.
@@ -696,7 +707,7 @@ class DashboardSession:
         ]
 
     def view(self, hover: Hit | None = None) -> DashboardView:
-        """What to draw now. ``now`` is whole seconds, so an idle view compares equal."""
+        """What to draw now: whole-second clock, subsecond spinner only while running."""
         # A refusal or a service failure may carry a remedy and wraps when long;
         # running jobs are a status line that stays on the border. What is off
         # about one repo or container lives in its own details panel.
@@ -721,11 +732,13 @@ class DashboardSession:
                 for c in g.containers
                 if c.name not in sources and not self._merge_eligible(pick, c.name)
             )
+        now = _now()
+        counts = None if self.queue.empty else self.queue.counts()
         return DashboardView(
             groups=self.groups,
             all_groups=self.all_groups,
             selected=self.selected,
-            now=_now().replace(microsecond=0),
+            now=now.replace(microsecond=0),
             git_enabled=self.git_enabled,
             enabled=self.enabled,
             overlay=self.overlay,
@@ -750,7 +763,8 @@ class DashboardSession:
             ineligible=ineligible,
             transport=self.transport,
             ssh_policy=self.ssh_policy,
-            queue=None if self.queue.empty else self.queue.counts(),
+            queue=counts,
+            queue_frame=self._queue_frame if counts and counts.running else 0,
         )
 
     def title(self) -> str:
@@ -2743,6 +2757,11 @@ class DashboardSession:
         if refusal is not None:
             self.set_notice(f"could not list the outbox: {refusal}", seconds=FAILURE_NOTICE_SECONDS)
             return None
+        active = self._outbox_running.get(container)
+        if active is not None and active.state.busy is not None:
+            self._remember_outbox_marks()
+            self.outbox = active
+            return active.state
         controller = OutboxController(
             runner,
             title=container,
@@ -2840,6 +2859,7 @@ class DashboardSession:
             previous, seen[0] = seen[0], state.status
             self._outbox_changed(controller, state, previous)
 
+        controller.shown = lambda: self._outbox_shown(controller, controller.state)
         return changed
 
     def _outbox_changed(
@@ -2851,10 +2871,19 @@ class DashboardSession:
         or replaced by a new one for the same container: its outcome must
         neither reopen the box nor overwrite the new one's state.
         """
-        if controller is self.outbox and overlay_key(self.overlay) == overlay_key(state):
+        if controller.container is not None and not controller.sent_only:
+            if controller.mutation_running:
+                self._outbox_running[controller.container] = controller
+            elif self._outbox_running.get(controller.container) is controller:
+                del self._outbox_running[controller.container]
+        if self._outbox_shown(controller, state):
             self.overlay = state
         elif state.status and state.status != previous:
             self.set_notice(state.status[-1], seconds=FAILURE_NOTICE_SECONDS)
+
+    def _outbox_shown(self, controller: OutboxController, state: OutboxState) -> bool:
+        """Whether the open box is ``controller``'s (showing ``state``)."""
+        return controller is self.outbox and overlay_key(self.overlay) == overlay_key(state)
 
     def outbox_intent(
         self, name: OutboxIntent, row: dob.RowKey | None, value: str | None = None

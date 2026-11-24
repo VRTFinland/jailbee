@@ -64,7 +64,7 @@ from jailbee.tui import ConfirmFn, default_confirm, info, warn, warn_plain
 
 if TYPE_CHECKING:
     from jailbee.accounts.models import AgentSession
-    from jailbee.agent_status import ActivityLookup, AgentSummary
+    from jailbee.agent_status import ActivityLookup, AgentSummary, StateSettler
     from jailbee.autostart_plan import AutostartPlan
     from jailbee.branch_config import EscalationVerdict
     from jailbee.config import Autostart
@@ -96,6 +96,10 @@ class ContainerInfo:
     loose_until: datetime | None = None
     base_branch: str | None = None
     repo_dir: str | None = None
+    # The branch the container was created on (`user.jailbee.branch`), as typed;
+    # None for a mount-mode container. The web dashboard attributes past
+    # agent sessions by it.
+    branch: str | None = None
     pr_number: int | None = None
     pr_author: bool = False
     # `owner/name` of the repo's GitHub upstream, set by the dashboard gather
@@ -138,7 +142,9 @@ class ContainerInfo:
     # mount rows). None = not read or unreadable, never zero.
     outbox_pr: int | None = None
     outbox_issue: int | None = None
-    job_live: bool = False
+    # Liveness belongs to the gathered phase, not to the later rendering time.
+    # None is an unobserved/hand-built row; real job snapshots carry a bool.
+    job_live: bool | None = None
     # Outbox "Sent" log records of this container's current incarnation; set by
     # the state service's gatherer (never by `list_containers`), 0 = none.
     sent_count: int = 0
@@ -757,6 +763,8 @@ def list_containers(
 
         repo_dir_raw = config.get("user.jailbee.repo_dir")
         repo_dir = repo_dir_raw if isinstance(repo_dir_raw, str) and repo_dir_raw else None
+        branch_raw = config.get("user.jailbee.branch")
+        branch = branch_raw if isinstance(branch_raw, str) and branch_raw else None
 
         pr_raw = config.get("user.jailbee.pr")
         pr_number: int | None = None
@@ -801,6 +809,7 @@ def list_containers(
                 loose_until=loose_until,
                 base_branch=base_branch,
                 repo_dir=repo_dir,
+                branch=branch,
                 pr_number=pr_number,
                 pr_author=pr_author,
                 credential_group=credential_group_raw or None,
@@ -941,7 +950,7 @@ def list_containers(
         for c in out:
             row = ops.get(c.name)
             if row is not None:
-                c.job_live = not background.clearable(row.phase, row.pid)
+                c.job_live = not background.clearable(row.phase, row.pid, live=row.observed_live)
                 c.job_phase = row.phase
                 c.job_pid = row.pid
                 c.job_kind = row.op_kind
@@ -957,7 +966,7 @@ def list_containers(
                     ip=None,
                     memory_limit=None,
                     repo=cfg.container_prefix,
-                    job_live=not background.clearable(row.phase, row.pid),
+                    job_live=not background.clearable(row.phase, row.pid, live=row.observed_live),
                     job_phase=row.phase,
                     job_pid=row.pid,
                     job_kind=row.op_kind,
@@ -1090,9 +1099,50 @@ def annotate_agent_status(
         c.name: {pid: sample.starttime for pid, sample in sampler.processes(c.name).items()}
         for c in containers
     }
-    results = agent_status.match_sessions(sessions, processes, sampler.nspid, activity)
+    results = agent_status.match_sessions(
+        sessions, processes, sampler.nspid, activity, settle=_follower_settler(sampler)
+    )
     for c in containers:
         c.agent_status = results.get(c.name, ())
+
+
+def _follower_settler(sampler: ActivitySampler) -> StateSettler:
+    """Show a ``shell`` session as idle when only inbox waiters run as its tasks.
+
+    Claude reports ``shell`` while any background task runs, and the JailBee
+    plugin's inbox follower is one in every session. A task is a shell child
+    of the agent process, with everything under it. The processes come from
+    the sampler's reading already taken; argv is read from /proc only for the
+    processes under a ``shell`` session. A process that vanished in between
+    leaves the state as Claude reported it.
+    """
+    from jailbee import inbox_waiters, procstat
+
+    home = Path(f"/home/{CONTAINER_USERNAME}")
+
+    def settle(container: str, host_pid: int, state: str) -> str:
+        if state != "shell":
+            return state
+        procs = sampler.processes(container)
+        # Claude runs every background task in a shell wrapper; other direct
+        # children (stdio MCP servers, language servers) are not tasks.
+        roots = [
+            pid
+            for pid, sample in procs.items()
+            if sample.ppid == host_pid and sample.comm in procstat.SHELL_COMMS
+        ]
+        argvs: list[tuple[str, ...]] = []
+        for pid in roots + [p for root in roots for p in procstat.descendants(procs, root)]:
+            argv = sampler.cmdline(pid)
+            if argv is None:
+                return state
+            argvs.append(argv)
+        try:
+            return inbox_waiters.settle_state(state, argvs, home=home)
+        except ValueError:  # shlex on argv the container wrote: never fail the tick
+            return state
+
+    return settle
 
 
 def agent_homes(cfg: Config, containers: Iterable[str]) -> tuple[tuple[str, str, Path], ...]:
@@ -3773,6 +3823,8 @@ _AGENT_GLYPHS: dict[str, tuple[str, str | None]] = {
     "idle": ("○", "dim"),
 }
 """The `agent_compact` mark and Rich style per known state."""
+_AGENT_ERROR_GLYPH: tuple[str, str] = ("✖", "red")
+"""The mark of any `error:<kind>` state, followed by the kind."""
 
 
 def agent_compact_cell(
@@ -3802,12 +3854,15 @@ def agent_compact_cell(
     if not statuses:
         return "[dim]—[/dim]"
 
-    from jailbee.agent_status import rank_key
+    from jailbee.agent_status import ERROR_PREFIX, rank_key
 
     def glyph_of(state: str, *, age_from: datetime | None = None, with_age: bool = False) -> str:
         glyph, colour = _AGENT_GLYPHS.get(state, ("?", None))
         text = glyph
-        if state not in _AGENT_GLYPHS:
+        if state.startswith(ERROR_PREFIX):
+            glyph, colour = _AGENT_ERROR_GLYPH
+            text = f"{glyph} {escape(state.removeprefix(ERROR_PREFIX))}"
+        elif state not in _AGENT_GLYPHS:
             # The state is raw text from a file the container wrote.
             text += f" {escape(state)}"
         if with_age and age_from is not None and age_from <= now:
@@ -3879,7 +3934,9 @@ def _sub_count_str(count: int | None) -> str:
     return str(count) if count else ""
 
 
-def submodule_sub_rows(c: ContainerInfo) -> list[dict[str, str]]:
+def submodule_sub_rows(
+    c: ContainerInfo, *, containers: Sequence[ContainerInfo] = ()
+) -> list[dict[str, str]]:
     """Continuation rows (one per changed submodule) for ``jailbee ls``.
 
     Keys match the ``ls`` field names (``name``/``wt``/``target_diff``/
@@ -3889,9 +3946,17 @@ def submodule_sub_rows(c: ContainerInfo) -> list[dict[str, str]]:
     if c.git_status is None:
         return []
     rows: list[dict[str, str]] = []
+    widths = _sync_count_widths(containers or (c,), show_submodules=True)
     for s in c.git_status.submodules:
         rows.append(
             {
+                "sync": _sync_comparison(
+                    "",
+                    "?" if s.ahead_commits is None else str(s.ahead_commits),
+                    "?" if s.behind_commits is None else str(s.behind_commits),
+                    _sub_stat_str(s.target_ins, s.target_del),
+                    widths,
+                ),
                 "name": f"  └ {s.path}",
                 "wt": _sub_stat_str(s.wt_ins, s.wt_del),
                 "target_diff": _sub_stat_str(s.target_ins, s.target_del),
@@ -3972,6 +4037,7 @@ LS_FIT_DROP_ORDER: tuple[str, ...] = (
     "conflict",
     "behind_count",
     "ahead_count",
+    "sync",
     "pr",
     "wt",
     "job",
@@ -3981,7 +4047,7 @@ LS_FIT_DROP_ORDER: tuple[str, ...] = (
 
 
 def sync_marker(status: GitStatus | None) -> str:
-    """The dim marker a sync cell (DIFF/↑/↓/MERGE) carries for a non-host target.
+    """The leading SYNC marker for a non-host target.
 
     ``pr``: the cell compares with the PR head. ``pr?`` (yellow): a PR-bound
     container whose PR head the host has not fetched, compared with the host
@@ -4009,8 +4075,8 @@ def plain_sync_marker(status: GitStatus | None) -> str:
 
 _BEHIND_ATTRS = ("behind_count", "host_behind_count")
 
-SYNC_FIELDS = ("target_diff", "ahead_count", "behind_count", "conflict")
-"""The columns that compare with the sync target and carry its marker."""
+SYNC_FIELDS = ("sync", "target_diff", "ahead_count", "behind_count", "conflict")
+"""The columns that compare with the sync target (only SYNC carries a marker)."""
 
 
 def sync_target_text(status: GitStatus | None) -> str:
@@ -4034,14 +4100,43 @@ def sync_target_text(status: GitStatus | None) -> str:
     return f"vs host branch {target.label}"
 
 
-def with_sync_marker(cell: str, status: GitStatus | None) -> str:
-    """``cell`` followed by its sync-target marker, if any."""
-    marker = sync_marker(status)
-    return f"{cell} {marker}" if marker else cell
+def _sync_count_widths(
+    containers: Sequence[ContainerInfo], *, show_submodules: bool = False
+) -> tuple[int, int]:
+    ahead = ["0"]
+    behind = ["0"]
+    for c in containers:
+        if c.git_status is None:
+            continue
+        ahead.append(c.git_status.ahead_count)
+        behind.append(c.git_status.behind_count)
+        if show_submodules:
+            for sub in c.git_status.submodules:
+                ahead.append("?" if sub.ahead_commits is None else str(sub.ahead_commits))
+                behind.append("?" if sub.behind_commits is None else str(sub.behind_commits))
+    return (
+        max(Text(v).cell_len for v in ahead),
+        max(Text(v).cell_len for v in behind),
+    )
+
+
+def _sync_comparison(
+    marker: str, ahead: str, behind: str, diff: str, widths: tuple[int, int]
+) -> str:
+    marker_width = max(Text(m).cell_len for m in ("pr", "pr?", "⑂", "⑂?"))
+    parts = [marker + " " * (marker_width - Text.from_markup(marker).cell_len)]
+    for arrow, value, width in zip(("↑", "↓"), (ahead, behind), widths, strict=True):
+        pad = " " * max(0, width - Text.from_markup(value).cell_len)
+        parts.append(f"{arrow}{pad}{value}")
+    return " ".join((*parts, diff))
 
 
 def ls_field_specs(
-    *, now: datetime, all_repos: bool = False, show_submodules: bool = False
+    *,
+    now: datetime,
+    all_repos: bool = False,
+    show_submodules: bool = False,
+    containers: Sequence[ContainerInfo] = (),
 ) -> list[table_format.FieldSpec[ContainerInfo]]:
     """Build the FieldSpec list for ``jailbee ls``.
 
@@ -4077,9 +4172,7 @@ def ls_field_specs(
         delta = c.loose_until - now
         return max(0, int(delta.total_seconds() // 60))
 
-    def _git_cell(
-        attr: str, zero_dim: bool = False, *, sync: bool = False
-    ) -> Callable[[ContainerInfo], str]:
+    def _git_cell(attr: str, zero_dim: bool = False) -> Callable[[ContainerInfo], str]:
         def value(c: ContainerInfo) -> str:
             if c.git_status is None:
                 return "[dim]—[/dim]"
@@ -4094,11 +4187,25 @@ def ls_field_specs(
                 return "[yellow]↓•[/yellow]"
             return v
 
-        def cell(c: ContainerInfo) -> str:
-            text = value(c)
-            return with_sync_marker(text, c.git_status) if sync else text
+        return value
 
-        return cell
+    def _count_cell(c: ContainerInfo, attr: str) -> str:
+        value = _git_cell(attr, zero_dim=True)(c)
+        # The combined cell supplies the arrow, including for a missing target.
+        return value.replace("↓•", "•")
+
+    count_widths = _sync_count_widths(containers, show_submodules=show_submodules)
+
+    def _sync_cell(c: ContainerInfo) -> str:
+        if c.git_status is None:
+            return "[dim]—[/dim]"
+        return _sync_comparison(
+            sync_marker(c.git_status),
+            _count_cell(c, "ahead_count"),
+            _count_cell(c, "behind_count"),
+            _git_cell("target_diff")(c),
+            count_widths,
+        )
 
     def _git_json(attr: str) -> Callable[[ContainerInfo], str | None]:
         def get(c: ContainerInfo) -> str | None:
@@ -4112,7 +4219,7 @@ def ls_field_specs(
     def _conflict_cell(c: ContainerInfo) -> str:
         text, kind = merge_label(c.git_status)
         style = _MERGE_KIND_STYLE[kind]
-        return with_sync_marker(f"[{style}]{text}[/{style}]", c.git_status)
+        return f"[{style}]{text}[/{style}]"
 
     def _git_status_json(c: ContainerInfo) -> dict[str, object] | None:
         if c.git_status is None:
@@ -4170,14 +4277,16 @@ def ls_field_specs(
         assert c.job_phase is not None
         if c.job_pid is None:
             return c.job_phase in background.TERMINAL_PHASES
-        return background.clearable(c.job_phase, c.job_pid)
+        return background.clearable(c.job_phase, c.job_pid, live=c.job_live)
 
     def _job_cell(c: ContainerInfo) -> str:
         from jailbee import background
 
         if c.job_phase is None:
             return ""
-        label = background.job_label_or_empty(c.job_phase, c.job_pid, kind=c.job_kind)
+        label = background.job_label_or_empty(
+            c.job_phase, c.job_pid, kind=c.job_kind, live=c.job_live
+        )
         if _job_dead(c):
             return f"[red]{label}[/red]"
         return f"[yellow]{label}[/yellow]"
@@ -4187,7 +4296,9 @@ def ls_field_specs(
 
         if c.job_phase is None:
             return None
-        return background.job_label_or_empty(c.job_phase, c.job_pid, kind=c.job_kind)
+        return background.job_label_or_empty(
+            c.job_phase, c.job_pid, kind=c.job_kind, live=c.job_live
+        )
 
     def _created_cell(c: ContainerInfo) -> str:
         if c.created_at is None:
@@ -4249,6 +4360,8 @@ def ls_field_specs(
             text += f"·{s.count}"
         # The state is raw text from a file the container wrote.
         text = escape(text)
+        if s.state.startswith(agent_status.ERROR_PREFIX):
+            return f"[red]{text}[/red]"
         return f"[yellow]{text}[/yellow]" if s.state == "waiting" else text
 
     def _agent_cell(c: ContainerInfo) -> str:
@@ -4264,9 +4377,21 @@ def ls_field_specs(
                 "since": s.since.isoformat() if s.since is not None else None,
                 "waiting_for": s.waiting_for,
                 "count": s.count,
+                "error": _api_error_json(s),
             }
             for s in c.agent_status
         ]
+
+    def _api_error_json(s: AgentSummary) -> dict[str, object] | None:
+        error = s.activity.api_error if s.activity is not None else None
+        if error is None:
+            return None
+        return {
+            "kind": error.kind,
+            "at": error.at.isoformat() if error.at is not None else None,
+            "detail": error.detail,
+            "resets_at": error.resets_at.isoformat() if error.resets_at is not None else None,
+        }
 
     def _pending_pr_actions(c: ContainerInfo) -> int:
         # The row's own store count is fresh every tick; the probe's copy is
@@ -4450,11 +4575,7 @@ def ls_field_specs(
         if not c.agent_status:
             return None
         s = c.agent_status[0]
-        urgency = (
-            agent_status.URGENCY.index(s.state)
-            if s.state in agent_status.URGENCY
-            else len(agent_status.URGENCY)
-        )
+        urgency = agent_status.urgency(s.state)
         # Within a state, the latest change first: "just finished" above "idle since yesterday".
         return (urgency, -s.since.timestamp() if s.since is not None else 0.0)
 
@@ -4758,12 +4879,23 @@ def ls_field_specs(
             default_json=False,
         ),
         table_format.FieldSpec(
+            name="sync",
+            sort=_git_key("target_diff", _diff_key),
+            sort_desc_first=True,
+            header="SYNC",
+            cell=_sync_cell,
+            json=None,
+            json_hint="use git_status for JSON",
+            default_json=False,
+        ),
+        table_format.FieldSpec(
             name="target_diff",
             sort=_git_key("target_diff", _diff_key),
             sort_desc_first=True,
             header="DIFF ±",
-            cell=_git_cell("target_diff", sync=True),
+            cell=_git_cell("target_diff"),
             json=_git_json("target_diff"),
+            default_table=False,
             default_json=False,
         ),
         table_format.FieldSpec(
@@ -4771,9 +4903,10 @@ def ls_field_specs(
             sort=_git_key("ahead_count", _count_key),
             sort_desc_first=True,
             header="↑",
-            cell=_git_cell("ahead_count", zero_dim=True, sync=True),
+            cell=_git_cell("ahead_count", zero_dim=True),
             json=_git_json("ahead_count"),
             justify="right",
+            default_table=False,
             default_json=False,
         ),
         table_format.FieldSpec(
@@ -4781,9 +4914,10 @@ def ls_field_specs(
             sort=_git_key("behind_count", _count_key),
             sort_desc_first=True,
             header="↓",
-            cell=_git_cell("behind_count", zero_dim=True, sync=True),
+            cell=_git_cell("behind_count", zero_dim=True),
             json=_git_json("behind_count"),
             justify="right",
+            default_table=False,
             default_json=False,
         ),
         table_format.FieldSpec(

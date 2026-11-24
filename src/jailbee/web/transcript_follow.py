@@ -5,7 +5,9 @@ the watch closes when the last one leaves. Every follower keeps its own byte
 offset (the one its browser's REST view was read to), so a browser that
 subscribes late, or after a reconnect, catches up from where it stands. Reads
 use the source's incremental `read_from`, which never consumes a partly
-written line, and an empty read sends nothing.
+written line; an empty read sends nothing, while a read whose entries all
+render to nothing (hidden agent context) sends an empty append with the new
+offset.
 
 Everything here runs on the event loop except the watch callback, which hops
 onto the loop, and the read + render, which run in a worker thread.
@@ -23,11 +25,11 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from jailbee.transcripts.base import Entry, TranscriptSource
     from jailbee.web.file_watch import FileWatch, WatchFactory
-    from jailbee.web.protocol import FollowKey, RenderedEntry
+    from jailbee.web.protocol import FollowKey, MetaMode, RenderedEntry
 
 log = logging.getLogger(__name__)
 
-Render = Callable[[Sequence["Entry"]], list["RenderedEntry"]]
+Render = Callable[[Sequence["Entry"], "MetaMode"], list["RenderedEntry"]]
 Deliver = Callable[[list["RenderedEntry"], int], Awaitable[None]]
 """Sends one append: the rendered entries and the offset after them."""
 
@@ -43,8 +45,10 @@ class Follower:
         offset: int,
         deliver: Deliver,
         render: Render,
+        meta: MetaMode = "hidden",
     ) -> None:
         self.key = key
+        self.meta = meta
         self.path = path
         self.offset = offset
         self._source = source
@@ -71,8 +75,11 @@ class Follower:
             while True:
                 self._again = False
                 entries, offset = await asyncio.to_thread(self._read)
-                self.offset = offset
-                if entries:
+                advanced, self.offset = offset != self.offset, offset
+                # A batch the Agent context setting renders to nothing still
+                # moves the browser's offset (an empty append), or a reconnect
+                # would read it again.
+                if entries or advanced:
                     await self._deliver(entries, offset)
                 if not self._again:
                     return
@@ -81,7 +88,7 @@ class Follower:
 
     def _read(self) -> tuple[list[RenderedEntry], int]:
         read = self._source.read_from(self.path, self.offset)
-        return (self._render(read.entries) if read.entries else []), read.offset
+        return (self._render(read.entries, self.meta) if read.entries else []), read.offset
 
 
 class _Watched:
@@ -102,10 +109,17 @@ class TranscriptFollows:
         return path in self._files
 
     def follow(
-        self, key: FollowKey, source: TranscriptSource, path: Path, offset: int, deliver: Deliver
+        self,
+        key: FollowKey,
+        source: TranscriptSource,
+        path: Path,
+        offset: int,
+        deliver: Deliver,
+        meta: MetaMode = "hidden",
     ) -> Follower:
-        """Start following; catches up from ``offset`` at once."""
-        follower = Follower(key, source, path, offset, deliver, self._render)
+        """Start following; catches up from ``offset`` at once. ``meta`` is the
+        Agent context setting the appends are rendered with."""
+        follower = Follower(key, source, path, offset, deliver, self._render, meta)
         watched = self._files.get(path)
         if watched is None:
             loop = asyncio.get_running_loop()

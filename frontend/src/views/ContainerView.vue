@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import {computed, nextTick, onMounted, ref} from "vue"
+import {computed, nextTick, ref, watch} from "vue"
 import {useRoute, useRouter} from "vue-router"
 import {apiFetch, Unauthorized} from "../api"
 import PageNav from "../components/PageNav.vue"
+import {useDashboard} from "../dashboard"
 import {usePager} from "../composables/usePager"
 import type {ContainerSessionList} from "../protocol"
 
@@ -10,8 +11,24 @@ const pager = usePager()
 const route = useRoute()
 const router = useRouter()
 const name = computed(() => String(route.params.name))
-const list = ref<ContainerSessionList | null>(null)
+const dashboard = useDashboard()
+const rows = computed(() => dashboard?.state.view?.repos.flatMap(repo => repo.containers) ?? [])
+const info = computed(() => rows.value.find(row => row.name === name.value))
+const children = computed(() => rows.value.filter(row => row.child?.orchestrator === name.value))
+const live = ref<ContainerSessionList | null>(null)
+const history = ref<ContainerSessionList | null>(null)
+const historyFailed = ref(false)
 const error = ref<string | null>(null)
+/** Live sessions first: they come from the snapshot and render at once. The
+ * history is a request of its own and joins the list when it arrives. */
+const sessions = computed(() => {
+    // The two answers come from different snapshots: a session that went live
+    // in between is in both, and is shown once, as live.
+    const shown = new Set((live.value?.sessions ?? []).map(s => `${s.agent}/${s.session_id}`))
+    const earlier = (history.value?.sessions ?? []).filter(s => !shown.has(`${s.agent}/${s.session_id}`))
+    return [...(live.value?.sessions ?? []), ...earlier]
+})
+const historyPending = computed(() => history.value === null && !historyFailed.value)
 
 const dateFormat = new Intl.DateTimeFormat(undefined, {dateStyle: "medium", timeStyle: "short"})
 
@@ -19,14 +36,31 @@ function when(iso: string): string {
     return dateFormat.format(new Date(iso))
 }
 
-onMounted(async () => {
+watch(name, async (selected, _previous, onCleanup) => {
+    let current = true
+    onCleanup(() => { current = false })
+    live.value = null
+    history.value = null
+    historyFailed.value = false
+    error.value = null
+    await nextTick()
+    if (!current) return
+    pager.page.value = 0
+    window.scrollTo(0, 0)
+    pager.measure()
+    const base = `/api/containers/${encodeURIComponent(selected)}/sessions`
+    const liveRequest = apiFetch<ContainerSessionList>(base)
+    const historyRequest = apiFetch<ContainerSessionList>(`${base}/history`)
+    // Settled here so a failure while the live list loads is never unhandled.
+    historyRequest.catch(() => undefined)
     try {
-        list.value = await apiFetch<ContainerSessionList>(
-            `/api/containers/${encodeURIComponent(name.value)}/sessions`,
-        )
+        const result = await liveRequest
+        if (!current) return
+        live.value = result
         await nextTick()
         pager.measure()
     } catch (e) {
+        if (!current) return
         if (e instanceof Unauthorized) {
             await router.push({name: "login"})
         } else if (e instanceof Error && e.message.startsWith("API error 404")) {
@@ -34,8 +68,19 @@ onMounted(async () => {
         } else {
             error.value = "The sessions could not be loaded."
         }
+        return
     }
-})
+    try {
+        const result = await historyRequest
+        if (!current) return
+        history.value = result
+        await nextTick()
+        pager.measure()
+    } catch {
+        if (!current) return
+        historyFailed.value = true
+    }
+}, {immediate: true})
 </script>
 
 <template>
@@ -44,12 +89,28 @@ onMounted(async () => {
             <router-link class="back" :to="{name: 'front'}">&larr; Repositories</router-link>
             <h1>{{ name }}</h1>
         </header>
+        <p v-if="info?.child" class="parent">
+            Child of <router-link v-if="info.child.orchestrator" :to="{name: 'container', params: {name: info.child.orchestrator}}">{{ info.child.orchestrator_short_name }}</router-link><span v-else>{{ info.child.orchestrator_short_name }}</span>
+            · {{ info.child.state }}<template v-if="info.child.runner"> · {{ info.child.runner }}</template>
+            <template v-if="!rows.some(row => row.name === info?.child?.orchestrator)"> · orchestrator not listed</template>
+        </p>
+        <section v-if="info?.orchestrator || children.length" class="children" aria-label="Children">
+            <h2>Children ({{ children.length }})</h2>
+            <p v-if="!children.length" class="muted">No children.</p>
+            <ul v-else>
+                <li v-for="child in children" :key="child.name">
+                    <router-link :to="{name: 'container', params: {name: child.name}}">{{ child.cells[0] || child.name }}</router-link>
+                    · {{ child.child?.state }}<template v-if="child.child?.runner"> · {{ child.child.runner }}</template>
+                </li>
+            </ul>
+        </section>
+        <h2>Sessions</h2>
         <p v-if="error" class="notice">{{ error }}</p>
-        <p v-else-if="list === null" class="muted">Loading…</p>
-        <p v-else-if="list.sessions.length === 0" class="muted">No sessions.</p>
-        <ul v-else class="sessions">
+        <p v-else-if="live === null" class="muted">Loading…</p>
+        <p v-else-if="sessions.length === 0 && !historyPending" class="muted">No sessions.</p>
+        <ul v-if="live !== null && sessions.length" class="sessions">
             <li
-                v-for="s in list.sessions"
+                v-for="s in sessions"
                 :key="`${s.agent}/${s.session_id}`"
                 class="session"
                 :data-live="s.live"
@@ -57,7 +118,7 @@ onMounted(async () => {
                 <router-link
                     :to="{
                         name: 'session',
-                        params: {prefix: list.repo, agent: s.agent, sessionId: s.session_id},
+                        params: {prefix: live.repo, agent: s.agent, sessionId: s.session_id},
                     }"
                 >
                     <span class="title">{{ s.title || "Untitled session" }}</span>
@@ -72,6 +133,8 @@ onMounted(async () => {
                 </router-link>
             </li>
         </ul>
+        <p v-if="live !== null && historyPending" class="muted">Loading earlier sessions…</p>
+        <p v-else-if="live !== null && historyFailed" class="muted">Earlier sessions could not be loaded.</p>
         <PageNav :pager="pager" />
     </div>
 </template>
@@ -85,6 +148,8 @@ onMounted(async () => {
 .bar {
     display: flex;
     align-items: baseline;
+    flex-wrap: wrap;
+    overflow-wrap: anywhere;
     gap: var(--space-3);
     padding-bottom: var(--space-2);
     border-bottom: 1px solid var(--border);
@@ -97,6 +162,17 @@ onMounted(async () => {
 .back {
     color: var(--muted);
     text-decoration: none;
+}
+.parent,
+.children {
+    overflow-wrap: anywhere;
+}
+.children li {
+    margin-block: var(--space-2);
+}
+.parent a,
+.children a {
+    color: inherit;
 }
 .notice {
     margin: var(--space-3) 0;

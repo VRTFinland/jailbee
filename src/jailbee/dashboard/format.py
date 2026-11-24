@@ -16,7 +16,6 @@ from jailbee.lifecycle import (
     DOING_MAX_NAMES,
     agent_compact_cell,
     format_duration_short,
-    with_sync_marker,
 )
 
 if TYPE_CHECKING:
@@ -53,7 +52,7 @@ def transition_glyph(container: ContainerInfo) -> str | None:
     """
     if container.job_phase is None or container.job_pid is None:
         return None
-    if background.clearable(container.job_phase, container.job_pid):
+    if background.clearable(container.job_phase, container.job_pid, live=container.job_live):
         return None
     if container.job_phase == background.PHASE_STOPPING:
         return "[yellow]■[/yellow]"
@@ -71,7 +70,7 @@ def autostart_failed(container: ContainerInfo) -> bool:
         return False
     if container.job_pid is None:
         return container.job_phase in background.TERMINAL_PHASES
-    return background.clearable(container.job_phase, container.job_pid)
+    return background.clearable(container.job_phase, container.job_pid, live=container.job_live)
 
 
 def merge_in_progress(container: ContainerInfo) -> bool:
@@ -119,7 +118,7 @@ def row_phase(container: ContainerInfo) -> str | None:
     elif container.job_pid is None:
         dead = container.job_phase in background.TERMINAL_PHASES
     else:
-        dead = background.clearable(container.job_phase, container.job_pid)
+        dead = background.clearable(container.job_phase, container.job_pid, live=container.job_live)
     old_failure = (
         container.autostart_failed
         and not container.job_live
@@ -335,7 +334,7 @@ def dashboard_cell(field: FieldSpec[ContainerInfo], container: ContainerInfo, no
         if container.job_phase is None:
             return ""
         label = background.job_label_or_empty(
-            container.job_phase, container.job_pid, kind=container.job_kind
+            container.job_phase, container.job_pid, kind=container.job_kind, live=container.job_live
         )
         phase, suffix = (
             (label[: -len(background.DEAD_SUFFIX)], background.DEAD_SUFFIX)
@@ -355,7 +354,7 @@ def dashboard_cell(field: FieldSpec[ContainerInfo], container: ContainerInfo, no
                 "destroying": "destroy",
             }.get(phase, phase)
         dead = (
-            background.clearable(container.job_phase, container.job_pid)
+            background.clearable(container.job_phase, container.job_pid, live=container.job_live)
             if container.job_pid is not None
             else container.job_phase in background.TERMINAL_PHASES
         )
@@ -363,10 +362,10 @@ def dashboard_cell(field: FieldSpec[ContainerInfo], container: ContainerInfo, no
         return f"[{colour}]{escape(phase + suffix)}[/{colour}]"
     if field.name == "doing" and container.activity:
         return doing_cell(container)
+    if field.name == "sync" and container.git_status is not None:
+        return value.replace("[dim]clean[/dim]", "[dim]✓[/dim]")
     if field.name in ("wt", "target_diff", "local_diff") and container.git_status is not None:
         if getattr(container.git_status, field.name) == "clean":
-            if field.name == "target_diff":
-                return with_sync_marker("[dim]✓[/dim]", container.git_status)
             return "[dim]✓[/dim]"
     if field.name == "ttl":
         return value.replace(" ", "")

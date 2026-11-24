@@ -5,7 +5,7 @@ import {
     type Router,
     type RouterHistory,
 } from "vue-router"
-import {authIsDisabled, getToken, NO_LOGIN_TOKEN, setToken} from "./api"
+import {authIsDisabled, fetchServerMode, getToken, NO_LOGIN_TOKEN, setToken} from "./api"
 import FrontPage from "./views/FrontPage.vue"
 import RepoView from "./views/RepoView.vue"
 import ContainerView from "./views/ContainerView.vue"
@@ -30,10 +30,36 @@ export const routes: RouteRecordRaw[] = [
     {path: "/:pathMatch(.*)*", redirect: "/"},
 ]
 
+let resumePath: string | null = null
+
+/** Remembers where the tab was before setup mode took it over. */
+export function rememberResumePath(path: string): void {
+    resumePath = path === "/setup" || path === "/login" ? null : path
+}
+
+/** The remembered route, once; the front page when there is none. */
+export function takeResumePath(): string {
+    const path = resumePath ?? "/"
+    resumePath = null
+    return path
+}
+
 /** Hash routing, so bookmarks work behind any reverse-proxy path. */
 export function createAppRouter(history: RouterHistory = createWebHashHistory()): Router {
     const router = createRouter({history, routes})
+    // A dashboard answer is kept, so later clicks cost no request; a server
+    // replaced while the tab is open is noticed by App.vue instead (the socket's
+    // setup close code, or the login and setup views' poll). Setup mode is never
+    // kept: setup ends with Ctrl-C, so each navigation asks again.
+    let mode: Promise<"setup" | "dashboard" | null> | null = null
     router.beforeEach(async (to) => {
+        mode ??= fetchServerMode()
+        const current = await mode
+        if (current !== "dashboard") mode = null
+        if (current === "setup") {
+            if (to.name !== "setup") rememberResumePath(to.fullPath)
+            return to.name === "setup" ? true : {name: "setup", replace: true}
+        }
         if (to.meta.public || getToken()) return true
         if (await authIsDisabled()) {
             setToken(NO_LOGIN_TOKEN)

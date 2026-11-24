@@ -428,7 +428,21 @@ suggestions, in its own style, instead of a generic router message.
 
 ## Web dashboard
 
-Host-side only; needs the `jailbee[web]` extra. Full guide: `docs/web-dashboard.md`.
+Host-side only; included in every install. Full guide: `docs/web-dashboard.md`.
+Session lists are titled by the first typed prompt, ignoring agent wrappers and
+injected context (including task notifications, `!`-mode input/output and prompt
+hooks); command-only sessions use their first slash command, with title lookup
+bounded to 32 candidate user records once that fallback exists. A leading agent
+wrapper and typed text in one record are displayed separately as metadata and a
+prompt; unknown XML-like tags remain typed text.
+The front page and repository container lists indent same-repository children
+under their orchestrator, show its child count across all visible repositories
+and each child's state/runner, and keep absent-parent children labelled.
+`orchestrator not listed` means absent from the entire visible snapshot;
+excluded repositories never contribute to counts. Container pages link between
+parent and children across repositories and reset page turns and scroll when
+following those links. The hierarchy follows live snapshots; nesting uses
+indentation and a `Child of` label, not the e-ink job-phase edge style.
 
 | Command | What it does |
 |---|---|
@@ -439,7 +453,15 @@ Host-side only; needs the `jailbee[web]` extra. Full guide: `docs/web-dashboard.
 | `jailbee remote web auth pin on\|off` | Allow or refuse PIN login (off needs a TOTP key). |
 | `jailbee remote web auth totp add [--name N]` / `ls` / `rm` | Authenticator-app keys. |
 | `jailbee remote web auth fido2 setup` / `ls` / `rm` | Security keys; `setup` serves a registration page until Ctrl-C. |
-| `jailbee remote web auth sessions ls` / `revoke [ID]` | Logged-in devices; revoke ends a session and its live view. |
+| `jailbee remote web auth sessions ls` / `revoke [ID]` | Logged-in devices, named automatically from the browser ("Firefox on Linux"; rename in the web app's Settings); revoke ends a session and its live view. |
+
+For FIDO2 setup, stop the dashboard first if it uses the same port, run
+`jailbee remote web auth fido2 setup`, and open the dashboard's root URL in a
+fresh tab at the same HTTPS address used for login. Open dashboard tabs
+switch to registration when their live connection reconnects; login tabs
+within a few seconds while visible, or when brought forward. Enter the setup PIN there, register the key,
+then Ctrl-C and restart the dashboard. A missing or unavailable login endpoint
+is not a wrong PIN.
 
 Config: `remote.web.listen`, `port`, `auth.enabled`,
 `auth.allow_unauthenticated_remote`, `excluded_repos` and the shared remote
@@ -885,26 +907,26 @@ full selected field sets.
 | `--all` | Containers from every jailbee-managed repo (adds a REPO column). Default: cwd repo only. |
 | `--wide` / `-w` | Show every selected column without fitting to terminal width. |
 | `-o` / `--format <fmt>` | `table` (default) or `json`. |
-| `--fields <list>` | Comma-separated columns. Allowed: `name, full_name, alias, repo, mode, base, state, created, job, network, ttl, loose_until, mounts, ip, memory_limit, mem, mem_used, mem_pct, wt, target_diff, ahead_count, behind_count, conflict, host_ahead, host_behind, local_diff, local_count, git_status, pr, issues, outbox, group, autostart_profile, role, children, inbox, cpu, doing, agent, agent_compact`. `claude` and `claude_group` are accepted aliases for `group`. Wins outright over the `ls:` config block, and applies to every `--format`. |
+| `--fields <list>` | Comma-separated columns. Allowed: `name, full_name, alias, repo, mode, base, state, created, job, network, ttl, loose_until, mounts, ip, memory_limit, mem, mem_used, mem_pct, wt, sync, target_diff, ahead_count, behind_count, conflict, host_ahead, host_behind, local_diff, local_count, git_status, pr, issues, outbox, group, autostart_profile, role, children, inbox, cpu, doing, agent, agent_compact`. `claude` and `claude_group` are accepted aliases for `group`. Wins outright over the `ls:` config block, and applies to every `--format`. |
 
 Git-status columns: **BASE** (base branch), **WT** (uncommitted: `+adds -dels`),
-**DIFF ±** (direct tree diff against the sync target), **↑** / **↓** (unique
-commits unique to container / sync target), **MERGE** (see
-below). The **sync target** is the host target branch, except for a PR-bound
-container: it compares with the PR head the host last fetched
-(`refs/jailbee/pr/<N>/head`; ↑ = push needed, ↓ = someone else pushed), and
-those four cells carry a dim `pr`; a yellow `pr?` means that ref is missing and
-the host branch stands in. An orchestration child or fork compares with its
-parent container instead, ahead of any PR (↑ = not yet imported, ↓ = parent
-commits it lacks, dim `⑂`; yellow `⑂?` when the parent is stopped or not yet
-seen by the dashboard; plain `jailbee ls` has no gather pass, so a PR-bound
-child keeps its PR head there and others show `⑂?`). The **JOB** column shows in-flight and failed
+**SYNC** (target marker, right-aligned ↑/↓ unique-commit counts, then the direct
+committed-tree diff), **MERGE** (see below). SYNC's target marker occupies a
+fixed three-terminal-cell slot and appears once per row: dim `pr` for a PR head,
+yellow `pr?` when that ref is missing and the host branch stands in; dim `⑂`
+for a parent target, yellow `⑂?` when the parent cannot be used, and blank for
+the host branch. On parent targets, ↑ means not yet imported and ↓ counts parent
+commits the child lacks. The counts align across visible rows and the variable-
+width diff comes last. Legacy `target_diff`, `ahead_count` and `behind_count`
+fields remain explicitly selectable without markers; MERGE is unmarked too.
+A plain `jailbee ls` has no gather pass, so a PR-bound child keeps its PR head
+there and other children show `⑂?`. The **JOB** column shows in-flight and failed
 background-job phases (`jailbee new`/`jailbee destroy --background`), and
 renders a detached autostart run as `autostart:<stage>` (`<stage>` is
 whichever stage the supervisor is on) — see `jailbee job` and `jailbee
 autostart status|cancel` below to inspect or clear one. **TTL** appears
 only while a container is in loose mode. Stopped/mount-mode containers show
-`—` in the four git columns.
+`—` in the git-status columns.
 
 Status snapshots the host's local `refs/heads/<base>` once per branch and
 shares that SHA across matching containers. If absent, it uses
@@ -912,7 +934,12 @@ shares that SHA across matching containers. If absent, it uses
 not fetch or update anchors. If neither ref resolves or its commit object is
 unreadable in a container, comparison fields show `?`. Local always wins when
 both refs exist; tracking-ahead/diverged notices describe the last-fetched
-ref, not the remote server. Equal trees can have nonzero ↑/↓ commit counts.
+ref, not the remote server. Equal trees can have nonzero ↑/↓ commit counts. The opt-in legacy `target_diff`,
+`ahead_count` and `behind_count` fields are independently sortable and do not
+show target markers. `sync` is table-only; use `git_status` for structured
+JSON. Default JSON is unchanged. Saved dashboard column sets migrate once to
+SYNC, removing separate ahead/behind counts; explicit YAML field lists and
+user-added host counts stay unchanged. Settings can restore legacy columns.
 JSON `git_status` names the direct line diff `target_diff` and includes
 `behind_count`, `base_source`, `base_sha`, `tracking_relation`,
 `upstream_ref`, `sync_target` (`kind`, `label`, `sha`, `ref`, `fallback`) and
@@ -931,7 +958,9 @@ so they cost no command inside the container.
 **AGENT** says whether an agent session inside the container needs you:
 `claude: waiting 4m` (it is waiting for input, and has been for four
 minutes), `claude: busy 12s`, `claude: shell 20m` (idle, but a background
-shell job it started is still running), `claude: idle 2h`; `·2` counts several
+shell job it started is still running; the JailBee plugin's inbox follower and
+other inbox waiters do not count, so a session running only those reads idle),
+`claude: idle 2h`; `·2` counts several
 sessions of one agent, and `—` means none is running. **AGENT_COMPACT** shows
 each state as a mark with only the largest unit of its duration: `◆ 4m`
 (waiting), `● 12s` (busy), `◐ 20m` (shell), `○ 2h` (idle). It names no agent and draws one
@@ -943,8 +972,7 @@ while a process of *that* container still matches it, so a crashed session
 never reads as live. Under `ls --all`, only the current repo's rows are filled
 in.
 
-The default table is NAME, BASE, STATE, CREATED, NETWORK and the four git
-columns. **IP**, **MEM**, **CPU**, **DOING**, **AGENT** and **AGENT_COMPACT** are *not* in
+The default table is NAME, BASE, STATE, CREATED, NETWORK, WT, SYNC and MERGE. **IP**, **MEM**, **CPU**, **DOING**, **AGENT** and **AGENT_COMPACT** are *not* in
 it — reach any of them from `ls` with `--fields ip,mem,mem_used,mem_pct,cpu,doing,agent,agent_compact,outbox`.
 The dashboards' own default set adds **USED** and **MEM%** (`mem_used`, `mem_pct`), **CPU**, **AGENT_COMPACT** and **OUTBOX**, and drops **ISSUES** (OUTBOX counts PR and issue manifests together); **MEM**, **DOING** and **ISSUES** stay selectable in the dashboard settings;
 choose either agent column in dashboard settings. **IP** is off by default in
@@ -977,7 +1005,7 @@ against base is clean — a container left mid-merge by `jailbee git push
 Two more git-status columns exist, **off by default** (plus **H↑**/**H↓** — `host_ahead`/`host_behind` — which always count against the host branch, unlike ↑/↓ on a PR-bound row): **LOCAL ±**
 (`local_diff`) and **L↑** (`local_count`) — the diff/commit-count between
 the container's HEAD and the *host's currently checked-out branch*, as
-opposed to `DIFF ±`/`↑`/`↓`'s comparison against the host target branch.
+opposed to SYNC's comparison against the sync target.
 Opt in with `--fields` or the `ls:` config block. Either can show `?`: the
 comparison needs one side to already hold the other's commit as an object
 in the same repository, and JailBee never fetches or pushes to force an answer
@@ -989,7 +1017,7 @@ also feed the destroy guard's "commits not on the host" check (see `jailbee
 destroy` above).
 
 The two pairs count submodules differently, which is worth knowing when they
-sit side by side. `DIFF ±` excludes gitlink lines
+sit side by side. SYNC's diff (`target_diff`) excludes gitlink lines
 (`--ignore-submodules=all`) and instead folds in each submodule's *own*
 committed diff, so a pointer bump contributes the submodule's real content
 delta. `LOCAL ±` uses `--ignore-submodules=dirty` with no per-submodule pass
@@ -1011,16 +1039,16 @@ ignores `fields` entirely.
 
 Both dashboards use compact presentation, without changing `ls` or JSON:
 ST = state (▶ Running, ■ Stopped, Ⅱ Frozen), LOOSE = empty for strict, red ● plus the remaining auto-revert time (`● 45m`, `● ∞` = no deadline) for loose,
-AGE = elapsed container age, AI = compact agent status (◆ waiting, ● busy,
-◐ shell, ○ idle) plus the age of the latest real event across live sessions,
+AGE = elapsed container age, AI = compact agent status (✖ API error with its kind, ◆ waiting, ● busy,
+◐ shell = idle with a background job other than the inbox follower, ○ idle) plus the age of the latest real event across live sessions,
 not the time spent in that state. Assistant text, thinking, tool calls and tool
 results count; prompts and metadata do not. Unknown event ages have no duration.
 A bright ○ has activity under 30 minutes old. Container details show activity age
 and the selected session's state duration separately, e.g. `active 14s ago (busy for 23m)`.
-USED / MEM% = memory in use and its share of the limit; OUTBOX = `✉N` staged PR and issue manifests (the dashboards' PR cell shows only `#N` / `#N↓`). BASE ↗ means tracking; MODE uses cln/mnt; WT/DIFF/L DIFF
-use ✓ for clean. DIFF compares against the sync target (dim `pr`: the PR head;
-yellow `pr?`: PR head not fetched, host branch instead), L DIFF against
-checked-out host HEAD. A PR-bound container's details card adds a git row per
+USED / MEM% = memory in use and its share of the limit; OUTBOX = `✉N` staged PR and issue manifests (the dashboards' PR cell shows only `#N` / `#N↓`). BASE ↗ means tracking; MODE uses cln/mnt; WT/SYNC/L DIFF
+use ✓ for clean. SYNC compares against the sync target and shows its marker
+once, followed by aligned ↑/↓ counts and the diff last; separate legacy fields
+are unmarked. L DIFF compares against checked-out host HEAD. A PR-bound container's details card adds a git row per
 target (host branch, PR #N head) with its ↑/↓ and short sha, the sync target
 marked. TUI details and Qt tooltips retain network expiry times;
 Qt cards show the same LOOSE text without the colour. DOING uses ×N process counts. JOB
@@ -1264,6 +1292,11 @@ enabled columns, the table's column widths/order — but never the window size o
 Fresh installs default to the Cards layout.
 
 ### `jailbee job`
+
+Job liveness is sampled with its tracking row, consistently with `jailbee ls`
+and the dashboard snapshot. A worker finishing successfully does not turn an
+older snapshot into a dead-job warning between refreshes. A worker killed
+mid-job still shows as dead on the next snapshot while its tracking row remains.
 
 | Command | Notes |
 |---|---|
@@ -1821,6 +1854,16 @@ and issue manifests — in one place. A proposal is named `pr/<manifest>.json`
 or `issue/<manifest>.json`. Inspection is local and never calls GitHub; over
 remote SSH it is read-only. See [Unified proposal
 management](../../../git-bridge.md#unified-proposal-management).
+
+In the terminal manager and dashboard Outbox box, delete verification, drops
+and post-mutation reloads run in the background. A busy line stays visible while
+navigation and preview keys work; refresh waits for the completion reload,
+and another delete, publish, clear or scope change is refused while busy.
+Closing the dashboard box leaves the work running and reports its result as a notice.
+PR-creation verification is background work too; the interactive `pr push` still
+uses the terminal, and is not run if the box was closed meanwhile (a notice
+says so). The standalone manager refuses Esc, `q` and Ctrl-C while a mutation
+runs: quitting waits for it to finish.
 
 | Command | What it does |
 |---|---|

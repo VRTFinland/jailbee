@@ -3,6 +3,8 @@ import {computed, nextTick, onMounted, ref} from "vue"
 import {useRoute, useRouter} from "vue-router"
 import {apiFetch, Unauthorized} from "../api"
 import PageNav from "../components/PageNav.vue"
+import RepoList from "../components/RepoList.vue"
+import {useDashboard} from "../dashboard"
 import {usePager} from "../composables/usePager"
 import type {SessionList, SessionSummary} from "../protocol"
 
@@ -10,6 +12,14 @@ const pager = usePager()
 const route = useRoute()
 const router = useRouter()
 const prefix = computed(() => String(route.params.prefix))
+const dashboard = useDashboard()
+const containers = computed(() => {
+    const view = dashboard?.state.view
+    return view ? {...view, repos: view.repos.filter(repo => repo.prefix === prefix.value)} : null
+})
+const listedContainers = computed(() => dashboard?.state.view?.repos.flatMap(
+    repo => repo.containers.map(row => row.name),
+) ?? [])
 const sessions = ref<SessionSummary[] | null>(null)
 const error = ref<string | null>(null)
 
@@ -45,6 +55,11 @@ onMounted(async () => {
             <router-link class="back" :to="{name: 'front'}">&larr; Repositories</router-link>
             <h1>{{ prefix }}</h1>
         </header>
+        <section v-if="containers && containers.repos.length" aria-label="Containers">
+            <h2>Containers</h2>
+            <RepoList :view="containers" :show-headings="false" :listed-containers="listedContainers" />
+        </section>
+        <h2>Sessions</h2>
         <p v-if="error" class="notice">{{ error }}</p>
         <p v-else-if="sessions === null" class="muted">Loading…</p>
         <p v-else-if="sessions.length === 0" class="muted">No sessions.</p>

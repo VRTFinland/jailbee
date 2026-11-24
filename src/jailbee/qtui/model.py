@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING
 
 from rich.text import Text
 
+from jailbee import agent_status
 from jailbee.agent_activity import describe
 from jailbee.background import DEAD_SUFFIX, job_label_or_empty
 from jailbee.dashboard import format as dashboard_format
@@ -25,7 +26,6 @@ from jailbee.git_status import IN_PROGRESS_CELL_LABELS
 from jailbee.lifecycle import (
     SYNC_FIELDS,
     fork_source,
-    sync_marker,
     sync_target_text,
     tracking_warning,
 )
@@ -123,6 +123,8 @@ class CardContent:
     # Short name of the container this one was forked from (`jailbee fork`);
     # the card names it next to the base, which the BASE field leaves out.
     fork_of: str | None = None
+    # SYNC's target marker is meaningful even when the comparison itself is clean.
+    sync_clean: bool = False
 
 
 def card_content(
@@ -130,13 +132,15 @@ def card_content(
 ) -> CardContent:
     """Split a container's visible fields into NAME + STATE plus the rest,
     each addressable by ``FieldSpec.name`` so a renderer can place it."""
+    # Standalone cards have no neighbouring rows to align counts with.
+    if any(field.name == "sync" for field in fields):
+        from jailbee.dashboard.columns import visible_fields
+
+        local_sync = next(
+            field for field in visible_fields(now or datetime.now(UTC), [c], enabled=("sync",))
+        )
+        fields = [local_sync if field.name == "sync" else field for field in fields]
     cells = container_cells(c, fields)
-    # The card's git pieces read the bare values; the marker is the table's.
-    marker = _strip_markup(sync_marker(c.git_status))
-    if marker:
-        for index, field in enumerate(fields):
-            if field.name in SYNC_FIELDS and cells[index].endswith(f" {marker}"):
-                cells[index] = cells[index][: -len(marker) - 1]
     if now is not None:
         for index, field in enumerate(fields):
             if field.name == "network":
@@ -164,17 +168,26 @@ def card_content(
         fields=card_fields,
         job_error=c.job_error,
         agent_tooltip=tooltip or None,
-        agent_waiting=any(s.state == "waiting" for s in c.agent_status),
+        # An API error needs a person as much as a question does.
+        agent_waiting=any(
+            agent_status.urgency(s.state) <= agent_status.urgency("waiting") for s in c.agent_status
+        ),
         memory_limit=c.memory_limit,
         memory_override=c.memory_override,
         doing=_strip_markup(dashboard_format.doing_cell(c)) or None,
         warning=tracking_warning(c),
         fork_of=fork_source(c),
+        sync_clean=(
+            c.git_status is not None
+            and c.git_status.ahead_count == "0"
+            and c.git_status.behind_count == "0"
+            and c.git_status.target_diff == "clean"
+        ),
     )
 
 
 # Git field values that mean "nothing to report".
-_GIT_FIELD_NAMES = ("wt", "target_diff", "ahead_count", "behind_count", "conflict")
+_GIT_FIELD_NAMES = ("wt", *SYNC_FIELDS)
 
 
 def card_field(cc: CardContent, name: str) -> str | None:
@@ -201,16 +214,19 @@ def job_badge(cc: CardContent) -> tuple[str, str] | None:
 
 
 def git_segments(cc: CardContent) -> list[tuple[str, str]]:
-    """Coloured git pieces; empty when the working tree is clean."""
+    """Coloured git pieces, retaining SYNC's target even when the comparison is clean."""
     segs: list[tuple[str, str]] = []
-    ahead_count = card_field(cc, "ahead_count")
+    sync = card_field(cc, "sync")
+    if sync is not None:
+        segs.append((sync, "diff"))
+    ahead_count = card_field(cc, "ahead_count") if sync is None else None
     if ahead_count not in (None, "0"):
         segs.append((f"↑{ahead_count}", "ahead"))
-    behind_count = card_field(cc, "behind_count")
+    behind_count = card_field(cc, "behind_count") if sync is None else None
     if behind_count not in (None, "0"):
         # The missing-target cell is already "↓•"; counts are bare digits.
         segs.append((behind_count if behind_count.startswith("↓") else f"↓{behind_count}", "ahead"))
-    target_diff = card_field(cc, "target_diff")
+    target_diff = card_field(cc, "target_diff") if sync is None else None
     if target_diff not in (None, "clean", "✓"):
         segs.append((target_diff, "diff"))
     wt = card_field(cc, "wt")
@@ -232,7 +248,10 @@ def git_segments(cc: CardContent) -> list[tuple[str, str]]:
 
 
 def is_git_clean(cc: CardContent) -> bool:
-    return not git_segments(cc)
+    segments = git_segments(cc)
+    if cc.sync_clean and (sync := card_field(cc, "sync")) is not None:
+        segments = [segment for segment in segments if segment != (sync, "diff")]
+    return not segments
 
 
 def compact_meta(cc: CardContent) -> list[str]:
@@ -257,7 +276,7 @@ def grid_rows(cc: CardContent) -> list[tuple[str, str]]:
     if cc.fork_of:
         rows.append(("FORK OF", cc.fork_of))
     segs = git_segments(cc)
-    rows.append(("GIT", "clean" if not segs else "  ".join(t for t, _ in segs)))
+    rows.append(("GIT", "clean" if is_git_clean(cc) else "  ".join(t for t, _ in segs)))
     return rows
 
 
@@ -287,7 +306,8 @@ _FIELD_MEANINGS = {
     "doing": "Active processes; ×N = process count",  # noqa: RUF001 - intentional multiplication sign
     "job": "Background job phase; failed and (dead) identify failures",
     "wt": "Working-tree diff; ✓ = clean",
-    "target_diff": "Diff against host target branch; ✓ = clean",
+    "sync": "Sync target marker, commits ahead / behind, then tree diff; ✓ = clean",
+    "target_diff": "Diff against sync target; ✓ = clean",
     "local_diff": "Diff against checked-out host HEAD; ✓ = clean",
     "ahead_count": "Commits ahead of sync target",
     "behind_count": "Commits behind sync target",
@@ -297,7 +317,7 @@ _FIELD_MEANINGS = {
     "issues": "Pending issue outbox actions",
     "outbox": "Staged PR and issue outbox manifests waiting to be published (✉N)",
     "group": "Credential group",
-    "agent_compact": ("Agent status: ◆ waiting, ● busy, ◐ shell, ○ idle; ? unknown"),
+    "agent_compact": ("Agent status: ✖ API error, ◆ waiting, ● busy, ◐ shell, ○ idle; ? unknown"),
     "agent": "Full agent state and duration",
 }
 
@@ -339,7 +359,7 @@ def cell_tooltip(c: ContainerInfo, field: FieldSpec[ContainerInfo]) -> str:
                 details.extend(activity.lines())
         detail = "\n".join(details) or "No agent status"
     elif field.name == "job":
-        label = job_label_or_empty(c.job_phase, c.job_pid, kind=c.job_kind)
+        label = job_label_or_empty(c.job_phase, c.job_pid, kind=c.job_kind, live=c.job_live)
         detail = "\n".join(part for part in (label, c.job_error) if part)
     elif field.name in SYNC_FIELDS:
         detail = f"{_strip_markup(field.cell(c))}\n{sync_target_text(c.git_status)}"

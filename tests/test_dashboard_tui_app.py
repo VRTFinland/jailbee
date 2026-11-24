@@ -315,6 +315,242 @@ def test_the_app_module_is_the_only_one_importing_textual():
     assert subprocess.run([sys.executable, "-c", code], check=False).returncode == 0
 
 
+@pytest.mark.parametrize("blocked_verb", ["ls", "drop"])
+def test_outbox_delete_keeps_keys_live_and_finishes_after_close(mocker, tmp_path, blocked_verb):
+    import asyncio
+    from threading import Event, get_ident
+
+    from jailbee.dashboard.jobs import JobRunner
+    from tests.dashboard_fixtures import cfg_group
+    from tests.dashboard_pilot import container_menu_keys, make_app, screen_text
+    from tests.test_dashboard_outbox import _action, _container, _listing, _proposal
+
+    entered, release = Event(), Event()
+    calls = []
+    notifications = []
+    ui_thread = get_ident()
+    blocking = False
+    listing = _listing(_container(_proposal(actions=[_action(0)])))
+
+    def quiet(argv, **kwargs):
+        calls.append((argv[1], get_ident()))
+        if blocking and argv[1] == blocked_verb:
+            entered.set()
+            assert release.wait(5), "test did not release the outbox runner"
+        return tsession.da.CliResult(True, "done", listing)
+
+    mocker.patch.object(tsession.da, "run_cli_quiet", side_effect=quiet)
+    group = cfg_group(tmp_path, (ci("alpha-x", "alpha"),))
+    app = make_app(mocker, [group], jobs=JobRunner)
+
+    async def settle(pilot, controller):
+        async with asyncio.timeout(5):
+            while controller.state.busy:
+                app.session.jobs.poll()
+                app.refresh_frame()
+                await pilot.pause(0.001)
+        await pilot.pause()
+
+    async def scenario():
+        nonlocal blocking
+        async with app.run_test(size=(120, 35)) as pilot:
+            try:
+                for key in container_menu_keys(group, "outbox browse"):
+                    await pilot.press(key)
+                controller = app.session.outbox
+                assert controller is not None
+                await settle(pilot, controller)
+                changed = controller.on_change
+
+                def record(state):
+                    notifications.append(get_ident())
+                    changed(state)
+
+                controller.on_change = record
+                calls.clear()
+                blocking = True
+                await pilot.press("d", "down", "enter")
+                assert await asyncio.to_thread(entered.wait, 2), "delete command never started"
+                assert controller.state.busy == "Deleting 1 from the outbox…"
+                assert "Deleting 1 from the outbox" in screen_text(app)
+                preview = controller.state.preview
+                await pilot.press("v")
+                assert controller.state.preview != preview
+                assert not release.is_set()  # the key was processed while the child was blocked
+                await pilot.press("r", "p")
+                assert controller.state.busy == "Deleting 1 from the outbox…"
+                await pilot.press("escape")
+                assert not isinstance(app.session.overlay, tsession.OutboxState)
+                release.set()
+                await settle(pilot, controller)
+                assert not isinstance(app.session.overlay, tsession.OutboxState)
+                assert app.session.notice == "Deleted 1 from the outbox."
+                assert ("refresh",) in app.session.client.events
+            finally:
+                release.set()
+
+    asyncio.run(scenario())
+    assert [verb for verb, _ in calls] == ["ls", "drop", "ls"]
+    assert all(thread != ui_thread for _, thread in calls)
+    assert notifications and set(notifications) == {ui_thread}
+
+
+def _blocking_outbox_app(mocker, tmp_path, listings, blocked_verb):
+    """The dashboard with the real JobRunner; ``run_cli_quiet`` blocks on ``blocked_verb``.
+
+    ``listings`` is consumed per `outbox ls` (the last one repeats); returns
+    (app, group, entered, release, calls, gate); ``gate`` arms the one block.
+    """
+    from threading import Event
+
+    from jailbee.dashboard.jobs import JobRunner
+    from tests.dashboard_fixtures import cfg_group
+    from tests.dashboard_pilot import make_app
+
+    entered, release = Event(), Event()
+    calls: list[list[str]] = []
+    gate = {"on": False}
+
+    def quiet(argv, **kwargs):
+        calls.append(list(argv))
+        if gate["on"] and argv[1] == blocked_verb:
+            gate["on"] = False
+            entered.set()
+            assert release.wait(5), "test did not release the outbox runner"
+        if argv[1] == "ls":
+            return tsession.da.CliResult(
+                True, "done", listings[0] if len(listings) == 1 else listings.pop(0)
+            )
+        return tsession.da.CliResult(True, "done", "")
+
+    mocker.patch.object(tsession.da, "run_cli_quiet", side_effect=quiet)
+    group = cfg_group(tmp_path, (ci("alpha-x", "alpha"),))
+    app = make_app(mocker, [group], jobs=JobRunner)
+    return app, group, entered, release, calls, gate
+
+
+async def _settle_outbox(app, pilot, controller):
+    import asyncio
+
+    async with asyncio.timeout(5):
+        while controller.state.busy:
+            app.session.jobs.poll()
+            app.refresh_frame()
+            await pilot.pause(0.001)
+    await pilot.pause()
+
+
+def test_closing_the_box_during_pr_preflight_runs_no_terminal_hand_off(mocker, tmp_path):
+    import asyncio
+
+    from tests.dashboard_pilot import container_menu_keys
+    from tests.test_dashboard_outbox import _container, _listing, _proposal
+
+    awaiting = _proposal("pr/d.json", state="awaiting-pr", create_scope={"kind": "repo"})
+    app, group, entered, release, _calls, gate = _blocking_outbox_app(
+        mocker, tmp_path, [_listing(_container(awaiting))], "ls"
+    )
+    handed = mocker.patch.object(app.session, "run_dashboard_command", return_value=0)
+
+    async def scenario():
+        async with app.run_test(size=(120, 35)) as pilot:
+            try:
+                for key in container_menu_keys(group, "outbox browse"):
+                    await pilot.press(key)
+                controller = app.session.outbox
+                assert controller is not None
+                await _settle_outbox(app, pilot, controller)
+                gate["on"] = True
+                await pilot.press("p")
+                assert await asyncio.to_thread(entered.wait, 2), "the preflight never started"
+                await pilot.press("escape")
+                assert not isinstance(app.session.overlay, tsession.OutboxState)
+                release.set()
+                await _settle_outbox(app, pilot, controller)
+                assert not isinstance(app.session.overlay, tsession.OutboxState)
+                assert app.session.notice == "pr push not run: outbox box closed"
+            finally:
+                release.set()
+
+    asyncio.run(scenario())
+    handed.assert_not_called()
+
+
+def test_pr_preflight_with_the_box_open_runs_the_terminal_hand_off_once(mocker, tmp_path):
+    import asyncio
+
+    from tests.dashboard_pilot import container_menu_keys
+    from tests.test_dashboard_outbox import _container, _listing, _proposal
+
+    awaiting = _proposal("pr/d.json", state="awaiting-pr", create_scope={"kind": "repo"})
+    app, group, entered, release, _calls, gate = _blocking_outbox_app(
+        mocker, tmp_path, [_listing(_container(awaiting))], "ls"
+    )
+    handed = mocker.patch.object(app.session, "run_dashboard_command", return_value=0)
+
+    async def scenario():
+        async with app.run_test(size=(120, 35)) as pilot:
+            try:
+                for key in container_menu_keys(group, "outbox browse"):
+                    await pilot.press(key)
+                controller = app.session.outbox
+                assert controller is not None
+                await _settle_outbox(app, pilot, controller)
+                gate["on"] = True
+                await pilot.press("p")
+                assert await asyncio.to_thread(entered.wait, 2), "the preflight never started"
+                release.set()
+                await _settle_outbox(app, pilot, controller)
+                assert app.session.notice != "pr push not run: outbox box closed"
+            finally:
+                release.set()
+
+    asyncio.run(scenario())
+    handed.assert_called_once()
+
+
+def test_reopen_after_a_background_delete_shows_no_stale_marks(mocker, tmp_path):
+    import asyncio
+
+    from tests.dashboard_pilot import container_menu_keys
+    from tests.test_dashboard_outbox import _container, _listing, _proposal
+
+    both = _listing(_container(_proposal("pr/a.json"), _proposal("issue/b.json")))
+    rest = _listing(_container(_proposal("issue/b.json")))
+    # Opening, the delete's pre-drop check, then everything after the drop.
+    app, group, entered, release, calls, gate = _blocking_outbox_app(
+        mocker, tmp_path, [both, both, rest], "drop"
+    )
+
+    async def scenario():
+        async with app.run_test(size=(120, 35)) as pilot:
+            try:
+                for key in container_menu_keys(group, "outbox browse"):
+                    await pilot.press(key)
+                controller = app.session.outbox
+                assert controller is not None
+                await _settle_outbox(app, pilot, controller)
+                gate["on"] = True
+                await pilot.press("space", "d", "down", "enter")
+                assert await asyncio.to_thread(entered.wait, 2), "the drop never started"
+                await pilot.press("escape")  # closed with pr/a.json still marked
+                release.set()
+                await _settle_outbox(app, pilot, controller)
+                assert isinstance(app.session.overlay, MenuState)  # back at the container menu
+                app.session.menu_chosen("outbox browse", None, 0)
+                reopened = app.session.outbox
+                assert reopened is not None and reopened is not controller
+                await _settle_outbox(app, pilot, reopened)
+                return reopened.state
+            finally:
+                release.set()
+
+    state = asyncio.run(scenario())
+    assert [p.id for c in state.containers for p in c.proposals] == ["issue/b.json"]
+    assert state.marks == frozenset()
+    assert sum(argv[:2] == ["outbox", "drop"] for argv in calls) == 1
+
+
 def test_outbox_box_intent_reaches_session(mocker, tmp_path):
     from tests.dashboard_fixtures import cfg_group
     from tests.dashboard_pilot import container_menu_keys

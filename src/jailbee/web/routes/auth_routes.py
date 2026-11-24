@@ -7,19 +7,33 @@ CLI-only (spec #109).
 from __future__ import annotations
 
 import math
+import unicodedata
 from datetime import datetime
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, HTTPException, Request, status
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstraints
 
 from jailbee.web import auth_admin, login_link
 from jailbee.web.deps import Context, RequestRp, RequireSession, request_rp
+from jailbee.web.device_name import derive_device_name
 from jailbee.web.fido2_auth import Fido2Error
 
 router = APIRouter(prefix="/api", tags=["auth"])
 
-DeviceName = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)]
+
+def _no_control_characters(name: str) -> str:
+    """Reject Unicode categories Cc and Cf: they would mangle the operator's terminal."""
+    if any(unicodedata.category(c) in ("Cc", "Cf") for c in name):
+        raise ValueError("must not contain control characters")
+    return name
+
+
+DeviceName = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=100),
+    AfterValidator(_no_control_characters),
+]
 
 
 class PinLogin(BaseModel):
@@ -28,7 +42,8 @@ class PinLogin(BaseModel):
     model_config = ConfigDict(extra="forbid")
     method: Literal["pin"]
     pin: str
-    device_name: DeviceName
+    device_name: DeviceName | None = None
+    """Optional: an old client names its device; otherwise the User-Agent does."""
 
 
 class TotpLogin(BaseModel):
@@ -37,7 +52,8 @@ class TotpLogin(BaseModel):
     model_config = ConfigDict(extra="forbid")
     method: Literal["totp"]
     code: Annotated[str, StringConstraints(strip_whitespace=True, max_length=10)]
-    device_name: DeviceName
+    device_name: DeviceName | None = None
+    """Optional: an old client names its device; otherwise the User-Agent does."""
 
 
 class LinkLogin(BaseModel):
@@ -46,7 +62,8 @@ class LinkLogin(BaseModel):
     model_config = ConfigDict(extra="forbid")
     method: Literal["link"]
     token: Annotated[str, StringConstraints(max_length=200)]
-    device_name: DeviceName
+    device_name: DeviceName | None = None
+    """Optional: an old client names its device; otherwise the User-Agent does."""
 
 
 class Fido2Login(BaseModel):
@@ -57,7 +74,8 @@ class Fido2Login(BaseModel):
     challenge_id: Annotated[str, StringConstraints(max_length=100)]
     credential: dict[str, Any]
     """The browser's `PublicKeyCredential` as JSON (base64url binary fields)."""
-    device_name: DeviceName
+    device_name: DeviceName | None = None
+    """Optional: an old client names its device; otherwise the User-Agent does."""
 
 
 class Fido2Begin(BaseModel):
@@ -76,6 +94,11 @@ class SessionResponse(BaseModel):
     device_name: str
     created_at: datetime
     last_used_at: datetime
+
+
+class SessionRename(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    device_name: DeviceName
 
 
 class MethodsResponse(BaseModel):
@@ -110,6 +133,7 @@ def _attempt(
 @router.post("/auth")
 def authenticate(body: Login, ctx: Context, request: Request) -> TokenResponse:
     source = _source(request)
+    device_name = body.device_name or derive_device_name(request.headers.get("user-agent"))
 
     def audit(event: auth_admin.AuthEventKind) -> None:
         auth_admin.record_event(
@@ -117,7 +141,7 @@ def authenticate(body: Login, ctx: Context, request: Request) -> TokenResponse:
             event,
             clock=ctx.deps.clock,
             method=body.method,
-            device_name=body.device_name,
+            device_name=device_name,
             source=source,
         )
 
@@ -128,7 +152,7 @@ def authenticate(body: Login, ctx: Context, request: Request) -> TokenResponse:
         auth_admin.log.warning(
             "web auth rate-limited method=%s device=%r source=%s",
             body.method,
-            body.device_name,
+            device_name,
             source or "-",
         )
         raise HTTPException(
@@ -152,7 +176,7 @@ def authenticate(body: Login, ctx: Context, request: Request) -> TokenResponse:
             "fido2": "Security key not accepted",
         }[body.method]
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=detail)
-    token = ctx.sessions.create(body.device_name)
+    token = ctx.sessions.create(device_name)
     ctx.limiter.reset(body.method if limited else None)
     audit("login")
     return TokenResponse(token=token)
@@ -177,6 +201,34 @@ def current_session(authed: RequireSession) -> SessionResponse:
     s = authed.session
     return SessionResponse(
         device_name=s.device_name, created_at=s.created_at, last_used_at=s.last_used_at
+    )
+
+
+@router.put("/session")
+def rename_session(
+    body: SessionRename, authed: RequireSession, ctx: Context, request: Request
+) -> SessionResponse:
+    """Rename the caller's own session; the new name shows in the header and the CLI listing."""
+    renamed = ctx.sessions.rename(authed.token, body.device_name)
+    if renamed is None:
+        # Login switched off: there is no stored session to name, so nothing
+        # changes and nothing is audited.
+        return SessionResponse(
+            device_name=authed.session.device_name,
+            created_at=authed.session.created_at,
+            last_used_at=authed.session.last_used_at,
+        )
+    auth_admin.record_event(
+        ctx.deps.engine,
+        "rename",
+        clock=ctx.deps.clock,
+        device_name=f"{authed.session.device_name} \u2192 {renamed.device_name}",
+        source=_source(request),
+    )
+    return SessionResponse(
+        device_name=renamed.device_name,
+        created_at=renamed.created_at,
+        last_used_at=renamed.last_used_at,
     )
 
 

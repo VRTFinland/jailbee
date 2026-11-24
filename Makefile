@@ -1,5 +1,5 @@
 .PHONY: install install-gui install-web install-skill check build publish-testpypi \
-        changelog release site site-check docs-serve web web-test shots
+        changelog release site site-check docs-serve web web-test web-e2e web-e2e-sweep web-corpus shots
 
 # Use bash for recipe lines — the `release` target relies on bash features
 # (`set -euo pipefail`, `read -r -p`) that /bin/sh does not provide.
@@ -14,20 +14,31 @@ SHELL := /bin/bash
 # mode), so re-running this target is safe. Requires libGL on the host;
 # `jailbee gui` and `jailbee dashboard --gui` work after this, and `jailbee
 # remote ssh enable`/`serve` no longer need a separate `uv tool install`.
+# The web dashboard's Python dependencies are core. Its browser app is
+# gitignored and must be in the tree when the wheel is built, so it is built
+# first whenever npm is available; without npm the install goes on and
+# `jailbee serve` reports the missing app.
 install:
+	@if command -v npm >/dev/null 2>&1; then \
+		$(MAKE) web; \
+	else \
+		echo "warning: npm not found; the web dashboard's browser app is not built (needs Node.js 22.22+ or 24.15+)" >&2; \
+	fi
 	uv tool install '.[gui,ssh]' --force --reinstall
 	jailbee setup --yes
-	@# The SSH service runs the old code until restarted. try-restart is a
-	@# no-op when the unit is not running, so users without it are unaffected.
+	@# The SSH, broker and web dashboard services run the old code until
+	@# restarted (the broker restarts itself when the version changes, but a
+	@# reinstall of the same version needs this). Only installed units are
+	@# touched: try-restart is a no-op for a stopped unit but fails for a
+	@# missing one.
 	@if command -v systemctl >/dev/null 2>&1; then \
-		systemctl --user try-restart jailbee-ssh.service; \
+		for unit in jailbee-ssh jailbee-broker jailbee-web; do \
+			if systemctl --user cat "$$unit.service" >/dev/null 2>&1; then \
+				systemctl --user try-restart "$$unit.service"; \
+			fi; \
+		done; \
 	fi
-	@# So does the orchestration broker. It restarts itself when the version
-	@# changes, but a reinstall of the same version needs this.
-	@if command -v systemctl >/dev/null 2>&1; then \
-		systemctl --user try-restart jailbee-broker.service; \
-	fi
-	@# So does the dashboards' state service, and a reinstall of the same
+	@# The dashboards' state service too, and a reinstall of the same
 	@# version never replaces it (the handshake compares versions only). Open
 	@# dashboards reconnect and respawn it from the new code. The pattern is
 	@# the service's whole argv tail (`spawn_server`), so a shell or editor that
@@ -38,15 +49,11 @@ install:
 # `make install` includes the optional Qt GUI and SSH extras by default.
 install-gui: install
 
-# `make install` plus the web dashboard: builds the browser app first (needs
-# Node.js and npm) so the installed wheel carries it, adds the `web` extra and
-# restarts the dashboard service if it runs.
-install-web: web
-	uv tool install '.[gui,ssh,web]' --force --reinstall
-	jailbee setup --yes
-	@if command -v systemctl >/dev/null 2>&1; then \
-		systemctl --user try-restart jailbee-web.service; \
-	fi
+# `make install` that requires the web dashboard's browser app: fails without
+# npm instead of installing without it.
+install-web:
+	@command -v npm >/dev/null 2>&1 || { echo "error: npm not found; the web dashboard needs Node.js 22.22+ or 24.15+ and npm to build" >&2; exit 1; }
+	$(MAKE) install
 
 # Just the bundled agent skills, for when only they changed and host-level
 # `install_host_skills` is on (off by default). `make install` does this too,
@@ -69,10 +76,61 @@ web:
 web-test:
 	cd frontend && npm ci && npm test
 
+# The web dashboard's end-to-end browser suite (tests_e2e/, #152): builds the
+# browser app as `make web` does, type-checks the suite, then drives the real
+# server in the system Chrome. Its Python dependencies are the `e2e` group,
+# which neither the ordinary suite nor the CI matrix installs. A failing
+# test's Playwright trace and screenshot land in $(E2E_OUTPUT) (gitignored).
+# Pass more pytest arguments with E2E_ARGS, e.g. `make web-e2e E2E_ARGS=-x`.
+E2E_OUTPUT ?= _build/e2e-results
+web-e2e:
+	@command -v npm >/dev/null 2>&1 || { echo "error: npm not found; the e2e suite needs the browser app built (Node.js 22.22+ or 24.15+ and npm)" >&2; exit 1; }
+	$(MAKE) web
+	MYPYPATH=src uv run --group e2e mypy tests_e2e
+	uv run --group e2e pytest tests_e2e -q --timeout 300 \
+		--tracing retain-on-failure --screenshot only-on-failure \
+		--output $(E2E_OUTPUT) $(E2E_ARGS)
+
+# Render every session and subagent of a Claude home in the web dashboard and
+# report what broke (#152): `make web-e2e-sweep CLAUDE_HOME=<path>` (default
+# ~/.claude). For the maintainer on the host, never CI. It starts the e2e test
+# server with that home as its only repository's agent home and opens each
+# transcript in the system Chrome. It only reads the home (the file watch is
+# faked) and writes nothing but the report: Markdown at $(SWEEP_REPORT), under
+# the gitignored .local/. The report starts with a summary line (also printed)
+# and the unknown entry types across the home, then one section per session or subagent with a finding, headed
+# `<project dir>/<session id>[/subagents/<agent id>]`, its dashboard URL and
+# one bullet per finding: `load error` (an error page, or nothing rendered in
+# 30 s), `JS error` (console or uncaught error), `CSP violation`, `slow`
+# (navigation to rendered transcript, app start included, over SWEEP_SLOW_MS),
+# `unknown entry type` (a record or content block type the reader neither
+# renders nor knowingly skips, with count and first line) and `unparsable
+# line`. Clean sessions are only counted.
+CLAUDE_HOME ?= $(HOME)/.claude
+SWEEP_SLOW_MS ?= 2000
+SWEEP_REPORT ?= .local/web-e2e-sweep/$(shell date +%Y%m%d-%H%M%S).md
+web-e2e-sweep:
+	@command -v npm >/dev/null 2>&1 || { echo "error: npm not found; the sweep needs the browser app built (Node.js 22.22+ or 24.15+ and npm)" >&2; exit 1; }
+	$(MAKE) web
+	JAILBEE_SWEEP_HOME="$(CLAUDE_HOME)" JAILBEE_SWEEP_REPORT="$(abspath $(SWEEP_REPORT))" \
+		JAILBEE_SWEEP_SLOW_MS="$(SWEEP_SLOW_MS)" \
+		uv run --group e2e pytest tests_e2e/sweep_local.py -q -s --timeout 0 -p no:cacheprovider
+
+# Re-record the web dashboard's corpus of genuine Claude Code sessions
+# (tests/fixtures/transcripts/claude-corpus/). Needs a logged-in `claude`;
+# it runs headless Claude (haiku) on a throwaway toy repository through the
+# scripted prompts in scripts/web_corpus.py, so it spends a little quota. The
+# output is normalised (stable ids, /work/toy paths, no host, account or
+# credential) and refused if `find_leaks` still finds anything; the raw
+# sessions are deleted from the Claude home afterwards. Review the diff before
+# committing it, and re-record when Claude Code's transcript format changes.
+web-corpus:
+	uv run python -m scripts.web_corpus
+
 # Run the full CI gate locally: lint, format check, type check, tests.
 check:
-	uv run ruff check src/ tests/
-	uv run ruff format --check src/ tests/
+	uv run ruff check src/ tests/ tests_e2e/
+	uv run ruff format --check src/ tests/ tests_e2e/
 	uv run mypy src/
 	uv run pytest -n auto -q
 

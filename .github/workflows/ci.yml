@@ -31,8 +31,8 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - run: uv sync --all-extras --dev
-      - run: uv run ruff check src/ tests/
-      - run: uv run ruff format --check src/ tests/
+      - run: uv run ruff check src/ tests/ tests_e2e/
+      - run: uv run ruff format --check src/ tests/ tests_e2e/
       - run: uv run mypy src/
       - run: uv run pytest -q
   docs:

@@ -6,9 +6,11 @@ import {useRoute, useRouter} from "vue-router"
 import {apiFetch, Unauthorized} from "../api"
 import PageNav from "../components/PageNav.vue"
 import ToolCall from "../components/ToolCall.vue"
+import {readableBottom} from "../composables/readableBottom"
 import {usePager} from "../composables/usePager"
 import {useDashboard} from "../dashboard"
 import type {
+    EntryContent,
     RenderedEntry,
     RenderedSubagent,
     RenderedToolResult,
@@ -16,7 +18,16 @@ import type {
 } from "../protocol"
 import {settings} from "../settings"
 
-const pager = usePager()
+const header = ref<HTMLElement | null>(null)
+// The sticky header's bottom edge: below an app banner, not just its height.
+const readableTop = ref(0)
+const pageEl = ref<HTMLElement | null>(null)
+const pager = usePager(
+    () => readableTop.value,
+    // The bottom spacer lets a short final reply start below the header; page
+    // turns end where the transcript does, not inside that blank room.
+    () => (pageEl.value ? parseFloat(getComputedStyle(pageEl.value).paddingBottom) || 0 : 0),
+)
 const eink = computed(() => settings.displayProfile === "eink")
 /** E-ink: live entries wait here until the reader taps the notice. */
 const pending = ref<RenderedEntry[]>([])
@@ -39,6 +50,7 @@ const sessionRef = computed(() => ({
 const transcript = ref<TranscriptView | null>(null)
 const error = ref<string | null>(null)
 const thinking = computed(() => settings.showThinking)
+const title = computed(() => transcript.value?.title || (agentId.value === null ? "Untitled session" : "Subagent"))
 
 /** Tool results and subagent refs, by the call they belong to. */
 const byCall = computed(() => {
@@ -72,6 +84,42 @@ const latestAnswer = computed(() => {
         if (entries[i].kind === "assistant") return entries[i].id
     }
     return null
+})
+
+const latestVisible = ref(false)
+
+function measureVisibility() {
+    const headerRect = header.value?.getBoundingClientRect()
+    readableTop.value = headerRect ? Math.max(0, headerRect.bottom) : 0
+    const el = latestAnswer.value === null ? null : document.getElementById(entryDomId(latestAnswer.value))
+    if (el === null) {
+        latestVisible.value = false
+        return
+    }
+    const rect = el.getBoundingClientRect()
+    const top = Math.max(0, headerRect?.bottom ?? 0)
+    const bottom = readableBottom()
+    // Any visible part counts, including a reply taller than the viewport.
+    latestVisible.value = rect.bottom > top && rect.top < bottom && rect.bottom > rect.top
+}
+
+watch(shown, () => void nextTick(measureVisibility))
+watch(eink, () => void nextTick(measureVisibility))
+
+let layoutObserver: ResizeObserver | null = null
+onMounted(() => {
+    window.addEventListener("scroll", measureVisibility, {passive: true})
+    window.addEventListener("resize", measureVisibility)
+    if (typeof ResizeObserver !== "undefined") {
+        layoutObserver = new ResizeObserver(measureVisibility)
+        layoutObserver.observe(document.body)
+        if (header.value) layoutObserver.observe(header.value)
+    }
+})
+onBeforeUnmount(() => {
+    window.removeEventListener("scroll", measureVisibility)
+    window.removeEventListener("resize", measureVisibility)
+    layoutObserver?.disconnect()
 })
 
 function entryDomId(id: string): string {
@@ -132,6 +180,7 @@ function startFollowing(view: TranscriptView) {
             subagent_id: agentId.value,
         },
         view.offset,
+        settings.agentContext,
         {onAppend: (entries) => void onLiveAppend(entries)},
     ) ?? null
 }
@@ -148,10 +197,12 @@ function jumpToLatest() {
     if (el === null) return
     if (eink.value) pager.goToElement(el)
     else el.scrollIntoView({block: "start"})
+    measureVisibility()
 }
 
-onMounted(async () => {
-    const path = [
+/** The REST path of this transcript, without the leading `/api/repos/`. */
+const transcriptPath = computed(() =>
+    [
         prefix.value,
         "sessions",
         agent.value,
@@ -159,9 +210,42 @@ onMounted(async () => {
         ...(agentId.value === null ? [] : ["subagents", agentId.value]),
     ]
         .map(encodeURIComponent)
-        .join("/")
+        .join("/"),
+)
+
+// ---- agent context (meta records) -------------------------------------------
+/** Withheld meta content fetched so far, by entry id; filled on first expand. */
+const loadedContent = ref<Record<string, string>>({})
+const contentFailed = ref<Record<string, boolean>>({})
+
+async function expandMeta(id: string, event: Event) {
+    const open = (event.target as HTMLDetailsElement).open
+    if (!open || id in loadedContent.value) return
     try {
-        const view = await apiFetch<TranscriptView>(`/api/repos/${path}`)
+        const body = await apiFetch<EntryContent>(
+            `/api/repos/${transcriptPath.value}/entries/${encodeURIComponent(id)}`,
+        )
+        loadedContent.value[id] = body.html
+        await nextTick()
+        pager.measure()
+        contentFailed.value[id] = false
+    } catch {
+        contentFailed.value[id] = true
+    }
+}
+
+async function load() {
+    try {
+        const mode = settings.agentContext
+        const view = await apiFetch<TranscriptView>(
+            `/api/repos/${transcriptPath.value}?meta=${mode}`,
+        )
+        if (mode !== settings.agentContext) return // the setting changed meanwhile: a newer load runs
+        unfollow?.()
+        unfollow = null
+        loadedContent.value = {}
+        contentFailed.value = {}
+        pending.value = []
         transcript.value = view
         startFollowing(view)
         await nextTick()
@@ -175,12 +259,25 @@ onMounted(async () => {
             error.value = "The session could not be loaded."
         }
     }
-})
+}
+
+onMounted(load)
+// Changing Agent context re-reads the transcript and resubscribes with the new mode.
+watch(
+    () => settings.agentContext,
+    () => {
+        // Stop the old-mode appends at once; `load` resubscribes with the new mode.
+        unfollow?.()
+        unfollow = null
+        void load()
+    },
+)
 </script>
 
 <template>
-    <div class="page">
-        <header class="bar">
+    <div ref="pageEl" class="page" :style="{'--session-readable-top': `${readableTop}px`}">
+        <header ref="header" class="session-header">
+            <div class="bar">
             <router-link
                 v-if="agentId !== null"
                 class="back back-to-session"
@@ -192,17 +289,21 @@ onMounted(async () => {
                 &larr; {{ prefix }}
             </router-link>
             <router-link class="toggle" :to="{name: 'settings'}">Settings</router-link>
+            </div>
+            <template v-if="transcript">
+                <h1 :title="title">{{ title }}</h1>
+                <p class="session-meta muted">
+                    <span>{{ transcript.agent }}</span>
+                    <span v-if="transcript.models.length" class="mono" :title="transcript.models.join(', ')">{{
+                        transcript.models.join(", ")
+                    }}</span>
+                </p>
+            </template>
+            <p v-if="dashboard && !dashboard.state.connected" class="notice">Connecting…</p>
         </header>
         <p v-if="error" class="notice">{{ error }}</p>
         <p v-else-if="transcript === null" class="muted">Loading…</p>
         <template v-else>
-            <h1>{{ transcript.title || (agentId === null ? "Untitled session" : "Subagent") }}</h1>
-            <p class="session-meta muted">
-                <span>{{ transcript.agent }}</span>
-                <span v-if="transcript.models.length" class="mono">{{
-                    transcript.models.join(", ")
-                }}</span>
-            </p>
             <p v-if="transcript.entries.length === 0" class="muted">This session is empty.</p>
             <article class="transcript">
                 <template v-for="e in shown" :key="e.id">
@@ -212,7 +313,27 @@ onMounted(async () => {
                         class="entry user"
                         :class="{meta: e.meta}"
                     >
-                        <div class="prose" v-html="e.html" />
+                        <details
+                            v-if="e.meta && e.expandable"
+                            class="meta-record"
+                            @toggle="expandMeta(e.id, $event)"
+                        >
+                            <summary>{{ e.label || 'Agent context' }}</summary>
+                            <div
+                                v-if="e.id in loadedContent"
+                                class="prose"
+                                v-html="loadedContent[e.id]"
+                            />
+                            <p v-else-if="contentFailed[e.id]" class="muted">
+                                The content could not be loaded.
+                            </p>
+                            <p v-else class="muted">Loading…</p>
+                        </details>
+                        <p v-else-if="e.meta && !e.html" class="meta-label">{{ e.label || 'Agent context' }}</p>
+                        <template v-else>
+                            <p v-if="e.meta && e.label" class="meta-label">{{ e.label }}</p>
+                            <div class="prose" v-html="e.html" />
+                        </template>
                     </section>
                     <section
                         v-else-if="e.kind === 'assistant'"
@@ -267,7 +388,7 @@ onMounted(async () => {
                 {{ pending.length }} new {{ pending.length === 1 ? "message" : "messages" }} &mdash; tap to show
             </button>
             <button
-                v-if="latestAnswer"
+                v-if="latestAnswer && !latestVisible"
                 type="button"
                 class="jump-latest"
                 @click="jumpToLatest"
@@ -283,15 +404,23 @@ onMounted(async () => {
 .page {
     max-width: 48rem;
     margin: 0 auto;
-    padding: var(--space-3) var(--space-3) 5rem;
+    /* Even a short final reply can start just below the sticky header. */
+    padding: 0 var(--space-3) max(5rem, calc(100dvh - var(--session-readable-top)));
+}
+.session-header {
+    position: sticky;
+    /* Stick below App's out-of-date banner rather than under it. */
+    top: var(--app-banner-height, 0px);
+    z-index: 12;
+    padding: var(--space-2) 0;
+    background: var(--bg);
+    border-bottom: 1px solid var(--border);
 }
 .bar {
     display: flex;
     align-items: baseline;
     justify-content: space-between;
     gap: var(--space-3);
-    padding-bottom: var(--space-2);
-    border-bottom: 1px solid var(--border);
 }
 .back {
     color: var(--muted);
@@ -310,15 +439,26 @@ onMounted(async () => {
 h1 {
     font-size: 1.4rem;
     line-height: 1.3;
-    margin: var(--space-4) 0 var(--space-1);
-    word-break: break-word;
+    margin: 0 0 var(--space-1);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 .session-meta {
     display: flex;
-    flex-wrap: wrap;
     gap: var(--space-1) var(--space-3);
-    margin: 0 0 var(--space-4);
+    margin: 0;
     font-size: 0.85rem;
+}
+.session-meta > span {
+    flex-shrink: 0;
+}
+.session-meta .mono {
+    flex-shrink: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 .mono {
     font-family: var(--font-mono);
@@ -334,7 +474,7 @@ h1 {
 }
 .entry {
     margin: var(--space-4) 0;
-    scroll-margin-top: var(--space-3);
+    scroll-margin-top: var(--session-readable-top, 0px);
 }
 .entry.user {
     padding: var(--space-2) var(--space-3);
@@ -347,6 +487,14 @@ h1 {
     background: none;
     color: var(--muted);
     font-size: 0.8rem;
+}
+.entry.user.meta .meta-label,
+.entry.user.meta summary {
+    margin: 0;
+    font-weight: 600;
+}
+.entry.user.meta summary {
+    cursor: pointer;
 }
 .entry.thinking {
     padding-left: var(--space-3);

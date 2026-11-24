@@ -256,7 +256,7 @@ def test_pilot_the_badge_shows_and_a_click_on_it_opens_the_queue(mocker, tmp_pat
     _children(mocker, failing=("alpha-a",))
     run = drive(mocker, [_pilot_start, Click(Hit("queue"))], [_pilot_group(tmp_path)], screens=True)
 
-    assert "⟳ 0 · ⚠ 1" in run.screens[1]
+    assert "⟳ 0 · ⚠ 1" in run.screens[1].splitlines()[0]
     assert _is_queue(run.trace[2].overlay)
     assert run.app.outputs == []  # nothing popped up on its own
 
