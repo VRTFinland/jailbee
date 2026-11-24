@@ -3,6 +3,9 @@
     "SessionStart": [
       {"hooks": [{"type": "command", "command": "jailbee inbox hook session-start"}]}
     ],
+    "SessionEnd": [
+      {"hooks": [{"type": "command", "command": "jailbee inbox hook session-end"}]}
+    ],
     "Stop": [
       {"hooks": [{"type": "command", "command": "jailbee inbox hook stop"}]}
     ]

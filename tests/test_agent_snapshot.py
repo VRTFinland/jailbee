@@ -332,20 +332,22 @@ def test_boot_consumes_malformed_and_oversized_records(tmp_path: Path) -> None:
 def test_window_names_and_failure(monkeypatch: pytest.MonkeyPatch) -> None:
     from subprocess import CompletedProcess
 
+    from jailbee.services.local_proc import LocalProc
+
     calls = []
 
     def tmux(self: object, args: list[str]) -> CompletedProcess[str]:
         calls.append(args)
         return CompletedProcess(args, 0, "autostart\t@3\tclaude\nother\t@4\tignore\ninvalid\n", "")
 
-    monkeypatch.setattr(snapshot.LocalProc, "tmux", tmux)
+    monkeypatch.setattr(LocalProc, "tmux", tmux)
     assert snapshot.window_names() == {"@3": "claude"}
     assert calls == [["list-windows", "-a", "-F", "#{session_name}\t#{window_id}\t#{window_name}"]]
 
     def failure(self: object, args: list[str]) -> CompletedProcess[str]:
         raise OSError("tmux unavailable")
 
-    monkeypatch.setattr(snapshot.LocalProc, "tmux", failure)
+    monkeypatch.setattr(LocalProc, "tmux", failure)
     assert snapshot.window_names() == {}
 
 

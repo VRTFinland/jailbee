@@ -10,6 +10,11 @@ before editing `## Unreleased`.
 
 ### Added
 
+- Interactive Claude sessions can resume after an unclean container stop,
+  including host crashes and forced Incus stops. The managed plugin keeps a
+  live session registry, removes ended sessions and replaces sessions on
+  resume, fork or `/clear`; no golden-image rebuild is needed
+  ([#149](https://github.com/VRTFinland/jailbee/issues/149)).
 - `jailbee --version` and `jailbee version` include the source commit when
   known, with `-dirty` for uncommitted source changes. Editable installs read
   their own checkout; wheels preserve build-time provenance, and containers
