@@ -596,7 +596,9 @@ def test_finished_proposal_can_be_deleted_again_while_another_drop_runs(
                     assert controller.state.marks == frozenset({("alpha-x", "pr/a.json", 0, None)})
                     await pilot.press("home", "down", "space")  # unmark the same remaining action
                 elif not first_fails:
-                    assert not controller.state.marks  # cannot retain marks without a fresh revision
+                    assert (
+                        not controller.state.marks
+                    )  # cannot retain marks without a fresh revision
                 await pilot.press("home", "p")
                 assert controller.state.status == (
                     "publish must wait for the delete queue to finish",
@@ -604,7 +606,9 @@ def test_finished_proposal_can_be_deleted_again_while_another_drop_runs(
                 await pilot.press("d")
                 if refresh_fails and not first_fails:
                     assert controller.state.question is None
-                    assert controller.state.status == ("pr/a.json: refresh required after deletion",)
+                    assert controller.state.status == (
+                        "pr/a.json: refresh required after deletion",
+                    )
                     release.set()
                     await _settle_outbox(app, pilot, controller)
                     await pilot.press("d")

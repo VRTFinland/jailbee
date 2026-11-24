@@ -813,8 +813,11 @@ class OutboxController:
             return
         if any((k[0], k[1]) in self._delete_stale for k in keys):
             self._status(
-                *(f"{_safe(k[1])}: refresh required after deletion" for k in sorted(keys, key=str)
-                  if (k[0], k[1]) in self._delete_stale)
+                *(
+                    f"{_safe(k[1])}: refresh required after deletion"
+                    for k in sorted(keys, key=str)
+                    if (k[0], k[1]) in self._delete_stale
+                )
             )
             return
         refused = [(k, r) for k in sorted(keys, key=str) if (r := _block_reason(self.state, k))]
@@ -984,7 +987,9 @@ class OutboxController:
                             continue
                         matches = [
                             candidate
-                            for candidate in _keys_of((dob.ContainerListing(name, None, (), (fresh,)),))
+                            for candidate in _keys_of(
+                                (dob.ContainerListing(name, None, (), (fresh,)),)
+                            )
                             if candidate[2] is not None
                             and _fingerprint(fresh, candidate) == _fingerprint(previous, marked)
                         ]
