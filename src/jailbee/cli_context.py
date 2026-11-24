@@ -11,12 +11,11 @@ APP_MOUNT = "/opt/jailbee/app"
 EXIT_SKEW = 86
 EXIT_DEPS = 87
 EXIT_NOT_MOUNTED = 88
-SHARED_COMMANDS = frozenset({"config", "version", "service", "issue", "pr", "outbox"})
+SHARED_COMMANDS = frozenset({"agent", "config", "version", "service", "issue", "pr", "outbox"})
 CONTAINER_COMMANDS: frozenset[str] = frozenset({"inbox", "host", "_agent-snapshot"})
 HOST_COMMANDS: frozenset[str] = frozenset(
     {
         "_autostart-worker",
-        "agent",
         "_boot-worker",
         "_broker",
         "_destroy-worker",

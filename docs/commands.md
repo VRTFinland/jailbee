@@ -114,6 +114,11 @@ is host-only:
 
 - `jailbee --version` / `jailbee version` (package version plus the mounted host code's source commit, when known)
 - `jailbee config validate` ([configuration](config.md))
+- `jailbee agent models [--json]` reads the effective user-authored model map
+  and `model_policy` live through the broker, for choosing subagent and
+  child-runner models. Host config edits appear on the next call without
+  `apply` or restart; an empty map prints a configuration hint. See
+  [model guidance](config.md#agentsmodels-and-agentsmodel_policy).
 - `jailbee service ...` ([Services](#services))
 - `jailbee inbox ...` ([orchestration](orchestration.md)), including
   `inbox follow` (interactive Claude Code's managed plugin runs this

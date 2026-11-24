@@ -590,7 +590,12 @@ def _default_runner_specs() -> tuple[FieldSpec, ...]:
     """
     from jailbee.orchestration.runner_model import Runner
 
-    return rebase(build_specs(Runner), ("agents", "default_runner"))
+    from jailbee.config.models_agents import AgentModelGuidance
+
+    return (
+        *rebase(build_specs(Runner), ("agents", "default_runner")),
+        *rebase(build_specs(AgentModelGuidance), ("agents",)),
+    )
 
 
 def repo_specs() -> tuple[FieldSpec, ...]:

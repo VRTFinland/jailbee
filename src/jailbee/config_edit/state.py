@@ -13,6 +13,7 @@ from copy import deepcopy
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Final, Literal
 
+from jailbee.config.models_agents import AGENT_SETTINGS_KEYS
 from jailbee.config_edit.layers import lookup
 from jailbee.config_edit.schema import (
     FieldKind,
@@ -450,6 +451,8 @@ def _staged_at(state: EditorState, path: KeyPath) -> tuple[bool, object]:
     caller falls through to whatever it reads as "saved".
     """
     for i in range(len(path), 0, -1):
+        if i == 1 and _is_agent_setting_path(path):
+            continue
         if path[:i] not in state.staged:
             continue
         staged = state.staged[path[:i]]
@@ -537,6 +540,8 @@ def entry_origin(state: EditorState, path: KeyPath) -> Literal["set", "default"]
     `origins` would answer for the repo layer even in a global-layer session.
     """
     for i in range(len(path), 0, -1):
+        if i == 1 and _is_agent_setting_path(path):
+            continue
         if path[:i] not in state.staged:
             continue
         if state.staged[path[:i]] is UNSET:
@@ -563,6 +568,8 @@ def _staged_ancestor(state: EditorState, path: KeyPath) -> KeyPath | None:
     handles the `UNSET` case by materialising the ancestor.
     """
     for i in range(len(path) - 1, 0, -1):
+        if i == 1 and _is_agent_setting_path(path):
+            continue
         if path[:i] in state.staged:
             return path[:i]
     return None
@@ -646,7 +653,7 @@ def _stage_structure(state: EditorState, path: KeyPath, value: object) -> Editor
     staged = {
         key: val
         for key, val in state.staged.items()
-        if not _under(key, path) or _is_runner_path(key)
+        if not _under(key, path) or (path == ("agents",) and _is_agent_setting_path(key))
     }
     staged[path] = value
     return replace(state, staged=staged)
@@ -952,33 +959,25 @@ def _superseded(path: KeyPath, staged: Mapping[KeyPath, object]) -> bool:
     it through would write the edit onto whichever entry happened to inherit
     that index — a wrong write rather than a missing one.
     """
-    if _is_runner_path(path):
+    if _is_agent_setting_path(path):
         # Not an entry of the `agents` collection (see `layers.lookup`), so a
         # staged `agents` neither contains nor supersedes it.
         return any(path[:i] in staged for i in range(2, len(path)))
     return any(path[:i] in staged for i in range(1, len(path)))
 
 
-_RUNNER_PATH: KeyPath = ("agents", "default_runner")
+def _is_agent_setting_path(path: KeyPath) -> bool:
+    """Reserved settings are siblings of the agents collection, not entries."""
+    return len(path) >= 2 and path[0] == "agents" and path[1] in AGENT_SETTINGS_KEYS
 
 
-def _is_runner_path(path: KeyPath) -> bool:
-    """Whether `path` is `agents.default_runner` or a field of it."""
-    return path[:2] == _RUNNER_PATH
-
-
-def _with_runner(state: EditorState, value: object) -> object:
-    """A staged `agents` collection plus the layer's own `default_runner`.
-
-    The collection the editor shows holds the agents alone, but it is written
-    as the whole `agents` mapping; without this the runner would vanish from
-    the file whenever an agent is added or removed.
-    """
+def _with_agent_settings(state: EditorState, value: object) -> object:
+    """Preserve reserved settings when writing the agents-only collection."""
     raw_agents = state.layer_raw.get("agents")
-    if not isinstance(raw_agents, dict) or "default_runner" not in raw_agents:
+    if not isinstance(raw_agents, dict):
         return value
     base = value if isinstance(value, dict) else {}
-    return {**base, "default_runner": raw_agents["default_runner"]}
+    return {**base, **{k: v for k, v in raw_agents.items() if k in AGENT_SETTINGS_KEYS}}
 
 
 def changes(state: EditorState) -> tuple[YamlChange, ...]:
@@ -1001,7 +1000,7 @@ def changes(state: EditorState) -> tuple[YamlChange, ...]:
         value = state.staged[path]
         present, existing = lookup(state.layer_raw, path)
         if path == ("agents",) and (present or value is not UNSET) and existing != value:
-            kept = _with_runner(state, {} if value is UNSET else value)
+            kept = _with_agent_settings(state, {} if value is UNSET else value)
             if kept != ({} if value is UNSET else value):
                 out.append(YamlChange(path, kept))
                 continue

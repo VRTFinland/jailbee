@@ -62,8 +62,12 @@ def test_host_status_retries_missing_socket_until_broker_starts(sockdir, monkeyp
             server.close()
 
 
-def test_host_status_avoids_host_dependencies(broker: FakeBroker, sockdir) -> None:
-    broker.on("host.status", STATUS)
+@pytest.mark.parametrize("command,op,payload", [
+    (["host", "status"], "host.status", STATUS),
+    (["agent", "models"], "agent.models", {"models": {}, "model_policy": ""}),
+])
+def test_live_commands_avoid_host_dependencies(broker: FakeBroker, sockdir, command, op, payload) -> None:
+    broker.on(op, payload)
     script = """
 import importlib.abc
 import sys
@@ -76,8 +80,8 @@ class Guard(importlib.abc.MetaPathFinder):
             raise AssertionError('host import: ' + fullname)
 sys.meta_path.insert(0, Guard())
 from jailbee.container_cli import container_app
-container_app(args=['host', 'status', '--json'], prog_name='jailbee')
-"""
+container_app(args=COMMAND + ['--json'], prog_name='jailbee')
+""".replace("COMMAND", repr(command))
     result = subprocess.run(
         [sys.executable, "-c", script],
         capture_output=True,
@@ -86,7 +90,7 @@ container_app(args=['host', 'status', '--json'], prog_name='jailbee')
         env={**os.environ, "JAILBEE_ORCHESTRATION_SOCKET": str(sockdir / "broker.sock")},
     )
     assert result.returncode == 0, result.stderr
-    assert json.loads(result.stdout) == STATUS
+    assert json.loads(result.stdout) == payload
 
 
 def test_host_status_broker_read_timeout_exits_four(monkeypatch) -> None:
