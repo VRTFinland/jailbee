@@ -2070,8 +2070,10 @@ def _assert_every_key_is_fixed(menu: tmenu.MenuState | tmenu.RepoMenuState) -> N
             assert key == preferred, f"{item} lost {preferred!r} to a neighbour in {group}"
             # `g` is Global at the table, Git/Agent inside an opened row menu.
             # The repo menu's `n` is also the table's new-container action.
-            if group is None and key != "g" and not (
-                isinstance(menu, tmenu.RepoMenuState) and key == "n"
+            if (
+                group is None
+                and key != "g"
+                and not (isinstance(menu, tmenu.RepoMenuState) and key == "n")
             ):
                 assert key not in _table_keys(), f"{item}: {key!r} is a table key"
 
