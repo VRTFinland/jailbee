@@ -7694,7 +7694,7 @@ def test_list_containers_synthesises_row_for_container_less_op(make_cfg, tmp_pat
             branch="feat/pre",
             pid=4242,
             log_path="/l",
-            now=datetime.now(UTC),
+            now=datetime(2020, 1, 1, tzinfo=UTC),
             spawned_by=parent_name,
         )
 
@@ -7707,8 +7707,6 @@ def test_list_containers_synthesises_row_for_container_less_op(make_cfg, tmp_pat
     from jailbee.dashboard.fork_tree import FORK_GLYPH, fork_layout, name_prefix
 
     assert name_prefix(fork_layout(out), placeholder.name) == FORK_GLYPH
-    first_created_at = placeholder.created_at
-
     incus.list_containers.return_value.append(
         {
             "name": placeholder.name,
@@ -7722,8 +7720,16 @@ def test_list_containers_synthesises_row_for_container_less_op(make_cfg, tmp_pat
     appeared = list_containers(cfg, incus, with_background=True)
     child = next(c for c in appeared if c.name == placeholder.name)
     assert child.child is not None
-    assert child.created_at == first_created_at
+    assert child.created_at == datetime(2026, 11, 24, 12, 0, tzinfo=UTC)
     assert name_prefix(fork_layout(appeared), child.name) == FORK_GLYPH
+
+    with Session(get_engine()) as s:
+        s.delete(s.get(background.BackgroundJob, placeholder.name))
+        s.commit()
+
+    without_job = list_containers(cfg, incus, with_background=True)
+    child_without_job = next(c for c in without_job if c.name == placeholder.name)
+    assert child_without_job.created_at == child.created_at
 
 
 def test_list_containers_attaches_job_error_to_existing(make_cfg, tmp_path, monkeypatch):
