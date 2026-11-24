@@ -230,6 +230,9 @@ def test_identity_stays_on_imported_stage_after_symlink_swap(tmp_path):
         ignore=shutil.ignore_patterns("__pycache__"),
     )
     (first / "VERSION").write_text("1.8.1 aaaa\n")
+    (first / "jailbee" / "_build_info.json").write_text(
+        '{"commit": "abcdef1234567890123456789012345678901234", "dirty": false}'
+    )
     (second / "VERSION").write_text("1.8.1 bbbb\n")
     current = tmp_path / "current"
     current.symlink_to(first, target_is_directory=True)
@@ -251,6 +254,38 @@ container_app()
         text=True,
     )
     assert result.returncode == 0, result.stderr
+    assert "(abcdef1)" in result.stdout
+
+
+def test_staged_version_never_imports_host_dependencies_or_spawns(tmp_path):
+    import shutil
+
+    from jailbee import container_cli
+
+    shutil.copytree(Path(container_cli.__file__).parent, tmp_path / "jailbee", ignore=shutil.ignore_patterns("__pycache__"))
+    (tmp_path / "jailbee" / "_build_info.json").write_text(
+        '{"commit": "abcdef1234567890123456789012345678901234", "dirty": true}'
+    )
+    script = """
+import sys
+import subprocess
+import builtins
+original = builtins.__import__
+def guarded(name, *args, **kwargs):
+    if name in {'jailbee.git', 'jailbee.config', 'pydantic', 'yaml'}:
+        raise AssertionError('host import: ' + name)
+    return original(name, *args, **kwargs)
+def no_spawn(*args, **kwargs):
+    raise AssertionError('spawn')
+builtins.__import__ = guarded
+subprocess.Popen = no_spawn
+from jailbee.container_cli import container_app
+sys.argv = ['jailbee', '--version']
+container_app()
+"""
+    result = subprocess.run([sys.executable, "-c", script], cwd=tmp_path, env={"PYTHONPATH": str(tmp_path)}, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert "(abcdef1-dirty)" in result.stdout
 
 
 def test_fresh_import_dependency_gate_blocks_typer():

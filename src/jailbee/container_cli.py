@@ -8,6 +8,7 @@ from typer._click import Command, Context
 from typer.core import TyperGroup
 
 from jailbee import __version__, cli_context
+from jailbee.version_info import display_version
 from jailbee.container_outbox.issue_cmds import issue_app
 from jailbee.container_outbox.outbox_cmds import outbox_app
 from jailbee.container_outbox.pr_cmds import pr_app
@@ -111,7 +112,7 @@ container_app.add_typer(
 
 def _version(value: bool) -> None:
     if value:
-        typer.echo(__version__)
+        typer.echo(display_version(__version__))
         raise typer.Exit()
 
 
@@ -133,7 +134,7 @@ def root(
 @container_app.command()
 def version() -> None:
     """Print the JailBee version."""
-    typer.echo(__version__)
+    typer.echo(display_version(__version__))
 
 
 @config_app.command()

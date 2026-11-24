@@ -112,7 +112,7 @@ Since 1.8.1 every container has a small `jailbee` (the host's code, mounted
 read-only at `/opt/jailbee/app`). Only these commands work there; everything else
 is host-only:
 
-- `jailbee --version`
+- `jailbee --version` / `jailbee version` (package version plus the mounted host code's source commit, when known)
 - `jailbee config validate` ([configuration](config.md))
 - `jailbee service ...` ([Services](#services))
 - `jailbee inbox ...` ([orchestration](orchestration.md)), including
@@ -390,7 +390,13 @@ Listing commands generally treat an omitted target as "all" rather than asking.
 | `jailbee config show/validate/init` | Configuration. `show` accepts `--layer global\|repo\|local\|effective` (default `effective`); the effective layer includes an `agents:` section with every configured agent fully resolved (preset fields included) — see [Generic agent support](agents.md) |
 | `jailbee config migrate [--apply]` | Preview migrations of deprecated config spellings and storage (default dry run); `--apply` writes changes, leaves `.bak` backups, and leaves conflicts in place for manual resolution. See [Host-local overrides](config.md#host-local-overrides) |
 | `jailbee config edit [--global\|--local] [--write patch\|regenerate]` | Interactive editor for the repo, global, or host-local layer, with each field's own help text, its origin and a validated, backed-up save. `--global` edits `~/.config/jailbee/global.yaml`; `--local` edits `~/.config/jailbee/repos/<prefix>.yaml`; `--write` overrides [`config_edit.write_policy`](config.md#config_edit) for one run. Structured lists (`host_mounts`, `agents`, `autostart` steps, …) open a drill-down screen — `n` new, `x` delete, `J`/`K` reorder, `Enter` to open an entry. `github.token` is masked and read-only in the editor; edit the local YAML directly to change it. |
-| `jailbee version` / `jailbee --version` | Print the JailBee version |
+| `jailbee version` / `jailbee --version` | Print the package version and source commit when known, e.g. `1.8.9 (abc1234)`; `-dirty` marks uncommitted source changes |
+
+Editable installs resolve the package checkout's current commit locally. Wheels
+retain the commit and dirty state recorded at build time; a wheel without build
+info prints just the package version. Containers report the host code's identity
+recorded when it was staged, not the container repository's HEAD. Updating that
+identity alone needs no golden-image rebuild, version handshake or service restart.
 
 Before any PR agent run, JailBee asks whether to generate the configured PR title/
 description and/or branch-name proposal with the named agent. One answer covers
