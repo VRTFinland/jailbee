@@ -143,7 +143,7 @@ def test_restore_matches_and_deduplicates_windows(make_cfg, tmp_path):
     ]
     result = restore_steps(cfg, [step], entries, prompted=None, extra_env={"ROLE": "child"})
     assert result[0].run == resume_run(entries[0])
-    assert result[0].env == {"keep": "yes"}
+    assert result[0].env == {"keep": "yes", "JAILBEE_BOOT_SESSION_ID": VALID_ID}
     assert result[1].name == "claude-2"
     assert result[1].env["ROLE"] == "child"
 
@@ -191,6 +191,36 @@ def test_boot_entries_checks_transcripts(make_cfg, tmp_path, mocker):
     )
 
 
+def test_retained_boot_discards_sessions_without_transcripts(make_cfg, tmp_path, mocker):
+    from jailbee.agent_resume import boot_entries
+
+    cfg = make_cfg(tmp_path)
+    incus = mocker.Mock()
+    incus.exec_capped.return_value = json.dumps(
+        {
+            "version": 1,
+            "source": "capture",
+            "sessions": [
+                {
+                    "agent": "claude",
+                    "session_id": VALID_ID,
+                    "cwd": "/work",
+                    "launcher": ["claude"],
+                    "window": None,
+                }
+            ],
+        }
+    )
+    mocker.patch("jailbee.agent_resume.ClaudeAdapter.session_exists", return_value=False)
+    assert boot_entries(cfg, incus, "box", retain=True) == []
+    incus.exec.assert_called_once_with(
+        "box",
+        ["jailbee", "_agent-snapshot", "--ack-boot", VALID_ID],
+        uid=cfg.container_user.uid,
+        timeout=15,
+    )
+
+
 def test_boot_and_capture_handle_incus_errors(make_cfg, tmp_path, mocker):
     from jailbee.agent_resume import boot_entries, capture
     from jailbee.incus import IncusError
@@ -216,7 +246,7 @@ def test_restore_inherits_matching_custom_launcher_env(make_cfg, tmp_path):
     cfg = cfg.model_copy(update={"agents": {"claude": agent}})
     entry = ResumeEntry(VALID_ID, "/work", ("claude-jb", "-P", "codex"), None)
     result = restore_steps(cfg, [], [entry], prompted=None, extra_env={"ROLE": "child"})
-    assert result[0].env == {"ROLE": "child", "TOKEN": "value"}
+    assert result[0].env == {"ROLE": "child", "TOKEN": "value", "JAILBEE_BOOT_SESSION_ID": VALID_ID}
     assert result[0].background and result[0].continue_on_error
 
 

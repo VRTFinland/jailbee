@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from jailbee.incus import Incus
 
 log = logging.getLogger(__name__)
+BOOT_SESSION_ENV = "JAILBEE_BOOT_SESSION_ID"
 
 
 @dataclass(frozen=True)
@@ -231,12 +232,14 @@ def capture(cfg: Config, incus: Incus, container: str) -> None:
         log.debug("Could not capture agent sessions", exc_info=True)
 
 
-def boot_entries(cfg: Config, incus: Incus, container: str) -> list[ResumeEntry]:
-    """Consume the boot snapshot and discard sessions without transcripts."""
+def boot_entries(
+    cfg: Config, incus: Incus, container: str, *, retain: bool = False
+) -> list[ResumeEntry]:
+    """Read boot sessions, optionally retaining them until launch acknowledgement."""
     try:
         raw = incus.exec_capped(
             container,
-            ["jailbee", "_agent-snapshot", "--boot"],
+            ["jailbee", "_agent-snapshot", "--boot", *(["--retain"] if retain else [])],
             max_bytes=65536,
             uid=cfg.container_user.uid,
             timeout=15,
@@ -245,11 +248,26 @@ def boot_entries(cfg: Config, incus: Incus, container: str) -> list[ResumeEntry]
         log.debug("Could not consume agent sessions", exc_info=True)
         return []
     adapter = ClaudeAdapter()
-    return [
-        entry
-        for entry in parse_snapshot(raw)
-        if adapter.session_exists(cfg, container, entry.session_id)
-    ]
+    entries = []
+    for entry in parse_snapshot(raw):
+        if adapter.session_exists(cfg, container, entry.session_id):
+            entries.append(entry)
+        elif retain:
+            acknowledge_boot(cfg, incus, container, entry.session_id)
+    return entries
+
+
+def acknowledge_boot(cfg: Config, incus: Incus, container: str, session_id: str) -> None:
+    """A successful tmux launch is the acknowledgement boundary."""
+    try:
+        incus.exec(
+            container,
+            ["jailbee", "_agent-snapshot", "--ack-boot", session_id],
+            uid=cfg.container_user.uid,
+            timeout=15,
+        )
+    except IncusError:
+        log.warning("Could not acknowledge restored agent session %s", session_id, exc_info=True)
 
 
 def restore_steps(
@@ -288,7 +306,12 @@ def restore_steps(
             None,
         )
         if match is not None:
-            result[match] = result[match].model_copy(update={"run": resume_run(entry)})
+            result[match] = result[match].model_copy(
+                update={
+                    "run": resume_run(entry),
+                    "env": {**result[match].env, BOOT_SESSION_ENV: entry.session_id},
+                }
+            )
             claimed.add(match)
             continue
         base = window_for(entry.window or "claude")[:48].strip("_") or "claude"
@@ -310,7 +333,11 @@ def restore_steps(
                 break
         result.append(
             AutostartStep(
-                name=name, run=resume_run(entry), background=True, continue_on_error=True, env=env
+                name=name,
+                run=resume_run(entry),
+                background=True,
+                continue_on_error=True,
+                env={**env, BOOT_SESSION_ENV: entry.session_id},
             )
         )
     return result
