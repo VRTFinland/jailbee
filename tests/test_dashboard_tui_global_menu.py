@@ -116,9 +116,7 @@ def test_remote_terminal_without_ssh_transport_hides_and_refuses_config_editor(m
     from jailbee.dashboard.tui.session import REMOTE_CONFIG_EDIT_NOTE
 
     run = drive(mocker, ["g", "escape", "E"], [], remote=True)
-    assert "global-config-edit-global" not in [
-        item[1] for item in run.trace[1].overlay.actions
-    ]
+    assert "global-config-edit-global" not in [item[1] for item in run.trace[1].overlay.actions]
     assert run.last.notice == REMOTE_CONFIG_EDIT_NOTE
 
 
