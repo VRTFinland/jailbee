@@ -186,13 +186,6 @@ def destroy_orphan(incus: Incus, name: str, *, force: bool) -> None:
     subpaths, ``refs/jailbee/*`` transfer refs, and the repo's bridge-extras
     union (`jailbee apply` sweeps orphan ACLs).
     """
-    from jailbee.host_resume import operation
-
-    with operation():
-        _destroy_orphan(incus, name, force=force)
-
-
-def _destroy_orphan(incus: Incus, name: str, *, force: bool) -> None:
     from jailbee import autostart_outcomes, egress_scope, host_resume, host_teardown
     from jailbee.stopping import stop_container
 
