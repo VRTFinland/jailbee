@@ -58,13 +58,16 @@ def test_commit_only_change_restamps_without_copy_or_handshake_change(
 def test_stage_preserves_last_good_identity_when_discovery_fails(tmp_path, monkeypatch, force):
     import json
 
-    monkeypatch.setattr("jailbee.version_info.identity", lambda: {"commit": "a" * 40, "dirty": False})
+    monkeypatch.setattr(
+        "jailbee.version_info.identity", lambda: {"commit": "a" * 40, "dirty": False}
+    )
     staged = container_app.stage(root=tmp_path)
     monkeypatch.setattr("jailbee.version_info.identity", lambda: None)
     result = container_app.stage(root=tmp_path, force=force)
     assert result.path == staged.path
     assert json.loads((result.path / "jailbee" / "_build_info.json").read_text()) == {
-        "commit": "a" * 40, "dirty": False
+        "commit": "a" * 40,
+        "dirty": False,
     }
 
 
