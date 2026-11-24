@@ -76,6 +76,18 @@ class JobRunner:
         with self._lock:
             return key in self._labels
 
+    def reserve(self, key: str, label: str) -> None:
+        """Keep an action busy while it continues outside this runner (a UI question)."""
+        with self._lock:
+            if key in self._labels:
+                raise ValueError(f"job '{key}' is already running")
+            self._labels[key] = label
+
+    def release(self, key: str) -> None:
+        """End a reservation made by :meth:`reserve`."""
+        with self._lock:
+            self._labels.pop(key, None)
+
     def active(self) -> list[str]:
         """Labels of the jobs not yet delivered, oldest first."""
         with self._lock:

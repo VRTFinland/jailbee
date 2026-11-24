@@ -96,6 +96,29 @@ def test_missing_answer_retries_once_with_live_queue_state(tmp_path, result, out
         assert (result.error or output) in entry.output
 
 
+def test_retry_keeps_create_busy_until_the_prompt_channel_finishes(tmp_path):
+    jobs, queue = JobRunner(), NotificationQueue()
+    callbacks = []
+    kwargs = dict(
+        key="new:work", label="creating", argv=[sys.executable, "-c", "import sys; print('confirmation needed', file=sys.stderr); sys.exit(2)"],
+        cwd=tmp_path, target="work", run_questions=lambda runs, done, progress: callbacks.append(done),
+        changed=lambda: None, done=lambda notice: None,
+    )
+    start_create(jobs, queue, **kwargs)
+    import time
+    deadline = time.monotonic() + 10
+    while not callbacks:
+        assert time.monotonic() < deadline
+        jobs.poll()
+        time.sleep(0.01)
+    assert jobs.busy("new:work")
+    with pytest.raises(ValueError):
+        start_create(jobs, queue, **kwargs)
+    callbacks[0](ActionOutcome([RunResult(status=0)], "worker started"))
+    assert not jobs.busy("new:work")
+    assert len(queue) == 1
+
+
 def test_busy_create_does_not_add_a_failure(tmp_path):
     jobs, queue = JobRunner(), NotificationQueue()
     jobs.call("key", "pending", lambda: None, lambda result: None)

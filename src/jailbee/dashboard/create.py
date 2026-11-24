@@ -7,9 +7,11 @@ an ordinary notification entry. No frontend collects or duplicates CLI questions
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
-from pathlib import Path
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Sequence
+    from pathlib import Path
 
 from jailbee.dashboard.jobs import JobResult, JobRunner, needs_terminal
 from jailbee.dashboard.notifications import NotificationQueue
@@ -76,16 +78,23 @@ def start_create(
         done(f"{command} failed: {reason}")
 
     def retry() -> None:
+        jobs.reserve(key, label)
         entry = queue.start(command, target)
         changed()
 
         def settled(outcome: ActionOutcome) -> None:
+            jobs.release(key)
             result = outcome.results[-1] if outcome.results else None
             output = outcome.output
             if result is None or result.refused is not None:
                 queue.drop(entry)
                 changed()
                 done(result.refused if result else "nothing ran")
+                return
+            if result.cancelled and result.error is None:
+                queue.finish(entry, 0, output)
+                changed()
+                done(f"'{command}' cancelled")
                 return
             status = result.status if result.status is not None else 1
             if result.error is not None:
