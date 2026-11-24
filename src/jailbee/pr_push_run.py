@@ -456,7 +456,7 @@ def run_pr_push(
                     scope=scope,
                     source_branch=container_branch,
                     uid=cfg.container_user.uid,
-                    for_pr=record.number,
+                    for_pr=int(pr_label) if pr_label is not None else None,
                     numbered_only=is_foreign_pr_head,
                     source_manifest=selected_own,
                 )

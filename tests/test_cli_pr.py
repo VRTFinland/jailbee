@@ -264,6 +264,40 @@ def test_matching_source_updates_via_own_branch_flow(
     assert "own.json" not in files
 
 
+def test_numbered_own_source_cannot_supply_a_new_stacked_pr(mocker, tmp_path):
+    import json
+
+    from jailbee.pr_flow import ReviewTarget
+    from tests.test_branch_pr import StoreFiles
+
+    pending_text = pr_outbox.pending_pr_text
+    cfg, incus = _setup(mocker, tmp_path, labels={
+        "user.jailbee.pr": "123", "user.jailbee.branch": "feat/foo",
+        "user.jailbee.base_branch": "main",
+    })
+    incus.config_get_checked.return_value = None
+    incus.list_containers.return_value[0]["config"] = {"volatile.uuid": "uuid-full"}
+    files = StoreFiles("uuid-full")
+    files["own.json"] = json.dumps({
+        "version": 1, "repo": "acme/widgets", "pr": 123, "head_sha": None,
+        "source": "refs/heads/feat/foo", "source_sha": "a" * 40,
+        "actions": [{"type": "description", "title": "Old PR", "body": "Old description"}],
+    })
+    mocker.patch("jailbee.branch_pr.own_source_branch", return_value=("feat/foo", 0))
+    mocker.patch("jailbee.pr_outbox.pending_pr_text", wraps=pending_text)
+    mocker.patch("jailbee.pr_flow.resolve_review_target", return_value=ReviewTarget(
+        stacked=True, parent_number=123, parent_head="feat/foo", parent_head_ref="refs/pr/123",
+    ))
+    publish = mocker.patch("jailbee.sync.publish_branch_from_container")
+    create = mocker.patch("jailbee.pr.create_pr")
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo", "--source-manifest", "own.json"])
+    assert result.exit_code == 1, result.output
+    assert "staged description unavailable" in result.output
+    publish.assert_not_called()
+    create.assert_not_called()
+    assert "own.json" in files
+
+
 @pytest.mark.parametrize("options", [["--branch", "other"], ["--pr", "789"], ["--stacked"]])
 def test_matching_source_never_overrides_explicit_target(source_choice, options):
     from jailbee.branch_pr import PendingSource
