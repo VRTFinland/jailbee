@@ -301,10 +301,7 @@ def _capture(home: Path, *, proc: Path, windows: Mapping[str, str]) -> int:
         if not row.get("ended")
         and (
             not row.get("pid")
-            or (
-                isinstance(row["pid"], str)
-                and _start(proc, row["pid"]) == row.get("procStart")
-            )
+            or (isinstance(row["pid"], str) and _start(proc, row["pid"]) == row.get("procStart"))
         )
     ]
     for path in _entries(home / SESSIONS_RELPATH):

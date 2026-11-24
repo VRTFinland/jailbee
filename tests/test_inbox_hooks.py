@@ -478,7 +478,7 @@ def test_session_end_after_cancelled_stop_removes_only_ended_frozen_session(
     runner = CliRunner()
     other_id = "aaaaaaaa-1234-1234-1234-123456789abc"
     for pid, sid in [(7, ID), (8, other_id)]:
-        monkeypatch.setattr(snapshot.os, "getppid", lambda: pid)
+        monkeypatch.setattr(snapshot.os, "getppid", lambda pid=pid: pid)
         result = runner.invoke(
             inbox_app,
             ["hook", "session-start"],
@@ -561,7 +561,7 @@ def test_dead_live_session_churn_does_not_fill_registry(tmp_path, monkeypatch):
     for number in range(400):
         pid = number + 7
         live(proc, pid)
-        monkeypatch.setattr(snapshot.os, "getppid", lambda: pid)
+        monkeypatch.setattr(snapshot.os, "getppid", lambda pid=pid: pid)
         sid = f"{number:08x}-1234-1234-1234-123456789abc"
         snapshot.register_session(tmp_path, {"session_id": sid, "cwd": "/work"})
         (proc / str(pid) / "stat").unlink()
