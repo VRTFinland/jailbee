@@ -239,7 +239,10 @@ def _merge_pending(home: Path, proc: Path, source: Path) -> None:
         source.unlink(missing_ok=True)
     else:
         _write_snapshot(
-            source, json.dumps({**fresh, "sessions": remaining, "boot_id": _boot_id(proc)}, separators=(",", ":")).encode()
+            source,
+            json.dumps(
+                {**fresh, "sessions": remaining, "boot_id": _boot_id(proc)}, separators=(",", ":")
+            ).encode(),
         )
 
 
@@ -438,10 +441,13 @@ def boot(home: Path, *, proc: Path = Path("/proc"), retain: bool = False) -> dic
                 ids = {row.get("session_id") for row in emitted if isinstance(row, dict)}
                 if isinstance(registered, dict) and isinstance(registered.get("sessions"), list):
                     registered["sessions"] = [
-                        row for row in registered["sessions"]
+                        row
+                        for row in registered["sessions"]
                         if not isinstance(row, dict) or row.get("session_id") not in ids
                     ]
-                    _write_snapshot(registry, json.dumps(registered, separators=(",", ":")).encode())
+                    _write_snapshot(
+                        registry, json.dumps(registered, separators=(",", ":")).encode()
+                    )
                 return result
             return _boot(home, proc=proc, path=registry, registry=True, retain=retain)
         finally:
@@ -574,8 +580,7 @@ def _boot(
         entries = result["sessions"]
         assert isinstance(entries, list)
         live_rows = [
-            row for row in entries
-            if isinstance(row, dict) and row.get("session_id") in live_ids
+            row for row in entries if isinstance(row, dict) and row.get("session_id") in live_ids
         ]
         entries = [row for row in entries if row not in live_rows]
         if path == home / BOOT_RELPATH:

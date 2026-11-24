@@ -399,7 +399,9 @@ def test_pending_ack_waits_for_concurrent_hook_lock(tmp_path, monkeypatch, hook)
 
 
 @pytest.mark.parametrize("start", [None, "777", "888"], ids=["dead", "live", "reused-pid"])
-def test_boot_reentry_skips_pending_session_only_while_process_matches(tmp_path, monkeypatch, start):
+def test_boot_reentry_skips_pending_session_only_while_process_matches(
+    tmp_path, monkeypatch, start
+):
     proc = tmp_path / "proc"
     monkeypatch.setattr(snapshot, "PROC", proc)
     snapshot.register_session(tmp_path, {"session_id": ID, "cwd": "/work"})
@@ -407,7 +409,9 @@ def test_boot_reentry_skips_pending_session_only_while_process_matches(tmp_path,
     # Model a manually resumed process whose hook/host acknowledgement was lost.
     path = tmp_path / snapshot.REGISTRY_RELPATH
     registry = json.loads(path.read_text())
-    registry["sessions"] = [{**batch["sessions"][0], "pid": "7", "procStart": "777", "ended": False}]
+    registry["sessions"] = [
+        {**batch["sessions"][0], "pid": "7", "procStart": "777", "ended": False}
+    ]
     path.write_text(json.dumps(registry))
     if start is not None:
         live(proc, 7, start)

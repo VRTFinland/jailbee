@@ -1612,16 +1612,33 @@ def test_failed_pre_agent_stage_keeps_sessions_for_retry(
         snapshot.register_session(tmp_path, {"session_id": entry.session_id, "cwd": "/work"})
         # Reinsert the pending row to model a lost acknowledgement.
         path = tmp_path / snapshot.BOOT_RELPATH
-        path.write_text(json.dumps({"version": 1, "source": "capture", "sessions": [{
-            "agent": "claude", "session_id": entry.session_id, "cwd": "/work",
-            "launcher": ["claude"], "window": "claude"
-        }]}))
+        path.write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "source": "capture",
+                    "sessions": [
+                        {
+                            "agent": "claude",
+                            "session_id": entry.session_id,
+                            "cwd": "/work",
+                            "launcher": ["claude"],
+                            "window": "claude",
+                        }
+                    ],
+                }
+            )
+        )
 
     run_step.side_effect = None
     run_step.reset_mock()
     start()
-    assert (resume_run(entry) in [call.kwargs["command"] for call in run_step.call_args_list]) is (recovery == "retry")
-    assert all("JAILBEE_BOOT_SESSION_ID" not in call.kwargs["env"] for call in run_step.call_args_list)
+    assert (resume_run(entry) in [call.kwargs["command"] for call in run_step.call_args_list]) is (
+        recovery == "retry"
+    )
+    assert all(
+        "JAILBEE_BOOT_SESSION_ID" not in call.kwargs["env"] for call in run_step.call_args_list
+    )
 
     run_step.reset_mock()
     start()
