@@ -4120,15 +4120,46 @@ def _sync_count_widths(
     )
 
 
+_SYNC_DIFF_RE = re.compile(r"^\+(\d+) -(\d+)$")
+_SYNC_ARROW_STYLE = {"↑": "cyan", "↓": "yellow"}
+
+
+def _sync_count_segment(arrow: str, value: str, width: int) -> str:
+    """One aligned ``↑``/``↓`` count; colour wraps arrow, padding and number.
+
+    Padding stays inside the markup so the plain text, and so the cell width,
+    is the same as without colour. Unknown values keep their own markup.
+    """
+    plain = Text.from_markup(value).plain
+    segment = f"{arrow}{' ' * max(0, width - Text(plain).cell_len)}{value}"
+    if plain == "0":
+        return f"[dim]{arrow}{' ' * max(0, width - 1)}0[/dim]"
+    if plain.isdigit():
+        style = _SYNC_ARROW_STYLE[arrow]
+        return f"[{style}]{segment}[/{style}]"
+    return segment
+
+
+def _sync_diff(diff: str) -> str:
+    """Colour ``+N -M`` (green insertions, red deletions, zeros dim)."""
+    match = _SYNC_DIFF_RE.match(diff)
+    if match is None:
+        return diff
+    parts = []
+    for sign, count, style in (("+", match[1], "green"), ("-", match[2], "red")):
+        style = "dim" if int(count) == 0 else style
+        parts.append(f"[{style}]{sign}{count}[/{style}]")
+    return " ".join(parts)
+
+
 def _sync_comparison(
     marker: str, ahead: str, behind: str, diff: str, widths: tuple[int, int]
 ) -> str:
     marker_width = max(Text(m).cell_len for m in ("pr", "pr?", "⑂", "⑂?"))
     parts = [marker + " " * (marker_width - Text.from_markup(marker).cell_len)]
     for arrow, value, width in zip(("↑", "↓"), (ahead, behind), widths, strict=True):
-        pad = " " * max(0, width - Text.from_markup(value).cell_len)
-        parts.append(f"{arrow}{pad}{value}")
-    return " ".join((*parts, diff))
+        parts.append(_sync_count_segment(arrow, value, width))
+    return " ".join((*parts, _sync_diff(diff)))
 
 
 def ls_field_specs(
