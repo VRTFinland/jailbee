@@ -98,7 +98,7 @@ def test_container_model_guidance_output(broker: FakeBroker, sockdir, monkeypatc
 
 
 def test_agent_named_models_gets_actionable_config_error(tmp_path):
-    with pytest.raises(ConfigError, match="reserved.*rename") as error:
+    with pytest.raises(ConfigError, match=r"reserved.*rename") as error:
         load_config_from_layers(
             {},
             {"agents": {"models": {"command": "my-agent", "preset": "codex"}}},

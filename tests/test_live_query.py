@@ -445,7 +445,8 @@ def test_slow_host_refresh_cannot_starve_model_queries(env: Env) -> None:
             models.settimeout(1)
             models.sendall(wire.encode_request(wire.Request("agent.models")))
             assert wire.decode_response(recv_line(models)).result == {
-                "models": {}, "model_policy": ""
+                "models": {},
+                "model_policy": "",
             }
         finally:
             unblock.set()
