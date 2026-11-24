@@ -376,7 +376,9 @@ def test_partial_restore_survives_another_clean_stop(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize("read_before_hook", [False, True])
-def test_new_boot_hook_cannot_prune_unacknowledged_sessions(tmp_path, monkeypatch, read_before_hook):
+def test_new_boot_hook_cannot_prune_unacknowledged_sessions(
+    tmp_path, monkeypatch, read_before_hook
+):
     proc = tmp_path / "proc"
     monkeypatch.setattr(snapshot, "PROC", proc)
     live(proc, 1)
@@ -387,15 +389,21 @@ def test_new_boot_hook_cannot_prune_unacknowledged_sessions(tmp_path, monkeypatc
     stat = proc / "1/stat"
     stat.write_text(stat.read_text().replace("777", "888"))
     if read_before_hook:
-        assert [row["session_id"] for row in snapshot.boot(tmp_path, proc=proc, retain=True)["sessions"]] == [ID]
+        assert [
+            row["session_id"] for row in snapshot.boot(tmp_path, proc=proc, retain=True)["sessions"]
+        ] == [ID]
     live(proc, 8)
     monkeypatch.setattr(snapshot.os, "getppid", lambda: 8)
     other_id = "aaaaaaaa-1234-1234-1234-123456789abc"
     snapshot.register_session(tmp_path, {"session_id": other_id, "cwd": "/new"})
-    assert [row["session_id"] for row in snapshot.boot(tmp_path, proc=proc, retain=True)["sessions"]] == [ID]
+    assert [
+        row["session_id"] for row in snapshot.boot(tmp_path, proc=proc, retain=True)["sessions"]
+    ] == [ID]
     snapshot.acknowledge(tmp_path, [ID])
     assert snapshot.capture(tmp_path, proc=proc, windows={}) == 1
-    assert [row["session_id"] for row in snapshot.boot(tmp_path, proc=proc)["sessions"]] == [other_id]
+    assert [row["session_id"] for row in snapshot.boot(tmp_path, proc=proc)["sessions"]] == [
+        other_id
+    ]
 
 
 def test_pending_and_new_capture_are_delivered_in_bounded_batches(tmp_path, monkeypatch):

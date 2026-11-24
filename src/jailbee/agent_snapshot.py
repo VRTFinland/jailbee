@@ -216,17 +216,26 @@ def _merge_pending(home: Path, proc: Path, source: Path) -> None:
     remaining = []
     saved["boot_id"] = _boot_id(proc)
     for row in fresh["sessions"]:
-        if not isinstance(row, dict) or row.get("ended") or (
-            source == home / REGISTRY_RELPATH and row.get("pid")
-            and _start(proc, str(row["pid"])) == row.get("procStart")
+        if (
+            not isinstance(row, dict)
+            or row.get("ended")
+            or (
+                source == home / REGISTRY_RELPATH
+                and row.get("pid")
+                and _start(proc, str(row["pid"])) == row.get("procStart")
+            )
         ):
             remaining.append(row)
             continue
-        if any(isinstance(old, dict) and old.get("session_id") == row.get("session_id") for old in rows):
+        if any(
+            isinstance(old, dict) and old.get("session_id") == row.get("session_id") for old in rows
+        ):
             continue
         candidate = {**saved, "sessions": [*rows, row]}
         if len(json.dumps(candidate, separators=(",", ":")).encode()) + 1 > _LIMIT:
-            payload = json.dumps({"version": 1, "source": "capture", "sessions": [row]}, separators=(",", ":")).encode()
+            payload = json.dumps(
+                {"version": 1, "source": "capture", "sessions": [row]}, separators=(",", ":")
+            ).encode()
             if source.parent == home / BOOT_QUEUE_RELPATH:
                 remaining.append(row)
             else:
@@ -235,10 +244,14 @@ def _merge_pending(home: Path, proc: Path, source: Path) -> None:
         else:
             rows.append(row)
     _write_snapshot(path, json.dumps(saved, separators=(",", ":")).encode())
-    if (source == home / SNAPSHOT_RELPATH or source.parent == home / BOOT_QUEUE_RELPATH) and not remaining:
+    if (
+        source == home / SNAPSHOT_RELPATH or source.parent == home / BOOT_QUEUE_RELPATH
+    ) and not remaining:
         source.unlink(missing_ok=True)
     else:
-        _write_snapshot(source, json.dumps({**fresh, "sessions": remaining}, separators=(",", ":")).encode())
+        _write_snapshot(
+            source, json.dumps({**fresh, "sessions": remaining}, separators=(",", ":")).encode()
+        )
 
 
 def register_session(
@@ -318,7 +331,10 @@ def register_session(
             }
         )
         _write_snapshot(
-            path, json.dumps({"version": 1, "source": "capture", "sessions": rows, "boot_id": boot_id}).encode()
+            path,
+            json.dumps(
+                {"version": 1, "source": "capture", "sessions": rows, "boot_id": boot_id}
+            ).encode(),
         )
         frozen_path = home / SNAPSHOT_RELPATH
         if not ended and not preserve_frozen:
