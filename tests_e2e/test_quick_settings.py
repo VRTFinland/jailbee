@@ -194,6 +194,8 @@ def test_resizing_menu_clamps_pages_and_keeps_all_rows_reachable(
         "Settings",
     ]
     page.set_viewport_size({"width": 600, "height": 320})
+    expect(next_page).to_be_visible()
+    expect(next_page).to_be_enabled()
     seen: list[str] = []
     while True:
         seen.extend(
