@@ -82,6 +82,8 @@ container_app = typer.Typer(
         "operator to publish (gh here is read-only); other management runs on the host."
     ),
 )
+host_app = typer.Typer(no_args_is_help=True, help="Read live host state over the broker socket.")
+container_app.add_typer(host_app, name="host")
 config_app = typer.Typer(no_args_is_help=True, help="Check the repository configuration.")
 container_app.add_typer(config_app, name="config", cls=SharedGroup)
 container_app.add_typer(
@@ -135,6 +137,16 @@ def root(
 def version() -> None:
     """Print the JailBee version."""
     typer.echo(display_version(__version__))
+
+
+@host_app.command()
+def status(
+    as_json: Annotated[bool, typer.Option("--json", help="Print machine-readable JSON.")] = False,
+) -> None:
+    """Show current host load, memory, storage space and running container count."""
+    from jailbee.host_status import status as host_status
+
+    raise typer.Exit(host_status(as_json=as_json))
 
 
 @config_app.command()

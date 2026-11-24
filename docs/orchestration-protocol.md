@@ -92,6 +92,7 @@ client exits 4 (`jb apply` / restart the broker to align versions).
 | `children` | none | Orchestrators only: `{"observed_at", "children", "last_from_child"}`. |
 | `status` | `child` (string or null) | Like `children`, narrowed to one child. |
 | `grant` | none | The container's [grant document](#grantjson), with `default_runner_source`. |
+| `host.status` | none | Every container: `{"load1", "cpus", "memory_total", "memory_available", "storage_pool", "disk_available", "running_containers"}`. Memory/disk figures are bytes; unavailable readings are null. |
 
 The broker serves `list`, `read` and `ack` outside the executor, including
 while a long-running handler is executing. Each container may have at most two
@@ -99,6 +100,16 @@ of these store queries queued or running; further requests wait in their
 connections without a `busy` error. This leaves query workers available to other
 containers. The shared worker queue remains bounded: a store query gets `busy`
 only when the broker-wide query queue is full.
+
+`host.status` is a live query: the worker reads host statistics and the Incus
+inventory on demand, even while the executor is busy. The storage pool comes
+from the calling instance's expanded root disk, not a configured default; the
+running count includes instances with a `*-base` profile across all projects.
+Live queries share the bounded worker queue and per-container store-query
+limit. `orchestration/live_query.py` declares each query's reader and field
+visibility (`all` or `orchestrator`); undeclared fields are withheld. Role and
+readiness come from the immutable per-socket view, and no mutable action context
+crosses to the worker. Later queries can add restricted fields on this path.
 
 `children`, `status` and `grant` read an immutable snapshot from the last
 completed broker round without calling Incus or taking a store-query slot.

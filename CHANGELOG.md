@@ -10,6 +10,11 @@ before editing `## Unreleased`.
 
 ### Added
 
+- `jailbee host status [--json]` lets any container check live host load and CPU
+  count, total/available memory, free space in its Incus storage pool, and the
+  running JailBee container count before heavy work. The broker computes these
+  readings on demand, with per-field visibility rules for future live queries
+  ([#149](https://github.com/VRTFinland/jailbee/issues/149)).
 - `jailbee --version` and `jailbee version` include the source commit when
   known, with `-dirty` for uncommitted source changes. Editable installs read
   their own checkout; wheels preserve build-time provenance, and containers
