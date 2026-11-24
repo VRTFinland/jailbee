@@ -50,10 +50,20 @@ def run_create_child():
         stack.enter_context(patch("jailbee.incus.Incus", return_value=incus))
         stack.enter_context(patch("jailbee.git.branch_exists_in_source", return_value=True))
         stack.enter_context(patch("jailbee.lifecycle.check_storage_pool"))
-        stack.enter_context(patch.object(create_flow, "host_extras", return_value=create_flow.HostExtras(None, None, None, ())))
+        stack.enter_context(
+            patch.object(
+                create_flow,
+                "host_extras",
+                return_value=create_flow.HostExtras(None, None, None, ()),
+            )
+        )
         stack.enter_context(patch.object(create_flow, "ensure_profiles"))
         stack.enter_context(patch.object(create_flow, "register_and_preflight"))
-        stack.enter_context(patch.object(create_flow, "preflight_background", side_effect=lambda cfg, opts, **kw: opts))
+        stack.enter_context(
+            patch.object(
+                create_flow, "preflight_background", side_effect=lambda cfg, opts, **kw: opts
+            )
+        )
         stack.enter_context(patch.object(create_flow, "launch_background", side_effect=launch))
         prompting.adopt_channel()
         result = CliRunner().invoke(cli_app, sys.argv[3:])
@@ -90,7 +100,11 @@ def test_existing_branch_create_asks_in_a_modal_and_preserves_decline_hint(
 ):
     cfg, detached = existing_branch
     group = RepoGroup(
-        "myrepo", str(cfg.repo_root), None, [], autostart_profiles=("none", "all"),
+        "myrepo",
+        str(cfg.repo_root),
+        None,
+        [],
+        autostart_profiles=("none", "all"),
         autostart_default_profile="all",
     )
     # JobRunner is real. Its stand-in CLI prints exactly the streams and status
@@ -119,10 +133,17 @@ def test_existing_branch_create_asks_in_a_modal_and_preserves_decline_hint(
     def spawn(argv, *, cwd, env, prompt_sock):
         calls.append(list(argv))
         return runner.popen_spawn(
-            [sys.executable, "-c",
-             "from tests.test_dashboard_create import run_create_child; run_create_child()",
-             str(config_file), str(created_file), *argv[3:]],
-            cwd=Path(__file__).resolve().parents[1], env=env, prompt_sock=prompt_sock,
+            [
+                sys.executable,
+                "-c",
+                "from tests.test_dashboard_create import run_create_child; run_create_child()",
+                str(config_file),
+                str(created_file),
+                *argv[3:],
+            ],
+            cwd=Path(__file__).resolve().parents[1],
+            env=env,
+            prompt_sock=prompt_sock,
         )
 
     app = make_app(mocker, [group], jobs=JobRunner)
@@ -133,6 +154,7 @@ def test_existing_branch_create_asks_in_a_modal_and_preserves_decline_hint(
     async def main():
         async with app.run_test() as pilot:
             await pilot.press("n", *keys("dev-2"), "enter", "enter", "down", "enter")
+
             def modal_ready():
                 app.session.tick()
                 return isinstance(app.screen, pm.ConfirmModal)
@@ -148,4 +170,12 @@ def test_existing_branch_create_asks_in_a_modal_and_preserves_decline_hint(
     asyncio.run(asyncio.wait_for(main(), 180))
     assert len(calls) == 1
     assert created_file.exists() is (answer == "y")
-    assert calls[0][-7:] == ["new", "--background", "--autostart-profile", "none", "--", "dev-2", "dev"]
+    assert calls[0][-7:] == [
+        "new",
+        "--background",
+        "--autostart-profile",
+        "none",
+        "--",
+        "dev-2",
+        "dev",
+    ]

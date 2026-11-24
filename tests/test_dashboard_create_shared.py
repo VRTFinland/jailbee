@@ -61,7 +61,12 @@ def test_successful_handoff_leaves_no_parent_entry(tmp_path):
     "result,output,state,hint",
     [
         (RunResult(status=0), "worker started", "done", "done"),
-        (RunResult(status=0), "Aborted. Pick a different name to branch off 'dev' instead.", "done", "Pick a different name"),
+        (
+            RunResult(status=0),
+            "Aborted. Pick a different name to branch off 'dev' instead.",
+            "done",
+            "Pick a different name",
+        ),
         (RunResult(status=2), "error: base vanished", "failed", "base vanished"),
         (RunResult(error="could not spawn"), "", "failed", "could not spawn"),
         (RunResult(refused="policy changed"), "", None, "policy changed"),
@@ -100,12 +105,22 @@ def test_retry_keeps_create_busy_until_the_prompt_channel_finishes(tmp_path):
     jobs, queue = JobRunner(), NotificationQueue()
     callbacks = []
     kwargs = dict(
-        key="new:work", label="creating", argv=[sys.executable, "-c", "import sys; print('confirmation needed', file=sys.stderr); sys.exit(2)"],
-        cwd=tmp_path, target="work", run_questions=lambda runs, done, progress: callbacks.append(done),
-        changed=lambda: None, done=lambda notice: None,
+        key="new:work",
+        label="creating",
+        argv=[
+            sys.executable,
+            "-c",
+            "import sys; print('confirmation needed', file=sys.stderr); sys.exit(2)",
+        ],
+        cwd=tmp_path,
+        target="work",
+        run_questions=lambda runs, done, progress: callbacks.append(done),
+        changed=lambda: None,
+        done=lambda notice: None,
     )
     start_create(jobs, queue, **kwargs)
     import time
+
     deadline = time.monotonic() + 10
     while not callbacks:
         assert time.monotonic() < deadline
@@ -124,9 +139,16 @@ def test_busy_create_does_not_add_a_failure(tmp_path):
     jobs.call("key", "pending", lambda: None, lambda result: None)
     with pytest.raises(ValueError):
         start_create(
-            jobs, queue, key="key", label="creating", argv=["jailbee", "new"],
-            cwd=tmp_path, target="work", run_questions=lambda *args: None,
-            changed=lambda: None, done=lambda notice: None,
+            jobs,
+            queue,
+            key="key",
+            label="creating",
+            argv=["jailbee", "new"],
+            cwd=tmp_path,
+            target="work",
+            run_questions=lambda *args: None,
+            changed=lambda: None,
+            done=lambda notice: None,
         )
     _drain(jobs)
     assert queue.empty
