@@ -295,10 +295,14 @@ def test_own_source_warns_when_base_differs(mocker, tmp_path):
         app, ["pr", "push", "feat-foo", "--source-manifest", "own.json", "--yes"]
     )
     assert result.exit_code == 0, result.output
-    assert "other" in result.output and "main" in result.output
+    assert (
+        "own.json: proposed base 'other' differs from resolved base 'main'; using 'main'"
+        in result.output
+    )
 
 
-def test_actionless_own_source_uses_own_branch(mocker, tmp_path):
+@pytest.fixture
+def actionless_own_source(mocker, tmp_path):
     import json
 
     from tests.test_branch_pr import StoreFiles
@@ -323,13 +327,103 @@ def test_actionless_own_source_uses_own_branch(mocker, tmp_path):
         "jailbee.sync.publish_branch_from_container", return_value=_publish_result()
     )
     pinned = mocker.patch("jailbee.branch_pr.publish_source_manifest", return_value=0)
-    result = CliRunner().invoke(
-        app, ["pr", "push", "feat-foo", "--source-manifest", "own.json", "--yes", "--no-ai"]
-    )
+    args = ["pr", "push", "feat-foo", "--source-manifest", "own.json", "--yes", "--no-ai"]
+    return files, publish, pinned, args
+
+
+def test_actionless_own_source_uses_own_branch(actionless_own_source):
+    files, publish, pinned, args = actionless_own_source
+    result = CliRunner().invoke(app, args)
     assert result.exit_code == 0, result.output
     publish.assert_called_once()
     pinned.assert_not_called()
     assert "own.json" not in files
+
+
+def test_actionless_own_source_retries_rejected_push(actionless_own_source):
+    from jailbee.sync import SyncError
+
+    files, publish, _, args = actionless_own_source
+    publish.side_effect = [SyncError("push rejected"), _publish_result()]
+    failed = CliRunner().invoke(app, args)
+    assert failed.exit_code == 1, failed.output
+    assert "push rejected" in failed.output
+    assert "own.json" in files
+
+    retried = CliRunner().invoke(app, args)
+    assert retried.exit_code == 0, retried.output
+    assert publish.call_count == 2
+    assert "own.json" not in files
+
+
+def test_actionless_own_source_retries_definite_pr_error(mocker, actionless_own_source):
+    from jailbee.pr import PrCreateError
+
+    files, publish, _, args = actionless_own_source
+    lookup = mocker.patch(
+        "jailbee.pr.view_existing_pr",
+        side_effect=[PrCreateError("gh failed: permission denied"), _pr_created(already=True)],
+    )
+    failed = CliRunner().invoke(app, args)
+    assert failed.exit_code == 1, failed.output
+    assert "permission denied" in failed.output
+    assert "own.json" in files
+
+    retried = CliRunner().invoke(app, args)
+    assert retried.exit_code == 0, retried.output
+    assert lookup.call_count == 2
+    assert publish.call_count == 2
+    assert "own.json" not in files
+
+
+@pytest.mark.parametrize("interruption", [KeyboardInterrupt(), TimeoutError("gh interrupted")])
+def test_actionless_own_source_interrupted_pr_operation_stays_uncertain(
+    mocker, actionless_own_source, interruption
+):
+    from jailbee.outbox.publication_db import open_publications
+
+    files, publish, _, args = actionless_own_source
+    lookup = mocker.patch("jailbee.pr.view_existing_pr", side_effect=interruption)
+    failed = CliRunner().invoke(app, args)
+    assert failed.exit_code != 0
+    assert "own.json" in files
+    journal = open_publications().load("uuid-full", "pr", "own.json")
+    assert journal is not None
+    assert journal.actions[0].state == "uncertain"
+
+    lookup.side_effect = None
+    lookup.return_value = _pr_created(already=True)
+    retried = CliRunner().invoke(app, args)
+    assert retried.exit_code == 1, retried.output
+    assert "publication already recorded or uncertain" in retried.output
+    assert lookup.call_count == 1
+    assert publish.call_count == 1
+    assert "own.json" in files
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("repo", "other/widgets", "proposal targets other/widgets, not acme/widgets"),
+        ("pr", 456, "source targets PR #456, not the container's PR; bind that PR first"),
+    ],
+)
+def test_actionless_own_source_rejects_mismatched_target(
+    actionless_own_source, field, value, message
+):
+    import json
+
+    files, publish, pinned, args = actionless_own_source
+    manifest = json.loads(files["own.json"])
+    manifest[field] = value
+    files["own.json"] = json.dumps(manifest)
+
+    result = CliRunner().invoke(app, args)
+    assert result.exit_code == 2, result.output
+    assert message in result.output
+    publish.assert_not_called()
+    pinned.assert_not_called()
+    assert "own.json" in files
 
 
 def test_numbered_own_source_cannot_supply_a_new_stacked_pr(mocker, tmp_path):

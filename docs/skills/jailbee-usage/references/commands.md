@@ -1560,7 +1560,9 @@ container's own PR. An existing PR supplies its actual head and base; a
 conflicting manifest branch is refused. `--title`, `--body`, `--base`,
 `--as`, `--pr`, `--stacked`, `--branch` and `--no-outbox` cannot be combined with this option.
 A matching own-branch source uses the ordinary branch flow; if it has no description,
-its numbered PR must match the container's bound PR. A differing proposal base is
+its numbered PR must match the container's bound PR. A rejected push or a reported
+PR lookup error is retryable with the same command. An interrupted PR operation
+remains uncertain: resolve it in the outbox before retrying. A differing proposal base is
 warned about, and the resolved base is used. An unselected own-branch proposal is
 named in a warning.
 Non-fast-forward updates require `--force`. Pending source rows show
