@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
+from datetime import timedelta
 
 import pytest
 from playwright.sync_api import Page, expect
 
+from jailbee.accounts.models import AgentActivity
 from jailbee.agent_status import AgentSummary
 from jailbee.orchestration.view import ChildView
-from tests.web_fakes import container, repo_group, snapshot_of
+from tests.web_fakes import START, FakeClock, container, repo_group, snapshot_of
+from tests_e2e.flows import log_in_with_pin
 from tests_e2e.server import E2EServer
 
 
@@ -61,4 +65,37 @@ def test_filters_keep_dimmed_parent_persist_and_follow_snapshots(
     page.get_by_role("button", name="All", exact=True).click()
     expect(rows).to_have_count(3)
     expect(page.locator(".filter-context")).to_have_count(0)
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+
+
+@pytest.mark.parametrize("profile", ["normal", "eink"])
+def test_active_explains_recent_idle_in_a_crowded_session_cell(
+    make_server: Callable[..., E2EServer], page: Page, profile: str
+) -> None:
+    clock = FakeClock()
+    server = make_server(clock=clock, monotonic=clock.monotonic)
+    parent = container("work-parent", repo="work", state="Stopped")
+    children = [
+        container(f"work-{suffix}", repo="work", child=ChildView(parent.name, "working", (), False, ()))
+        for suffix in ("a", "b", "c")
+    ]
+    children[1].agent_status = (
+        AgentSummary("claude", "idle", START - timedelta(hours=2), None, 20,
+            activity=AgentActivity(None, None, state="idle", last_event_at=START - timedelta(minutes=5))),
+    )
+    server.push(snapshot_of(repo_group("work", parent, *children)))
+    log_in_with_pin(page, server.url, server.pin.current)
+    page.set_viewport_size({"width": 390, "height": 844})
+    if profile == "eink":
+        page.evaluate("localStorage.setItem('jailbee.displayProfile', 'eink')")
+        page.reload()
+    page.get_by_role("button", name="Active", exact=True).click()
+    expect(page.locator("li.row")).to_have_count(2)
+    row = page.locator('[data-container="work-b"]')
+    expect(row.locator(".agent")).to_have_text("idle 5m")
+    expect(row.locator(".agent")).to_have_css("font-weight", "700")
+    expect(row.locator(".indent")).to_have_text("└ ")
+    page.get_by_role("link", name="work", exact=True).click()
+    expect(row.locator(".agent")).to_have_text("idle 5m")
+    expect(row.locator(".indent")).to_have_text("└ ")
     assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")

@@ -51,7 +51,8 @@ def test_active_includes_recent_idle_events_but_not_just_recent_state() -> None:
     assert not container_matches_filter(info, "active", now=START + timedelta(minutes=30))
 
 
-def test_active_ignores_recent_idle_highlight_lost_when_the_cell_is_abbreviated() -> None:
+@pytest.mark.parametrize("count", [1, 12, 20])
+def test_active_keeps_recent_idle_when_the_cell_is_abbreviated(count: int) -> None:
     info = container(
         "alpha-one",
         agent_status=(
@@ -60,12 +61,12 @@ def test_active_ignores_recent_idle_highlight_lost_when_the_cell_is_abbreviated(
                 "idle",
                 START,
                 None,
-                20,
+                count,
                 activity=AgentActivity(None, None, state="idle", last_event_at=START),
             ),
         ),
     )
-    assert not container_matches_filter(info, "active", now=START)
+    assert container_matches_filter(info, "active", now=START)
 
 
 def test_active_uses_per_session_marks_not_only_the_summary_state() -> None:
@@ -111,7 +112,6 @@ def test_filter_keeps_nonmatching_ancestors_as_dimmed_context_without_mutation()
     assert [g.prefix for g in result.groups] == ["alpha"]
     assert [c.name for c in result.groups[0].containers] == [parent.name, middle.name, child.name]
     assert result.context == frozenset({parent.name, middle.name})
-    assert result.hidden == 2
     assert len(groups[0].containers) == 4
     assert filter_repo_groups(groups, "all", now=START).groups == groups
 
@@ -133,7 +133,6 @@ def test_filter_handles_cycles_and_missing_or_cross_repo_parents() -> None:
         now=START,
     )
     assert result.context == frozenset({first.name})
-    assert result.hidden == 0
     assert [len(g.containers) for g in result.groups] == [2, 2]
 
 

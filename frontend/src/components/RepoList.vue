@@ -24,7 +24,9 @@ const repos = computed(() => {
     if (!selection.value) return props.view.repos
     const visible = new Set(selection.value.visible)
     return props.view.repos.map(repo => ({...repo,
-        containers: repo.containers.filter(row => visible.has(row.name)),
+        containers: repo.containers.filter(row => visible.has(row.name)).map(row => ({...row,
+            indent: selection.value?.indents?.[row.name] ?? row.indent,
+        })),
     })).filter(repo => repo.containers.length > 0)
 })
 const hidden = computed(() => props.view.repos.reduce((n, r) => n + r.containers.length, 0)
@@ -90,9 +92,10 @@ function agentLabel(state: string): string {
                     >
                     <span v-if="c.phase" class="phase">{{ c.phase }}</span>
                     <span v-else-if="c.state === 'Stopped'" class="phase">Stopped</span>
-                    <span v-if="c.agent" class="agent" :class="`agent-${agentFamily(c.agent)}`">{{
-                        agentLabel(c.agent)
+                    <span v-if="c.agent" class="agent" :class="[`agent-${agentFamily(c.agent)}`, {'agent-recent-idle': c.agent === 'idle' && c.agent_recent_idle}]">{{
+                        agentLabel(c.agent) + (c.agent === 'idle' && c.agent_recent_idle ? ` ${c.agent_recent_idle}` : '')
                     }}</span>
+                    <span v-if="c.agent !== 'idle' && c.agent_recent_idle" class="agent agent-recent-idle">idle {{ c.agent_recent_idle }}</span>
                 </div>
                 <p v-if="c.orchestrator || c.child_count" class="orchestration">
                     Orchestrator · {{ c.child_count }} {{ c.child_count === 1 ? 'child' : 'children' }}
@@ -297,6 +300,10 @@ a.name:hover {
 .agent-idle,
 .agent-shell {
     color: var(--muted);
+}
+.agent-recent-idle {
+    color: var(--text);
+    font-weight: 700;
 }
 .cells {
     display: flex;

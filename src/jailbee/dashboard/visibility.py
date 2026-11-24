@@ -32,19 +32,18 @@ def container_matches_filter(
 class FilteredGroups:
     groups: list[RepoGroup]
     context: frozenset[str]
-    hidden: int
 
 
 def filter_repo_groups(
     groups: list[RepoGroup], mode: ContainerFilter, *, now: datetime
 ) -> FilteredGroups:
-    """Keep matches and their listed ancestors; count only rows actually hidden.
+    """Keep matches and their listed ancestors.
 
     Parents in another repository remain there, as in the unfiltered tree.
     Missing parents are never fabricated and cycles terminate at an already kept row.
     """
     if mode == "all":
-        return FilteredGroups(groups, frozenset(), 0)
+        return FilteredGroups(groups, frozenset())
     rows = {c.name: c for g in groups for c in g.containers}
     matches = {name for name, c in rows.items() if container_matches_filter(c, mode, now=now)}
     kept = set(matches)
@@ -63,7 +62,6 @@ def filter_repo_groups(
             if any(c.name in kept for c in g.containers)
         ],
         frozenset(kept - matches),
-        len(rows) - len(kept),
     )
 
 

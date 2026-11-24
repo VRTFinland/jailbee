@@ -49,6 +49,7 @@ from the state service's snapshot) and keeps them at the top, independently of
 history paging or search. Earlier sessions are recorded and attributed, newest
 first, and fetched separately in pages of 20. **Previous** and **Next** buttons
 work in both normal and e-ink display profiles; there is no infinite scroll.
+If history shrinks while browsing, the list returns to and fetches the last valid page.
 **Search earlier sessions** searches titles (the first prompt) and session IDs
 on the server after a short typing pause, resets to the first page, and shows
 **No matches** for an empty result. Clearing it restores the history. The history
@@ -73,13 +74,16 @@ heavy) and the label, and a Stopped row is drawn without top, right and bottom e
 The compact icon buttons above the front-page and repository container lists
 filter **All**, **Running** (Incus state Running), or **Active** (a non-grey
 agent marker in the terminal dashboard: busy, waiting, shell, API errors, or
-idle with a real event less than 30 minutes old). Tooltips and accessible labels
+idle with a real event less than 30 minutes old). Recent-idle membership is
+independent of session count or cell width; a bold `idle 5m` label explains its
+freshness in both normal and e-ink profiles. Tooltips and accessible labels
 name each button; the selected button stays pressed. The choice is remembered
 in this browser and follows live snapshot updates (the e-ink display profile
 keeps its normal slow/on-demand refresh). Repositories with no retained rows
 are hidden while filtering; `N hidden by filter` counts omitted containers.
 Nonmatching listed ancestors remain dimmed as context above matching children,
-so the tree stays intact. This does not change the terminal dashboard's list.
+so the tree stays intact. Tree prefixes are recomputed for the retained rows.
+This does not change the terminal dashboard's list.
 
 Children in the same repository appear indented under their orchestrator on
 the front page and in repository container lists. Child counts and container

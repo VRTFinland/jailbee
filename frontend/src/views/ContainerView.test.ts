@@ -92,6 +92,35 @@ describe("ContainerView", () => {
         wrapper.unmount()
     })
 
+    it.each([21, 0])("clamps and refetches when history shrinks to %i sessions", async (remaining) => {
+        let total = 41
+        let holdLast: (r: Response) => void = () => {}
+        const fetchMock = vi.fn<typeof fetch>((input) => {
+            const url = new URL(String(input), "http://localhost")
+            if (!url.pathname.endsWith("/history")) return Promise.resolve(jsonResponse(200, {...liveList, sessions: []}))
+            const offset = Number(url.searchParams.get("offset"))
+            if (offset === 40) return new Promise<Response>(resolve => {holdLast = resolve})
+            return Promise.resolve(jsonResponse(200, {...historyList, total, offset,
+                sessions: total ? [{...historyList.sessions[0], title: offset ? "Last remaining page" : "Newest page"}] : []}))
+        })
+        const {wrapper} = await mountContainer(fetchMock)
+        await wrapper.get('button[aria-label="Next earlier sessions"]').trigger("click")
+        await flushPromises()
+        await wrapper.get('button[aria-label="Next earlier sessions"]').trigger("click")
+        await flushPromises()
+        total = remaining
+        holdLast(jsonResponse(200, {...historyList, total, offset: 40, sessions: []}))
+        await flushPromises()
+        expect(String(fetchMock.mock.calls.at(-1)![0])).toContain(`offset=${remaining ? 20 : 0}`)
+        expect(wrapper.text()).toContain(remaining ? "Page 2 of 2" : "Page 1 of 1")
+        if (remaining) {
+            expect(wrapper.text()).toContain("Last remaining page")
+            expect(wrapper.text()).not.toContain("No sessions.")
+        } else expect(wrapper.text()).toContain("No sessions.")
+        expect(wrapper.get('button[aria-label="Next earlier sessions"]').attributes("disabled")).toBeDefined()
+        wrapper.unmount()
+    })
+
     it("debounces server search, resets the history page and shows no matches without hiding live sessions", async () => {
         const fetchMock = vi.fn<typeof fetch>((input) => {
             const url = new URL(String(input), "http://localhost")

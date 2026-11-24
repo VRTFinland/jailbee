@@ -240,7 +240,9 @@ before editing `## Unreleased`.
   shows repositories and containers with the terminal dashboard's core columns
   and agent state. Compact All / Running / Active icon filters are remembered
   per browser, follow live snapshots and keep nonmatching parents dimmed above
-  matching children, with a hidden-container count
+  matching children, with tree prefixes recomputed for the visible rows and a
+  hidden-container count. Active includes recently idle sessions independently
+  of cell width or session count, with a bold idle-age label in the browser
   ([#152](https://github.com/VRTFinland/jailbee/issues/152)).
   Stopped rows include a readable state label alongside their
   distinct e-ink outline. Front-page and repository container lists nest children under
@@ -263,7 +265,8 @@ before editing `## Unreleased`.
   containers, and a container page shows its live sessions before its history
   has loaded, keeps live sessions on top, and fetches earlier sessions in pages
   of 20 with Previous/Next controls and debounced server-side title/session-ID
-  search, including in the e-ink profile. A container's history also lists sessions run while no dashboard
+  search, including in the e-ink profile; shrinking history returns to the last
+  valid page. A container's history also lists sessions run while no dashboard
   was open, attributed by the branch, directory and time each started
   ([#152](https://github.com/VRTFinland/jailbee/issues/152)). Session
   titles and connection notices stay visible while reading. One jump button
