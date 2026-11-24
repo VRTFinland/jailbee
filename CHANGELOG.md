@@ -269,8 +269,10 @@ before editing `## Unreleased`.
   titles and connection notices stay visible while reading. One jump button
   offers **Latest answer**, **Scroll to bottom** or **New messages** as needed,
   stays hidden at the transcript's end and aligns answer starts below the header.
-  Normal displays follow new entries at the end and stop when scrolled up;
-  e-ink counts visible held entries and a tap reveals them at the first new
+  Normal displays follow new entries at the end and stop when scrolled up,
+  including multi-frame keyboard and touch gestures; manual end scrolling
+  restores follow, while jumps to a long answer's start leave the reader there.
+  E-ink counts visible held entries and a tap reveals them at the first new
   answer or the end. Optional per-device follow uses the pager's last content
   page. E-ink page turns never skip unread
   text after partial keyboard scrolling. The agent's own wrapper records (task

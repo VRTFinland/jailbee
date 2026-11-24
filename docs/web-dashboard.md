@@ -460,16 +460,18 @@ in a compact header while you read. One context-aware button handles navigation:
 
 - At the transcript's end, the button is hidden. In the normal display profile,
   arriving entries keep that end in view; scrolling up stops follow, and reaching
-  the end by hand or by a jump restores it. Blank room after the transcript is
-  not counted as unread content.
+  the end by hand or by a jump restores it. This includes keyboard scrolling
+  and multi-frame touch or trackpad gestures. Blank room after the transcript
+  is not counted as unread content.
 - **Latest answer ↓** jumps to the newest assistant reply's start when it is out
   of view and you are not already reading inside that reply. Its start aligns
   below the header, including any out-of-date banner. A long reply then offers
   **Scroll to bottom ↓**, which jumps to the end and resumes follow.
 - **New messages ↓** takes priority when entries arrive while follow is off. It
   jumps to the first unseen entry's start if that entry is an answer; otherwise
-  it jumps to the end. The button resumes follow; e-ink keeps the new entries
-  held until this tap.
+  it jumps to the end. Follow resumes only if the jump reaches the transcript's
+  end: jumping to a long answer's start leaves you there to read. E-ink keeps
+  the new entries held until this tap.
 
 A truncated title keeps its full text as a tooltip and accessible heading name.
 Page turns reserve the header, bottom controls and device safe-area inset, even
