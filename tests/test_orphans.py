@@ -142,6 +142,23 @@ def test_destroy_orphan_removes_outcomes_only_after_success(tmp_path, mocker, de
         assert outcomes.failed_count(name) == 0
 
 
+def test_destroy_orphan_removes_saved_resume_entry(mocker):
+    import json
+
+    from jailbee.db import state_dir
+
+    path = state_dir() / "resume-set.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"version": 1, "containers": {"gamma-x": "/gone"}}))
+    incus = MagicMock()
+    incus.list_containers.return_value = [{"name": "gamma-x", "status": "Stopped"}]
+    mocker.patch("jailbee.egress_scope.drop_container_acl")
+
+    orphans.destroy_orphan(incus, "gamma-x", force=True)
+
+    assert json.loads(path.read_text())["containers"] == {}
+
+
 def test_destroy_orphan_skips_stop_when_stopped_and_survives_acl_failure(mocker):
     incus = MagicMock()
     incus.list_containers.return_value = [{"name": "gamma-x", "status": "Stopped"}]

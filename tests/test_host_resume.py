@@ -222,6 +222,7 @@ def test_resume_honours_this_boot_decision_even_without_tmux(host, mocker, marke
     _, _, incus, _ = host
     incus.list_containers.return_value = incus.list_containers.return_value[:1]
     incus.exec.return_value = marker
+    incus.list_containers.return_value[0]["config"] = {"user.jailbee.autostart_profile": "removed"}
     start = mocker.patch("jailbee.lifecycle.boot_container")
 
     result = CliRunner().invoke(app, ["resume"])
@@ -276,15 +277,26 @@ def test_resume_drops_vanished_container_without_loading_its_repository(host, mo
     load.assert_not_called()
 
 
-def test_resume_reports_unloadable_repository_once_and_keeps_existing_entries(host, mocker):
+@pytest.mark.parametrize("saved", [True, False])
+def test_resume_reports_unloadable_repository_once_and_keeps_existing_entries(host, mocker, saved):
     from jailbee.config import ConfigError
 
     _cfg, other, incus, _ = host
     incus.list_containers.return_value = [
-        {"name": "two-a", "status": "Stopped", "profiles": ["two-base"]},
-        {"name": "two-b", "status": "Stopped", "profiles": ["two-base"]},
+        {"name": "two-a", "status": "Running", "profiles": ["two-base"]},
+        {"name": "two-b", "status": "Running", "profiles": ["two-base"]},
     ]
-    entries = dict.fromkeys(["two-a", "two-b", "two-gone"], str(other.repo_root))
+    from sqlmodel import Session
+
+    from jailbee.db import get_engine
+    from jailbee.db.models import RegisteredRepo
+
+    from datetime import UTC, datetime
+
+    with Session(get_engine()) as session:
+        session.add(RegisteredRepo(container_prefix="two", repo_root=str(other.repo_root), registered_at=datetime.now(UTC)))
+        session.commit()
+    entries = dict.fromkeys(["two-a", "two-b", "two-gone"], str(other.repo_root)) if saved else {}
     path = state_dir() / "resume-set.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps({"version": 1, "containers": entries}))
@@ -346,11 +358,19 @@ def test_journal_writes_hold_a_stable_exclusive_lock(host, mocker, command):
     _, _, incus, _ = host
     incus.list_containers.return_value = incus.list_containers.return_value[:1]
     incus.exec.return_value = "missing"
-    mocker.patch("jailbee.lifecycle.boot_container")
     mocker.patch("jailbee.cli._post_start_actions")
     mocker.patch("jailbee.create_flow.preflight_cache_pools")
     replace = os.replace
     writes = 0
+
+    def check_operation_lock(*args, **kwargs):
+        path = state_dir() / "resume-operation.lock"
+        with path.open("a") as lock:
+            with pytest.raises(BlockingIOError):
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+    incus.stop.side_effect = check_operation_lock
+    mocker.patch("jailbee.lifecycle.boot_container", side_effect=check_operation_lock)
 
     def check_locked(source, target):
         nonlocal writes

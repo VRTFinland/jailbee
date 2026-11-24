@@ -186,13 +186,24 @@ def destroy_orphan(incus: Incus, name: str, *, force: bool) -> None:
     subpaths, ``refs/jailbee/*`` transfer refs, and the repo's bridge-extras
     union (`jailbee apply` sweeps orphan ACLs).
     """
-    from jailbee import autostart_outcomes, egress_scope, host_teardown
+    from jailbee.host_resume import operation
+
+    with operation():
+        _destroy_orphan(incus, name, force=force)
+
+
+def _destroy_orphan(incus: Incus, name: str, *, force: bool) -> None:
+    from jailbee import autostart_outcomes, egress_scope, host_resume, host_teardown
     from jailbee.stopping import stop_container
 
     if _state(incus, name) == "Running":
         stop_container(incus, name, force=force, force_fallback=True, show_progress=False)
     teardown = host_teardown.snapshot(incus, name)
     incus.delete(name, force=force)
+    try:
+        host_resume.remove(name)
+    except (OSError, ValueError) as exc:
+        warn(f"Could not remove resume entry for '{name}' (continuing): {exc}")
     autostart_outcomes.remove(name)
     try:
         egress_scope.drop_container_acl(incus, name)

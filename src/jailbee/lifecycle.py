@@ -3353,8 +3353,9 @@ def destroy_container(
     """
 
     from jailbee.container_locks import locked
+    from jailbee.host_resume import operation
 
-    with locked(name):
+    with operation(), locked(name):
         _destroy_container_locked(cfg, incus, name, force=force, on_phase=on_phase)
 
 

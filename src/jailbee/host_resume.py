@@ -85,6 +85,19 @@ def _write_set(state: ResumeSet) -> None:
 
 
 @contextmanager
+def operation() -> Iterator[None]:
+    """Serialize host-wide lifecycle operations, including their Incus side effects."""
+    path = _state_path().with_name("resume-operation.lock")
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    with path.open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock, fcntl.LOCK_UN)
+
+
+@contextmanager
 def _edit_set() -> Iterator[ResumeSet]:
     path = _state_path().with_suffix(".lock")
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -143,6 +156,17 @@ def run_stop_all(
     stop: Callable[[Config, Incus, str], None],
 ) -> bool:
     """Stop running development containers, recording only successful stops."""
+    with operation():
+        return _stop_all(cfg, incus, yes=yes, stop=stop)
+
+
+def _stop_all(
+    cfg: Config,
+    incus: Incus,
+    *,
+    yes: bool,
+    stop: Callable[[Config, Incus, str], None],
+) -> bool:
     from jailbee import prompting
     from jailbee.lifecycle import list_containers
 
@@ -196,6 +220,17 @@ def run_resume(
     clear_boot: Callable[[Config, str], None],
 ) -> bool:
     """Restore the saved set and repair autostart missing after Incus boots."""
+    with operation():
+        return _resume(cfg, incus, post_start=post_start, clear_boot=clear_boot)
+
+
+def _resume(
+    cfg: Config,
+    incus: Incus,
+    *,
+    post_start: Callable[[Config, Incus, str], None],
+    clear_boot: Callable[[Config, str], None],
+) -> bool:
     import shlex
 
     from jailbee.config import load_repo_config
@@ -205,6 +240,13 @@ def run_resume(
     failures: dict[Path, str] = {}
     reported: set[Path] = set()
     configs = _configs(cfg, failures)
+    from sqlmodel import Session, select
+
+    from jailbee.db import get_engine
+    from jailbee.db.models import RegisteredRepo
+
+    with Session(get_engine()) as session:
+        roots = {r.container_prefix: Path(r.repo_root) for r in session.exec(select(RegisteredRepo))}
     containers = list_containers(cfg, incus, all_repos=True)
     by_name = {c.name: c for c in containers}
     with _edit_set() as state:
@@ -231,16 +273,17 @@ def run_resume(
             if container is None:
                 raise ValueError("recorded container no longer exists; resume set retained")
             target = configs.get(container.repo or "")
-            if target is None and name in entries:
+            repo_root = Path(entries[name]) if name in entries else roots.get(container.repo or "")
+            if target is None and repo_root is not None:
                 from jailbee.config import ConfigError
-
-                repo_root = Path(entries[name])
                 if repo_root not in failures:
                     try:
                         target = load_repo_config(repo_root)
                     except ConfigError as exc:
                         failures[repo_root] = str(exc)
                 if repo_root in failures:
+                    with _edit_set() as current:
+                        current.containers[name] = str(repo_root)
                     if repo_root not in reported:
                         error_plain(
                             f"Cannot load repository {repo_root}: {failures[repo_root]}. "
@@ -281,16 +324,19 @@ def run_resume(
                 from jailbee.autostart_plan import AutostartTrigger, plan_autostart
                 from jailbee.autostart_profiles import profiled_config
 
-                effective = profiled_config(target, container.autostart_profile)
+                if present in ("present", "handled", "skipped"):
+                    if name in entries:
+                        remove(name)
+                    continue
+                profile = container.autostart_profile or target.autostart.default_profile
+                effective = profiled_config(target, profile)
                 plan = plan_autostart(
                     effective.autostart,
                     AutostartTrigger.ON_START,
                     agent_steps=agent_autostart_steps(effective),
                     services_stage=bool(effective.services),
                 )
-                if present in ("present", "handled", "skipped") or (
-                    present == "missing" and not plan.blocking and not plan.detached
-                ):
+                if present == "missing" and not plan.blocking and not plan.detached:
                     if name in entries:
                         remove(name)
                     continue
