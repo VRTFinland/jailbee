@@ -195,9 +195,7 @@ def _action(proposal: dob.ProposalItem, index: int) -> dob.ActionItem | None:
     return next((a for a in proposal.actions if a.index == index), None)
 
 
-def _fingerprint(
-    proposal: dob.ProposalItem, key: dob.RowKey, *, parent_comments: bool = True
-) -> tuple[object, ...] | None:
+def _fingerprint(proposal: dob.ProposalItem, key: dob.RowKey) -> tuple[object, ...] | None:
     """What identifies a marked child across a re-list: kind and text, not index alone."""
     if key[2] is None:
         return None
@@ -209,7 +207,7 @@ def _fingerprint(
     comment = next((c for c in action.comments if c.index == key[3]), None)
     if comment is None:
         return None
-    parent = _action_print(action) if parent_comments else (action.kind, action.title, action.body)
+    parent = (action.kind, action.title, action.body)
     return ("comment", parent, comment.label, comment.text)
 
 
@@ -1091,7 +1089,7 @@ class OutboxController:
             and not (k[3] is not None and (name, listed.id, k[2], None) in chosen)
         ]
         children.sort(key=lambda k: (k[2] or 0, -1 if k[3] is None else k[3]), reverse=True)
-        expected = {k: _fingerprint(listed, k, parent_comments=False) for k in children}
+        expected = {k: _fingerprint(listed, k) for k in children}
         steps: list[dob.RowKey | None] = [None] if whole else list(children)
         done = 0
         for step, key in enumerate(steps):
@@ -1107,7 +1105,7 @@ class OutboxController:
                     return done, _CHANGED
                 fresh = current
                 if any(
-                    _fingerprint(fresh, k, parent_comments=False) != expected[k]
+                    _fingerprint(fresh, k) != expected[k]
                     for k in steps[step:]
                     if k is not None
                 ):
