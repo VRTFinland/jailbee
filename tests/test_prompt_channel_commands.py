@@ -21,6 +21,8 @@ from jailbee import prompt_channel as pc
 from jailbee import prompting
 from jailbee.cli import app
 from tests.test_branch_pr import source_publisher as source_publisher
+from tests.test_cli_outbox import env as env
+from tests.test_cli_outbox import publication_env as publication_env
 from tests.test_prompt_channel import Peer
 
 
@@ -164,6 +166,32 @@ def _both(
     dashboard_asked = at_dashboard(answer)
     dashboard_result = run()
     return terminal_asked, dashboard_asked, terminal_result, dashboard_result
+
+
+@pytest.mark.parametrize("kind", ["pr", "issue"])
+def test_outbox_publish_questions_match_terminal(publication_env, at_terminal, at_dashboard, kind):
+    terminal, dashboard, tr, dr = _both(
+        at_terminal,
+        at_dashboard,
+        lambda q: False,
+        lambda: CliRunner().invoke(
+            app,
+            [
+                "outbox",
+                "apply",
+                "feature",
+                f"{kind}/001.json",
+                *(["--draft"] if kind == "pr" else []),
+            ],
+        ),
+    )
+    assert tr.exit_code == dr.exit_code == 0, (tr.output, dr.output)
+    assert terminal == dashboard and terminal
+    assert terminal[-1].kind in ("confirm", "choose_one")
+    _, create, comment, review = publication_env
+    create.assert_not_called()
+    comment.assert_not_called()
+    review.assert_not_called()
 
 
 def test_own_source_picker_has_identical_terminal_and_dashboard_rows(at_terminal, at_dashboard):

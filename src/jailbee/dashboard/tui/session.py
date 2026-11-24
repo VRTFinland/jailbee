@@ -2766,6 +2766,7 @@ class DashboardSession:
             prefix=group.prefix if group is not None else "",
             standalone=False,
             on_change=lambda _state: None,  # nothing is on screen yet
+            run_publish=runner.publish,
         )
         prefix = group.prefix if group is not None else ""
 

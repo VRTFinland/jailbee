@@ -1114,10 +1114,10 @@ issue outbox are empty — it moves to the very top as "Outbox (N pending)" whil
 holds staged manifests; it opens the Outbox box: the proposals as a tree
 beside a preview, with `Space` mark (a row and everything under it), `d` delete
 (one "No"-first question naming exactly what goes), `p` publish the marked
-proposals, or the one under the cursor (the plans and the choice shown in the box;
+proposals, or the one under the cursor (CLI questions open as modals; marked proposals share a plan preview;
 a description awaiting its PR or a pinned source runs `pr push` /
-`submodule pr push` in the terminal, after the manifests, the first failure
-stopping the rest), `X` clear, `v`/`m` preview and raw
+`submodule pr push` through the shared action runner, after the manifests, the first failure
+stopping the rest; output, URLs and failures stay in the notification queue), `X` clear, `v`/`m` preview and raw
 manifest, `f` full-screen preview reader (`f`/Esc back), `r` refresh and Esc back; keys the SSH policy refuses are not
 offered), then `job clear`, `job log`, then `Autostart →` (re-run, status, cancel and profile when eligible; cancel asks first), then `Git →` (`merge`,
 `git pull`, `git push`, `git push --pr`, `git diff`), `PR →` ("Create/update submodule PR…" when the container has submodule changes, `pr open`,

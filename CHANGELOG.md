@@ -378,9 +378,13 @@ before editing `## Unreleased`.
   issue proposals, and asks a PR's mode and URL on a terminal like an issue's.
   Over remote SSH it is classified like its aliases.
 - Publishing in the outbox manager covers PR creations too: `p` on a
-  description awaiting its PR, or on a pinned source awaiting its push, hands
-  the terminal to `jailbee pr push` (or `submodule pr push`, `pr push
-  --source-manifest`), and the separate `c` key is gone. Marked rows of both
+  description awaiting its PR, or on a pinned source awaiting its push, runs
+  `jailbee pr push` (or `submodule pr push`, `pr push
+  --source-manifest`), and the separate `c` key is gone. The terminal dashboard
+  publishes PR and issue proposals through its shared action runner, including
+  over SSH: questions are modals, output stays in the dashboard and the
+  notification queue retains success URLs or failure reasons. The standalone
+  manager still hands over its terminal for PR creations. Marked rows of both
   kinds share one question; manifests publish first, then each PR creation in
   turn, and the first that fails or is cancelled stops the rest. `jailbee
   outbox apply` likewise hands such a proposal to `pr push` instead of exiting

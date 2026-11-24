@@ -4,8 +4,9 @@ Shared by the dashboard box and the standalone `jailbee outbox` app. It holds an
 `OutboxState` (from `jailbee.dashboard.outbox`) and turns intents into
 `jailbee outbox …` children through an injected `OutboxRunner`: off-thread
 quiet runs for local `ls`/`drop`, detached jobs for the plan, the publish and the
-clear (they take the lock and may call `gh`), and a terminal hand-off where a
-child must ask itself (a PR creation — `pr push` — and publishing over SSH).
+clear (they take the lock and may call `gh`). Dashboards inject `run_publish`
+for prompt-channel publications with retained output; the standalone manager
+uses terminal hand-offs for PR creations and interactive SSH publication.
 
 Publishing covers PR creations too: a proposal that awaits its PR (or a
 pinned source awaiting its push) is published by handing `jailbee pr push`
@@ -274,7 +275,9 @@ def _unpublishable_reason(proposal: dob.ProposalItem) -> str | None:
     return None
 
 
-def _creation_lines(name: str, proposal: dob.ProposalItem) -> tuple[str, ...]:
+def _creation_lines(
+    name: str, proposal: dob.ProposalItem, *, dashboard: bool = False
+) -> tuple[str, ...]:
     """What the batch question says a PR creation does."""
     scope = proposal.create_scope or {}
     argv = dob.create_pr_argv(name, proposal.create_scope) or []
@@ -286,7 +289,9 @@ def _creation_lines(name: str, proposal: dob.ProposalItem) -> tuple[str, ...]:
         what = f"the branch of {_safe(name)}"
     return (
         f"pushes {what}, opens/updates its PR: jailbee {_safe(' '.join(argv))}",
-        "runs in the terminal; it may ask its own questions",
+        "runs in the dashboard; questions open as modals"
+        if dashboard
+        else "runs in the terminal; it may ask its own questions",
     )
 
 
@@ -368,8 +373,10 @@ class OutboxController:
         on_change: Callable[[dob.OutboxState], None],
         sent_loader: Callable[[], tuple[dob.SentItem, ...]] | None = None,
         sent_only: bool = False,
+        run_publish: Callable[[Sequence[str], Callable[[JobResult], None]], None] | None = None,
     ) -> None:
         self.runner = runner
+        self.run_publish = run_publish
         self.container = container
         self.standalone = standalone
         self.on_change = on_change
@@ -589,7 +596,14 @@ class OutboxController:
         """
         self.state = replace(self.state, busy=busy, question=None, status=())
         try:
-            self.runner.start(key, label, argv, done, on_progress=on_progress)
+            if (
+                self.run_publish is not None
+                and argv[:2] == ["outbox", "apply"]
+                and "--dry-run" not in argv
+            ):
+                self.run_publish(argv, done)
+            else:
+                self.runner.start(key, label, argv, done, on_progress=on_progress)
         except (OSError, ValueError) as exc:
             if chained:
                 self.state = replace(self.state, busy=None, status=())
@@ -1161,7 +1175,11 @@ class OutboxController:
             self._status(reason)
             return
         name, revision = container.name, proposal.revision
-        if self.state.abilities.publish:
+        if self.run_publish is not None and (
+            self.state.abilities.publish or self.state.abilities.publish_hand_off
+        ):
+            self._interactive_publish(dob.outbox_apply_argv(name, proposal.id, revision, yes=False))
+        elif self.state.abilities.publish:
             self._start(
                 "planning…",
                 f"outbox-plan:{name}:{proposal.id}",
@@ -1175,6 +1193,33 @@ class OutboxController:
             self._after_mutation(() if rc is not None else ("outbox apply did not run",))
         else:
             self._status("publishing is not available here")
+
+    def _interactive_publish(
+        self, argv: Sequence[str], done: Callable[[JobResult], None] | None = None
+    ) -> None:
+        """Let the CLI ask through the dashboard, never duplicate or bypass its consent."""
+        assert self.run_publish is not None
+        self.mutation_running = True
+        self.state = replace(self.state, busy="publishing…", question=None, status=())
+
+        def finished(result: JobResult) -> None:
+            if done is not None:
+                done(result)
+            else:
+                self._after_mutation(
+                    _lines(result.stdout, result.stderr)
+                    or (
+                        "published"
+                        if result.returncode == 0
+                        else f"publication exited {result.returncode}",
+                    )
+                )
+
+        try:
+            self.run_publish(argv, finished)
+        except (OSError, ValueError) as exc:
+            finished(JobResult(1, str(exc)))
+        self.on_change(self.state)
 
     def _planned(self, name: str, pid: str, revision: str, result: JobResult) -> None:
         self.state = replace(self.state, busy=None)
@@ -1301,7 +1346,7 @@ class OutboxController:
         for name, proposal in creations:
             pid = _safe(proposal.id)
             lines.append(f"{_safe(name)}: {pid}" if many else pid)
-            lines.extend(_creation_lines(name, proposal))
+            lines.extend(_creation_lines(name, proposal, dashboard=self.run_publish is not None))
         if targets:
             lines.append(
                 "then, one by one, outbox apply for: "
@@ -1309,7 +1354,12 @@ class OutboxController:
                 + " (each asks under its own plan; PR creations run only if all succeed)"
             )
             # Creations run after the hand-offs, so a refusal there must stop them.
-            lines.insert(0, "manifests are handed to the terminal first")
+            lines.insert(
+                0,
+                "manifests publish first"
+                if self.run_publish is not None
+                else "manifests are handed to the terminal first",
+            )
         lines.extend(skipped)
         self._pending_skipped = tuple(skipped)
         self._pending_publish = targets
@@ -1342,6 +1392,45 @@ class OutboxController:
         creations: tuple[_Creation, ...],
     ) -> None:
         failed = False
+
+        def finish_batch() -> None:
+            marks = self._unmarked(targets)
+
+            def finish(created: tuple[_Creation, ...], lines: tuple[str, ...]) -> None:
+                self.state = replace(self.state, marks=marks - self._creation_keys(created))
+                self._after_mutation((*status, *lines))
+
+            if failed and creations:
+                status.append(
+                    "PR creations not run: " + ", ".join(_safe(p.id) for _, p in creations)
+                )
+                finish((), ())
+            else:
+                self._run_creations(creations, finish)
+
+        if self.run_publish is not None:
+
+            def advance(i: int) -> None:
+                nonlocal failed
+                if i == len(targets):
+                    finish_batch()
+                    return
+                name, pid, revision, _ = targets[i]
+
+                def finished(result: JobResult) -> None:
+                    nonlocal failed
+                    failed = failed or result.returncode != 0
+                    status.extend(
+                        f"{_safe(pid)}: {line}" for line in _lines(result.stdout, result.stderr)
+                    )
+                    advance(i + 1)
+
+                self._interactive_publish(
+                    dob.outbox_apply_argv(name, pid, revision, yes=False), finished
+                )
+
+            advance(0)
+            return
         for name, pid, revision, _ in targets:
             rc = self.runner.hand_off(dob.outbox_apply_argv(name, pid, revision, yes=False))
             if rc is None:
@@ -1350,17 +1439,7 @@ class OutboxController:
             elif rc != 0:
                 status.append(f"{_safe(pid)}: outbox apply exited {rc}")
                 failed = True
-        marks = self._unmarked(targets)
-
-        def finish(created: tuple[_Creation, ...], lines: tuple[str, ...]) -> None:
-            self.state = replace(self.state, marks=marks - self._creation_keys(created))
-            self._after_mutation((*status, *lines))
-
-        if failed and creations:
-            status.append("PR creations not run: " + ", ".join(_safe(p.id) for _, p in creations))
-            finish((), ())
-        else:
-            self._run_creations(creations, finish)
+        finish_batch()
 
     def _unmarked(self, targets: Iterable[_BatchTarget]) -> frozenset[dob.RowKey]:
         marks = set(self.state.marks)
@@ -1478,7 +1557,7 @@ class OutboxController:
         for name, proposal in creations:
             pid = _safe(proposal.id)
             lines.append(f"{_safe(name)}: {pid}" if many else pid)
-            lines.extend(_creation_lines(name, proposal))
+            lines.extend(_creation_lines(name, proposal, dashboard=self.run_publish is not None))
         lines.extend(excluded)
         choices: list[tuple[str, str]] = [("Publish", "publish")]
         if planned and all(plan.draftable for _, plan in planned):
@@ -1623,6 +1702,16 @@ class OutboxController:
             what = "source push" if listed.state == "awaiting-push" else "pr push"
             if not self.shown():
                 done(False, False, (f"{what} not run: outbox box closed",))
+                return
+            if self.run_publish is not None:
+
+                def published(result: JobResult) -> None:
+                    lines = _lines(result.stdout, result.stderr)
+                    if result.returncode and not lines:
+                        lines = (f"{what} exited {result.returncode}",)
+                    done(True, result.returncode == 0, lines)
+
+                self._interactive_publish(argv, published)
                 return
             rc, diagnostic = self.runner.hand_off_diagnostic(argv)
             lines = (
