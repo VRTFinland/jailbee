@@ -134,6 +134,19 @@ def expected_version() -> str:
     return f"{__version__} {code_hash()}"
 
 
+def _refresh_identity() -> None:
+    """Update an existing matching bundle; never stage code on the success path."""
+    root = staging_root()
+    current = root / "current"
+    if not current.is_symlink():
+        return
+    with (root / ".lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        target = root / ("app-" + code_hash())
+        if current.resolve() == target and target.is_dir():
+            _stamp_identity(target, version_info.identity())
+
+
 def run_in_container(
     cfg: Config,
     incus: Incus,
@@ -152,6 +165,8 @@ def run_in_container(
     ``restage=False`` (background probes) never rewrites the host bundle or
     skills on a version skew; the skew is reported as an error instead.
     """
+    if restage:
+        _refresh_identity()
     expected = expected_version()
     command = ["jailbee", "--expect-version", expected, *args]
     kwargs: dict[str, Any] = (
@@ -199,6 +214,7 @@ def run_in_container_interactive(
 ) -> int:
     from jailbee.config import CONTAINER_USERNAME
 
+    _refresh_identity()
     expected = expected_version()
     command = ["jailbee", "--expect-version", expected, *args]
 

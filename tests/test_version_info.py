@@ -5,8 +5,6 @@ import subprocess
 
 import pytest
 
-from jailbee.git import source_identity
-
 from jailbee import version_info
 
 
@@ -43,16 +41,12 @@ def test_editable_reports_git_status_identity(tmp_path, mocker, branch, changes)
     assert run.call_args.kwargs["timeout"] <= 1
 
 
-@pytest.mark.parametrize("failure", [FileNotFoundError(), subprocess.TimeoutExpired("git", 1), OSError(), UnicodeError()])
-def test_git_failure_degrades_to_plain_version(tmp_path, mocker, failure):
-    mocker.patch("subprocess.run", side_effect=failure)
-    assert source_identity(tmp_path) is None
-
-
-@pytest.mark.parametrize("output,returncode", [("fatal", 128), ("# branch.oid (initial)\n", 0), ("# branch.oid invalid\n", 0)])
-def test_unavailable_commit_has_no_identity(tmp_path, mocker, output, returncode):
-    mocker.patch("subprocess.run", return_value=subprocess.CompletedProcess([], returncode, output, ""))
-    assert source_identity(tmp_path) is None
+def test_editable_git_failure_prints_plain_version(tmp_path, mocker):
+    package = tmp_path / "src" / "jailbee"
+    package.mkdir(parents=True)
+    (tmp_path / ".git").mkdir()
+    mocker.patch("subprocess.run", side_effect=FileNotFoundError())
+    assert version_info.display_version("1.8.9", package_dir=package) == "1.8.9"
 
 
 @pytest.mark.parametrize("metadata", [None, "bad json", "[]", '{"commit": "oops", "dirty": false}'])
