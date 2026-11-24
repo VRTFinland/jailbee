@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -26,22 +27,54 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
+_PRUNE_BATCH = 500
+
 
 class DbSessionInfoStore:
     def __init__(self, engine: Engine) -> None:
         self._engine = engine
 
-    def load_all(self) -> dict[Path, tuple[Stamp, SessionInfo]]:
+    def load_dir(self, directory: Path) -> dict[Path, tuple[Stamp, SessionInfo]]:
+        # Rows are keyed by path: the paths below `directory/` sort between it
+        # and `directory0` ('0' follows '/'), a range the primary key serves.
+        low = f"{directory}/"
+        high = f"{directory}0"
         try:
             with Session(self._engine) as db:
                 rows = db.exec(
-                    select(SessionInfoRow).where(SessionInfoRow.format == SESSION_INFO_FORMAT)
+                    select(SessionInfoRow).where(
+                        SessionInfoRow.path >= low,
+                        SessionInfoRow.path < high,
+                        SessionInfoRow.format == SESSION_INFO_FORMAT,
+                    )
                 ).all()
                 found = {Path(row.path): _entry(row) for row in rows}
         except SQLAlchemyError:
             log.debug("session info cache unreadable", exc_info=True)
             return {}
-        return {path: entry for path, entry in found.items() if entry is not None}
+        return {
+            path: entry
+            for path, entry in found.items()
+            if entry is not None and path.parent == directory
+        }
+
+    def prune_missing(self) -> None:
+        # os.path.exists answers False for a path it may not stat (on 3.12
+        # Path.exists raises PermissionError): such a row is only re-read.
+        table = SessionInfoRow.__table__  # type: ignore[attr-defined]  # SQLModel sets it on table classes
+        try:
+            with Session(self._engine) as db:
+                paths = db.exec(select(SessionInfoRow.path)).all()
+            gone = [path for path in paths if not os.path.exists(path)]
+            with self._engine.begin() as conn:
+                # One statement, so a row a live flush writes meanwhile (always
+                # of the current format) is never caught; newer formats are kept.
+                conn.execute(table.delete().where(table.c.format < SESSION_INFO_FORMAT))
+                for at in range(0, len(gone), _PRUNE_BATCH):
+                    batch = gone[at : at + _PRUNE_BATCH]
+                    conn.execute(table.delete().where(table.c.path.in_(batch)))
+        except SQLAlchemyError:
+            log.debug("session info cache not pruned", exc_info=True)
 
     def save(self, entries: Sequence[tuple[Path, Stamp, SessionInfo]]) -> bool:
         rows = [

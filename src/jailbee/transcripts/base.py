@@ -11,6 +11,7 @@ not need the web dashboard to do so.
 
 from __future__ import annotations
 
+import os
 import threading
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal, Protocol, runtime_checkable
@@ -148,7 +149,7 @@ class SessionInfo:
     session to a container nobody saw it run in."""
 
 
-SESSION_INFO_FORMAT = 2
+SESSION_INFO_FORMAT = 3
 """Bump when what a source derives for a `SessionInfo` changes (how the title
 is chosen, which models are named, which fields are kept), so infos a
 `SessionInfoStore` kept from an older reader are read again instead of served."""
@@ -160,8 +161,14 @@ Stamp = tuple[int, int]
 class SessionInfoStore(Protocol):
     """Where a `SessionInfoCache` keeps its entries beyond the process (a database)."""
 
-    def load_all(self) -> dict[Path, tuple[Stamp, SessionInfo]]:
-        """Every stored info by path, with the stamp it was read at. Never raises."""
+    def load_dir(self, directory: Path) -> dict[Path, tuple[Stamp, SessionInfo]]:
+        """The stored infos of the transcripts directly in `directory`, by path,
+        with the stamp each was read at. Never raises."""
+        ...
+
+    def prune_missing(self) -> None:
+        """Forget every stored info whose transcript no longer exists (or may
+        not be looked at), and any an older reader stored. Never raises."""
         ...
 
     def save(self, entries: Sequence[tuple[Path, Stamp, SessionInfo]]) -> bool:
@@ -175,16 +182,19 @@ class SessionInfoCache:
 
     Listing reads every transcript; a long-lived caller (the web server) passes
     one cache so only a file that grew or was rewritten is read again. With a
-    `store`, what was read survives a restart: the store's entries are loaded
-    once, on first use, and what was read since is written back by `flush`
-    (one write per listing, not per file). Owned by the caller, never a module
+    `store`, what was read survives a restart: a transcript directory's stored
+    entries are loaded on the first use of a file in it (so the first listing
+    of one repository loads no other's), and what was read since is written
+    back by `flush` (one write per listing, not per file). `prune` drops the
+    entries of deleted transcripts; a long-lived caller runs it off the
+    request path. Owned by the caller, never a module
     global. Safe to share between threads.
     """
 
     def __init__(self, store: SessionInfoStore | None = None) -> None:
         self._entries: dict[Path, tuple[Stamp, SessionInfo | None]] = {}
         self._store = store
-        self._loaded = store is None
+        self._loaded: set[Path] = set()
         self._unsaved: dict[Path, tuple[Stamp, SessionInfo]] = {}
         self._lock = threading.Lock()
 
@@ -194,7 +204,7 @@ class SessionInfoCache:
         """`load()`'s result, reused while `stamp` (size, mtime_ns) is unchanged."""
         if stamp is None:
             return load()
-        self._load_store()
+        self._load_dir(path.parent)
         hit = self._entries.get(path)
         if hit is not None and hit[0] == stamp:
             return hit[1]
@@ -217,16 +227,28 @@ class SessionInfoCache:
             with self._lock:  # kept for the next flush; anything newer wins
                 self._unsaved = {**unsaved, **self._unsaved}
 
-    def _load_store(self) -> None:
-        if self._loaded or self._store is None:
+    def prune(self) -> None:
+        """Forget the entries of transcripts that no longer exist, here and in
+        the store. Stats every remembered file: not for a request path."""
+        with self._lock:
+            paths = list(self._entries)
+        gone = [path for path in paths if not os.path.exists(path)]
+        with self._lock:
+            for path in gone:
+                self._entries.pop(path, None)
+                self._unsaved.pop(path, None)
+        if self._store is not None:
+            self._store.prune_missing()
+
+    def _load_dir(self, directory: Path) -> None:
+        if self._store is None or directory in self._loaded:
             return
         with self._lock:
-            if self._loaded:
+            if directory in self._loaded:
                 return
-            stored = self._store.load_all()
-            for path, entry in stored.items():
+            for path, entry in self._store.load_dir(directory).items():
                 self._entries.setdefault(path, entry)
-            self._loaded = True
+            self._loaded.add(directory)
 
 
 @runtime_checkable

@@ -299,11 +299,14 @@ def test_requests_are_answered_while_the_warm_up_is_still_running(home: Path) ->
         _warmed(client)
 
 
-def _session_file(home: Path, project: str, session_id: str, prompt: str) -> None:
+def _session_file(
+    home: Path, project: str, session_id: str, prompt: str, cwd: str | None = None
+) -> None:
     path = home / "projects" / project / f"{session_id}.jsonl"
     path.parent.mkdir(parents=True, exist_ok=True)
     record = {
         "type": "user",
+        **({"cwd": cwd} if cwd is not None else {}),
         "timestamp": "2026-11-20T10:00:00.000Z",
         "message": {"role": "user", "content": prompt},
     }
@@ -317,8 +320,21 @@ def test_a_repo_lists_only_sessions_started_in_its_own_containers_repo_dir(
 
     shared = tmp_path / "shared-claude"  # a misconfigured home both repos point at
     _session_file(shared, "-home-dev-alpha", SESSION_A, "alpha at the root")
+    # The encoding is lossy: a subdirectory and a sibling repo share the
+    # dash form, so the session's own `cwd` decides.
     _session_file(
-        shared, "-home-dev-alpha-src", "33333333-3333-4333-8333-333333333333", "alpha below"
+        shared,
+        "-home-dev-alpha-src",
+        "33333333-3333-4333-8333-333333333333",
+        "alpha below",
+        cwd="/home/dev/alpha/src",
+    )
+    _session_file(
+        shared,
+        "-home-dev-alpha-web",
+        "55555555-5555-4555-8555-555555555555",
+        "alpha-web's",
+        cwd="/home/dev/alpha-web",
     )
     _session_file(shared, "-home-dev-beta", SESSION_B, "beta's own")
     _session_file(shared, "-home-dev-alpha2", "44444444-4444-4444-8444-444444444444", "alpha2's")

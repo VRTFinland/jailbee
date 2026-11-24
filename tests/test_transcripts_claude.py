@@ -666,22 +666,30 @@ def test_session_info_reads_a_bounded_head_and_tail_of_a_large_transcript(
 def test_the_last_activity_is_found_behind_one_huge_last_record(
     tmp_path: Path, source: ClaudeSource
 ) -> None:
+    # Claude writes `timestamp` near the end of a record, after the message: a
+    # pasted image makes the last line longer than the whole tail budget.
     path = tmp_path / "projects" / "-p" / f"{SID}.jsonl"
     _large_session(path, prompt="Fix it", middle_bytes=2 * 1024 * 1024)
+    image = {"type": "image", "source": {"type": "base64", "data": "y" * 5_000_000}}
     huge = {
-        "timestamp": "2026-11-03T08:00:00.000Z",
+        "parentUuid": "p",
+        "isSidechain": False,
         "type": "user",
-        "message": {
-            "content": [{"type": "tool_result", "tool_use_id": "t", "content": "y" * 900_000}]
-        },
+        "message": {"role": "user", "content": [image]},
+        "uuid": "u",
+        "timestamp": "2026-11-03T08:00:00.000Z",
     }
     with path.open("a", encoding="utf-8") as stream:
-        stream.write(json.dumps(huge))  # the last line, still without its newline
+        stream.write(json.dumps(huge) + "\n")
 
+    counted = Path("/proc/self/io").exists()
+    before = _bytes_read() if counted else 0
     info = source.session_info(SID, path)
+    read = _bytes_read() - before if counted else 0
 
     assert info is not None
     assert info.last_activity == datetime(2026, 11, 3, 8, 0, 0, tzinfo=UTC)
+    assert read < 1024 * 1024
 
 
 class _FlakyStore:
@@ -691,7 +699,7 @@ class _FlakyStore:
         self.saved: dict[Path, object] = {}
         self.attempts = 0
 
-    def load_all(self) -> dict[Path, object]:
+    def load_dir(self, directory: Path) -> dict[Path, object]:
         return {}
 
     def save(self, entries: list[tuple[Path, object, object]]) -> bool:
@@ -716,6 +724,27 @@ def test_infos_a_failed_save_lost_are_saved_by_the_next_flush(
     cache.flush()
 
     assert sorted(p.stem for p in store.saved) == [SID, OTHER_SID]
+
+
+def _started_in(home: Path, project: str, session_id: str, cwd: str | None) -> None:
+    record: dict[str, object] = {**_user_text("u", f"in {cwd}")}
+    if cwd is not None:
+        record["cwd"] = cwd
+    _write(home / "projects" / project / f"{session_id}.jsonl", record)
+
+
+def test_a_dash_extended_directory_lists_only_sessions_whose_cwd_is_below_the_repo(
+    tmp_path: Path, source: ClaudeSource
+) -> None:
+    _started_in(tmp_path, "-r-a-b", SID, "/r/a/b")
+    _started_in(tmp_path, "-r-a-b", OTHER_SID, "/r/a-b")  # a sibling repository
+    _started_in(tmp_path, "-r-a-c", "33333333-3333-4333-8333-333333333333", None)
+    _started_in(tmp_path, "-r-a-d-e", "44444444-4444-4444-8444-444444444444", '/r/a/d"e')
+
+    listed = source.list_sessions(tmp_path, cwds=["/r/a"])
+
+    # Without a recorded cwd, a dash-extended directory cannot be told apart.
+    assert sorted(s.cwd or "" for s in listed) == ["/r/a/b", '/r/a/d"e']
 
 
 def test_session_info_names_where_and_on_which_branch_the_session_started(

@@ -39,9 +39,10 @@ activity and recent model), so a model used only in the middle of a long
 session is not named in the list; the transcript itself shows every entry's
 model. What was read is kept in the state database (`session_info_cache`),
 keyed by the file's path, size and modification time, so a restarted or
-upgraded server rereads only transcripts that changed. The server also reads
-every visible repository's sessions in the background when it starts; no
-request waits for it.
+upgraded server rereads only transcripts that changed. A listing loads only
+the stored rows of the project directories it lists. The server also reads
+every visible repository's sessions in the background when it starts, after
+dropping the stored rows of deleted transcripts; no request waits for it.
 
 A container page shows its live sessions as soon as they are known (they come
 from the state service's snapshot) and appends the sessions it ran before,
@@ -50,8 +51,9 @@ its own containers' checkout (each container's repository directory, or below
 it): repositories that share one agent config home by mistake do not list each
 other's sessions. Claude names a session's project directory after its working
 directory with every character but letters and digits turned into `-`, so
-`/home/dev/app-api` cannot be told from a directory `api` below
-`/home/dev/app`; a repository `app` then lists `app-api`'s sessions too.
+the directory name cannot tell `/home/dev/app-api` from a directory `api` below
+`/home/dev/app`; the working directory recorded in the session itself decides,
+and a repository `app` does not list `app-api`'s sessions.
 
 Rows on the front page are styled like the terminal dashboard's: a container
 booting, in autostart, running another background job or in a failed job gets a

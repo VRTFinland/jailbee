@@ -440,12 +440,14 @@ def session_info(session_id: str, path: Path) -> SessionInfo | None:
     first timestamp is when the session started, and its first record with a
     ``cwd`` says where and on which ``gitBranch``. The last TAIL_BYTES (more,
     up to TAIL_MAX_BYTES, while they hold no timestamp) give the last
-    activity. Models are those named in the head and the tail, in first-use
-    order: a model used only in the middle of a long session is not listed
-    (the transcript itself shows every entry's model). A line is parsed only
-    when it is a title candidate or names a model not seen yet. A caller
-    listing many sessions should cache the result by the file's size and mtime;
-    a change to what is derived here bumps `SESSION_INFO_FORMAT`.
+    activity: the last complete timestamp in that window, even one in a
+    record that began before it. Models are those named in the head and the
+    tail, in first-use order: a model used only in the middle of a long
+    session is not listed (the transcript itself shows every entry's model).
+    A line is parsed only when it is a title candidate or names a model not
+    seen yet. A caller listing many sessions should cache the result by the
+    file's size and mtime; a change to what is derived here bumps
+    `SESSION_INFO_FORMAT`.
     """
     try:
         fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW | os.O_CLOEXEC)
@@ -470,10 +472,13 @@ def session_info(session_id: str, path: Path) -> SessionInfo | None:
         while True:
             start = max(head_end, size - window)
             data = os.pread(fd, size - start, start) if start < size else b""
+            # Searched before the cut's partial line is dropped: a record puts
+            # its timestamp near its end, so one record longer than the whole
+            # window (a pasted image) still shows its own.
+            last_activity = _time_at(data, data.rfind(b'"timestamp"'))
             if start > head_end:
                 # The cut lands inside a line: drop that partial line.
                 data = data[data.find(b"\n") + 1 :] if b"\n" in data else b""
-            last_activity = _time_at(data, data.rfind(b'"timestamp"'))
             if last_activity is not None or start <= head_end or window >= TAIL_MAX_BYTES:
                 break
             window *= 4
@@ -514,31 +519,40 @@ def project_dirname(cwd: str) -> str:
     return _NOT_IN_NAME.sub("-", cwd)
 
 
-def _in_cwds(project: str, names: Collection[str]) -> bool:
-    """`project` is one of `names`, or a directory below one.
+def _dir_match(project: str, names: Collection[str]) -> bool | None:
+    """True when `project` is one of `names`; False when it only extends one
+    with a dash (a directory below it, or a sibling: `/r/a/b` and `/r/a-b`
+    share the name `-r-a-b`); None when it is neither."""
+    if project in names:
+        return True
+    return False if any(project.startswith(name + "-") for name in names) else None
 
-    The encoding is lossy: `/r/a-b` and `/r/a/b` share a name, so a session
-    started in a sibling `/r/a-b` counts as below `/r/a`.
-    """
-    return any(project == name or project.startswith(name + "-") for name in names)
+
+def _below(cwd: str, cwds: Collection[str]) -> bool:
+    """`cwd` is one of `cwds` or a directory below one."""
+    return any(cwd == c or cwd.startswith(c.rstrip("/") + "/") for c in cwds)
 
 
 def _session_files(
     config_home: Path, cwds: Collection[str] | None = None
-) -> list[tuple[str, Path]]:
+) -> list[tuple[str, Path, bool]]:
     """Every `<sessionId>.jsonl` directly in a project directory; no links followed.
 
-    With `cwds`, only the project directories of sessions started there or below."""
+    With `cwds`, only the project directories whose name is that of one of
+    `cwds` or extends it with a dash. Each file comes with whether its
+    directory's name is exactly one of theirs: the dash form is ambiguous,
+    and only the session's own `cwd` tells a subdirectory from a sibling."""
     try:
         projects = sorted((config_home / PROJECTS_DIRNAME).iterdir())
     except OSError:
         return []
     wanted = None if cwds is None else {project_dirname(cwd) for cwd in cwds}
-    found: list[tuple[str, Path]] = []
+    found: list[tuple[str, Path, bool]] = []
     for project in projects:
         if project.is_symlink():
             continue
-        if wanted is not None and not _in_cwds(project.name, wanted):
+        exact = True if wanted is None else _dir_match(project.name, wanted)
+        if exact is None:
             continue
         try:
             names = sorted(os.listdir(project))
@@ -548,8 +562,17 @@ def _session_files(
             session_id = name.removesuffix(".jsonl")
             if name.endswith(".jsonl") and SESSION_ID.fullmatch(session_id):
                 if _is_regular(project / name):
-                    found.append((session_id, project / name))
+                    found.append((session_id, project / name, exact))
     return found
+
+
+def _wanted(info: SessionInfo, exact: bool, cwds: Collection[str] | None) -> bool:
+    """A session read from a candidate directory belongs to `cwds`: by its own
+    `cwd` when the transcript names one, else only from an exactly named
+    directory."""
+    if cwds is None:
+        return True
+    return _below(info.cwd, cwds) if info.cwd is not None else exact
 
 
 class ClaudeSource:
@@ -583,8 +606,9 @@ class ClaudeSource:
     ) -> list[SessionInfo]:
         sessions = [
             info
-            for session_id, path in _session_files(config_home, cwds)
+            for session_id, path, exact in _session_files(config_home, cwds)
             if (info := _cached_info(session_id, path, cache)) is not None
+            and _wanted(info, exact, cwds)
         ]
         oldest = datetime.min.replace(tzinfo=UTC)
         return sorted(sessions, key=lambda s: s.last_activity or oldest, reverse=True)
