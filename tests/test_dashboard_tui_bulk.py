@@ -1442,7 +1442,7 @@ def test_a_finishing_bulk_child_updates_an_open_queue_overlay(mocker, tmp_path):
     session, _, _ = _session(mocker, tmp_path, "Running")
     _stop(session, "alpha-a")
     session.open_queue()
-    changed = mocker.patch.object(session, "_queue_changed")
+    changed = mocker.patch.object(session, "queue_changed")
 
     session.tick()
 

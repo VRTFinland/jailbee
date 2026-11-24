@@ -112,23 +112,19 @@ class SessionOutboxRunner:
 
     def publish(self, argv: Sequence[str], done: Callable[[JobResult], None]) -> None:
         from jailbee.dashboard.outbox_publish import publish
+        from jailbee.dashboard.runner import ActionRun
 
-        try:
-            repo, full = self._addressed(argv)
-        except RouteError as exc:
-            reason = str(exc)
-            entry = self.session.queue.start("jailbee " + " ".join(argv), self.container)
-            self.session.queue.finish(entry, 1, reason)
-            self.session._queue_changed()
-            done(JobResult(1, reason))
-            return
+        def route(command: Sequence[str]) -> ActionRun:
+            repo, full = self._addressed(command)
+            return ActionRun(full, repo.cwd())
+
         publish(
-            full,
-            cwd=repo.cwd(),
+            argv,
+            route=route,
             target=self.container,
             queue=self.session.queue,
             run_questions=self.session.terminal.run_actions,
-            changed=self.session._queue_changed,
+            changed=self.session.queue_changed,
             done=done,
         )
 

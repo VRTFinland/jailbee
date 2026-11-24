@@ -56,7 +56,10 @@ before editing `## Unreleased`.
   ([#144](https://github.com/VRTFinland/jailbee/issues/144)).
 - Publishing from the outbox reports each created issue or PR as `#N <title>`
   with its URL, in `jb outbox apply`, `jb pr push --source-manifest` and in the
-  dashboard result notice
+  dashboard result notice. Dashboard publications use modal CLI questions and
+  keep the full output in the notification queue, with only the outcome in the
+  status notice. Declining or cancelling never reports success; closing the box
+  with Esc leaves confirmed work running, including remaining PR creations
   ([#144](https://github.com/VRTFinland/jailbee/issues/144)).
 - The terminal dashboard's PR number (column and details panel) is a terminal
   hyperlink (OSC 8) to the pull request, built from the repository `gh pr view` resolves (`upstream`, else the

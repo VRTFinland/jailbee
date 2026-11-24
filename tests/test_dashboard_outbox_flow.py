@@ -467,11 +467,15 @@ def test_comment_mark_survives_sibling_comment_deletion():
 
 
 def test_delete_exception_releases_reservations_and_reports_failure(mocker):
-    runner = FakeRunner(_listing(_proposal()))
+    runner = FakeRunner(_listing(_proposal(), _proposal("issue/b.json"), _proposal("pr/c.json")))
     ctl = _controller(runner)
     ctl.load()
     ctl.intent("delete", _key(action=0))
     runner.hold_loads = True
+    ctl.intent("answer", None, "yes")
+    ctl.intent("delete", _key("issue/b.json"))
+    ctl.intent("answer", None, "yes")
+    ctl.intent("delete", _key("pr/c.json"))
     ctl.intent("answer", None, "yes")
     mocker.patch.object(ctl, "_deleted_row", side_effect=RuntimeError("unexpected failure"))
     while runner.held:
@@ -479,6 +483,8 @@ def test_delete_exception_releases_reservations_and_reports_failure(mocker):
     assert ctl.state.busy is None
     assert not ctl.mutation_running
     assert "unexpected failure" in ctl.state.status[0]
+    assert "issue/b.json" in ctl.state.status[0]
+    assert "pr/c.json" in ctl.state.status[0]
     ctl.intent("delete", _key(action=1))
     assert ctl.state.question is not None
 

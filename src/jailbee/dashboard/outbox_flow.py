@@ -880,6 +880,14 @@ class OutboxController:
         self.mutation_running = True
         self._next_delete()
 
+    def _name_skipped_deletes(self) -> None:
+        proposals = sorted({(key[0], key[1]) for keys, _ in self._delete_queue for key in keys})
+        if proposals:
+            self._delete_status.append(
+                "not deleted: "
+                + ", ".join(f"{_safe(name)}/{_safe(pid)}" for name, pid in proposals)
+            )
+
     def _next_delete(self) -> None:
         if not self._delete_queue:
             # Refresh requests during deletion coalesce into this one final listing.
@@ -897,6 +905,7 @@ class OutboxController:
                     self._delete_failed += max(
                         0, self._delete_total - self._delete_deleted - self._delete_failed
                     )
+                    self._name_skipped_deletes()
                     self._delete_queue.clear()
                 # A confirmation may have queued more work while the final read ran.
                 if self._delete_queue:
@@ -937,7 +946,8 @@ class OutboxController:
                 self._delete_failed += max(
                     0, self._delete_total - self._delete_deleted - self._delete_failed
                 )
-                self._delete_status.append(f"delete failed: {_safe(exc)}")
+                remaining = ", ".join(_safe(pid) for _, pid in sorted(self._deleting))
+                self._delete_status.append(f"{remaining}: delete failed: {_safe(exc)}")
                 self._deleting.clear()
                 self._delete_queue.clear()
                 self._next_delete()
@@ -1700,7 +1710,7 @@ class OutboxController:
                 done(False, False, (f"{_safe(name)}: creating a PR is not available here",))
                 return
             what = "source push" if listed.state == "awaiting-push" else "pr push"
-            if not self.shown():
+            if self.run_publish is None and not self.shown():
                 done(False, False, (f"{what} not run: outbox box closed",))
                 return
             if self.run_publish is not None:

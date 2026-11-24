@@ -481,7 +481,7 @@ def test_late_job_result_after_close_is_a_notice(mocker, tmp_path):
     pending.call_args.args[1](ActionOutcome([RunResult(status=0)], "Published 1 action\n"))
     jobs.poll()
     assert session.overlay is menu
-    assert session.notice == "Published 1 action"
+    assert session.notice == "published"
     (entry,) = session.queue
     assert entry.state == "done" and "Published 1 action" in entry.output
 

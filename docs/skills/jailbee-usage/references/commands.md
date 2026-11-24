@@ -1883,10 +1883,13 @@ still refuse concurrent mutations. All queued batches share one final summary,
 leading with any failures and naming their proposals before the deletion count.
 Closing the dashboard box leaves the work running (the delete busy line says so)
 and reports that same summary as a notice.
-PR-creation verification is background work too; the interactive `pr push` still
-uses the terminal, and is not run if the box was closed meanwhile (a notice
-says so). The standalone manager refuses Esc, `q` and Ctrl-C while a mutation
-runs: quitting waits for it to finish.
+PR-creation verification is background work too. Dashboard publications run through
+the prompt channel, locally and over SSH: CLI questions open as modals, declining
+or cancelling never reports success, and the full output stays in the notification
+queue while the status notice shows only the outcome. Closing the dashboard box
+with Esc leaves confirmed publications running, including later PR creations in
+the batch. The standalone manager still uses terminal hand-offs and refuses Esc,
+`q` and Ctrl-C while a mutation runs: quitting waits for it to finish.
 
 | Command | What it does |
 |---|---|
