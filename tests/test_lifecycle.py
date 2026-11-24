@@ -11238,7 +11238,7 @@ def test_agent_compact_cell_orders_sessions_across_agents_by_urgency():
     assert _plain(agent_compact_cell((claude, codex), _AGENT_NOW)) == "● 5s ○ 2m ○"
 
 
-def test_agent_compact_cell_age_is_the_sessions_own_not_the_agents_event_age():
+def test_agent_compact_cell_attributes_event_age_to_matching_state_session():
     from jailbee.accounts.models import AgentActivity
     from jailbee.lifecycle import agent_compact_cell
 
@@ -11252,6 +11252,31 @@ def test_agent_compact_cell_age_is_the_sessions_own_not_the_agents_event_age():
     a = _agent_marks("waiting", [("waiting", own), ("busy", None)], since=own, activity=activity)
 
     assert _plain(agent_compact_cell((a,), _AGENT_NOW, activity_age=True)) == "◆ 4m ● 3s"
+
+
+def test_agent_compact_cell_attributes_event_age_to_first_matching_state_session():
+    from jailbee.accounts.models import AgentActivity
+    from jailbee.lifecycle import agent_compact_cell
+
+    event = _AGENT_NOW - timedelta(seconds=3)
+    activity = AgentActivity(
+        last_tool=None,
+        last_message=None,
+        state="busy",
+        last_event_at=event,
+    )
+    a = _agent_marks(
+        "waiting",
+        [
+            ("waiting", _AGENT_NOW - timedelta(minutes=4)),
+            ("busy", _AGENT_NOW - timedelta(minutes=2)),
+            ("busy", _AGENT_NOW - timedelta(minutes=1)),
+        ],
+        since=_AGENT_NOW - timedelta(minutes=4),
+        activity=activity,
+    )
+
+    assert _plain(agent_compact_cell((a,), _AGENT_NOW, activity_age=True)) == "◆ 4m ● 3s ●"
 
 
 def test_agent_compact_cell_narrow_tier_counts_cells_not_characters():

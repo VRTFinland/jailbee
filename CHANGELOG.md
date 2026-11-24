@@ -242,7 +242,8 @@ before editing `## Unreleased`.
   per browser, follow live snapshots and keep nonmatching parents dimmed above
   matching children, with tree prefixes recomputed for the visible rows and a
   hidden-container count. Active includes recently idle sessions independently
-  of cell width or session count, with a bold idle-age label in the browser
+  of cell width or session count, with a bold idle-age label in the browser;
+  both the label and filter membership update as time passes
   ([#152](https://github.com/VRTFinland/jailbee/issues/152)).
   Stopped rows include a readable state label alongside their
   distinct e-ink outline. Front-page and repository container lists nest children under

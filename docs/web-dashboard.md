@@ -76,7 +76,8 @@ filter **All**, **Running** (Incus state Running), or **Active** (a non-grey
 agent marker in the terminal dashboard: busy, waiting, shell, API errors, or
 idle with a real event less than 30 minutes old). Recent-idle membership is
 independent of session count or cell width; a bold `idle 5m` label explains its
-freshness in both normal and e-ink profiles. Tooltips and accessible labels
+freshness in both normal and e-ink profiles. The server refreshes ages and filter
+membership as time passes, even without a new state snapshot. Tooltips and accessible labels
 name each button; the selected button stays pressed. The choice is remembered
 in this browser and follows live snapshot updates (the e-ink display profile
 keeps its normal slow/on-demand refresh). Repositories with no retained rows
