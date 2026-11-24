@@ -153,6 +153,21 @@ def test_pending_lists_source_manifests_in_order(source_publisher):
     ]
 
 
+def test_numbered_source_without_description_still_updates(source_publisher):
+    from jailbee.pr import PrInfo
+
+    p = source_publisher
+    p["files"]["m.json"] = json.dumps(dict(p["data"], pr=42, actions=[]))
+    p["resolve"].return_value = PrInfo(
+        number=42, head_ref="feature/a", base_ref="main", head_sha="b" * 40,
+        is_cross_repository=False, head_repo_owner="acme", state="OPEN",
+    )
+    assert _publish(p) == 0
+    p["edit"].assert_not_called()
+    p["push"].assert_called_once()
+    assert consumed(p)
+
+
 def test_pending_skips_own_branch_description(source_publisher):
     from jailbee.branch_pr import pending_source_manifests
 

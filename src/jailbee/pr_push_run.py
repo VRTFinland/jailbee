@@ -198,16 +198,15 @@ def run_pr_push(
     selected_own: str | None = None
 
     def publish_source(manifest: str) -> bool:
-        nonlocal selected_own, branch, pr_number
+        nonlocal selected_own, branch
         from jailbee.outbox.service import instance_identity
         from jailbee.tui import warn_plain
 
         _, uuid = instance_identity(incus, full)
         source = branch_pr.stored_source(uuid, manifest)
         own = branch_pr.own_source_branch(cfg, incus, full, source.manifest) if source else None
-        if own is not None:
+        if own is not None and source is not None and source.manifest.actions:
             selected_own, branch = manifest, own[0]
-            pr_number = source.manifest.pr if source else None
             if own[1]:
                 warn_plain(f"{manifest}: {own[1]} newer commits; pushing the tip of {branch}")
             return False
@@ -230,8 +229,19 @@ def run_pr_push(
 
     short = short_name(cfg, full)
     pending = [] if source_manifest is not None else branch_pr.pending_source_manifests(cfg, incus, full)
-    if len(pending) == 1 and pending[0].own_branch and not no_outbox:
-        publish_source(pending[0].manifest)
+    if (
+        len(pending) == 1
+        and pending[0].own_branch
+        and not no_outbox
+        and branch is None
+        and pr_number is None
+        and as_name is None
+        and not stacked
+        and title is None
+        and body is None
+    ):
+        if publish_source(pending[0].manifest):
+            return
         pending = []
     if pending:
         own_options = any(
@@ -649,6 +659,7 @@ def run_pr_push(
                     foreign_head=is_foreign_pr_head,
                     url=created.url,
                     use_outbox=not no_outbox,
+                    **({"strict_description": True} if selected_own is not None else {}),
                     # What the create path already resolved this run, when `gh pr
                     # create` turned out to find an existing PR. Passing it forward is
                     # what keeps the "which pending description?" question to one
@@ -708,7 +719,9 @@ def run_pr_push(
                 # that the comments did not follow it or a submodule PR failed.
                 raise typer.Exit(1)
     except OutboxError as exc:
-        error(str(exc))
+        from jailbee.tui import error_plain
+
+        error_plain(str(exc))
         raise typer.Exit(1) from exc
 
 

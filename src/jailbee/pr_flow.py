@@ -2003,6 +2003,7 @@ def apply_pr_updates(
     management: PrManagement | None = None,
     consent: AiConsent | None = None,
     generated_text: PrText | None = None,
+    strict_description: bool = False,
 ) -> PrUpdate:
     """Apply description and ready/draft updates to an already-existing PR.
 
@@ -2093,6 +2094,10 @@ def apply_pr_updates(
                 title_changed = edit.title is not None
                 body_changed = edit.body is not None
             except pr_module.PrError as exc:
+                if strict_description:
+                    from jailbee.outbox.models import OutboxError
+
+                    raise OutboxError(f"Updating the PR description failed: {exc}") from exc
                 warn(f"{scope.prefix}Updating the PR description failed: {exc}")
             else:
                 if edit.source is not None:

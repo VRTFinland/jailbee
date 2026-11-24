@@ -153,7 +153,9 @@ def test_pr_push_picker_publishes_picked_manifest(source_choice):
 
 @pytest.mark.parametrize("entry", ["menu", "explicit", "outbox"])
 @pytest.mark.parametrize("updating", [False, True])
-def test_matching_source_updates_via_own_branch_flow(mocker, tmp_path, entry, updating):
+@pytest.mark.parametrize("numbered", [False, True])
+@pytest.mark.parametrize("fail_edit", [False, True])
+def test_matching_source_updates_via_own_branch_flow(mocker, tmp_path, entry, updating, numbered, fail_edit):
     import json
 
     from tests.test_branch_pr import StoreFiles
@@ -164,7 +166,7 @@ def test_matching_source_updates_via_own_branch_flow(mocker, tmp_path, entry, up
     incus.config_get_checked.return_value = None
     files = StoreFiles("uuid-full")
     files["own.json"] = json.dumps({
-        "version": 1, "repo": "acme/widgets", "pr": None, "head_sha": None,
+        "version": 1, "repo": "acme/widgets", "pr": 123 if numbered and updating else None, "head_sha": None,
         "source": "refs/heads/feat/foo", "source_sha": "a" * 40,
         "actions": [{"type": "description", "title": "Staged title", "body": "Staged body"}],
     })
@@ -184,6 +186,10 @@ def test_matching_source_updates_via_own_branch_flow(mocker, tmp_path, entry, up
     pinned = mocker.patch("jailbee.sync.fetch_ref_from_container")
     create = mocker.patch("jailbee.pr.create_pr", return_value=_pr_created())
     edit = mocker.patch("jailbee.pr.edit_pr")
+    if fail_edit and updating:
+        from jailbee.pr import PrError
+
+        edit.side_effect = PrError("update rejected: permission denied [remote]")
     select = mocker.patch("jailbee.prompting._select")
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     mocker.patch("jailbee.prompting._confirm", return_value=True)
@@ -197,6 +203,30 @@ def test_matching_source_updates_via_own_branch_flow(mocker, tmp_path, entry, up
         mocker.patch("jailbee.outbox.commands.pr_creation", return_value={"kind": "source", "manifest": "own.json"})
         args = ["outbox", "apply", "feat-foo", "pr/own.json", "--yes"]
     result = CliRunner().invoke(app, args)
+    if fail_edit and updating:
+        assert result.exit_code == 1, result.output
+        assert "permission denied [remote]" in result.output
+        assert "own.json" in files
+        from jailbee.dashboard import runner
+        from jailbee.dashboard.model import RepoTarget
+        from tests.dashboard_pilot import bare_session
+
+        session, terminal = bare_session(mocker, [])
+
+        def run(runs, done, progress=None):
+            def command(argv, *, on_output, **kwargs):
+                on_output(result.output)
+                return runner.RunResult(status=result.exit_code)
+
+            done(runner.run_actions(runs, run=command))
+
+        terminal.run_actions = run
+        session.run_action(RepoTarget(tmp_path, None), args, style="output", label="pr push")
+        (entry,) = session.queue
+        assert entry.state == "failed"
+        assert "permission denied [remote]" in entry.output
+        assert "permission denied [remote]" in " ".join(session.queue_entry_picker(entry.id).detail)
+        return
     assert result.exit_code == 0, result.output
     assert "3 newer commits" in result.output
     select.assert_not_called()
@@ -211,6 +241,23 @@ def test_matching_source_updates_via_own_branch_flow(mocker, tmp_path, entry, up
         assert create.call_args.kwargs["body"] == "Staged body"
         assert any(c.args == ("sampleapp-feat-foo", "user.jailbee.pr", "123") for c in incus.config_set.call_args_list)
     assert "own.json" not in files
+
+
+@pytest.mark.parametrize("options", [["--branch", "other"], ["--pr", "789"], ["--stacked"]])
+def test_matching_source_never_overrides_explicit_target(source_choice, options):
+    from jailbee.branch_pr import PendingSource
+
+    p = source_choice
+    p["pending"].return_value = [PendingSource("own.json", "Own", "topic", "main", "topic")]
+    # Stop at the normal flow's preflight: source selection must not publish or
+    # replace explicit arguments before normal PR targeting starts.
+    from jailbee.sync import SyncError
+
+    p["mocker"].patch("jailbee.sync.assert_container_publishable", side_effect=SyncError("preflight"))
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo", *options])
+    assert result.exit_code == 1 and "preflight" in result.output
+    p["source"].assert_not_called()
+    p["select"].assert_not_called()
 
 
 def test_pr_push_picker_own_branch_runs_current_flow(source_choice):
