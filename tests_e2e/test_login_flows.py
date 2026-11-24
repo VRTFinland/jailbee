@@ -206,7 +206,7 @@ def test_admin_revocation_closes_the_live_socket_and_returns_to_login(
     revoke_session(server.engine, session.id)
     server.push(snapshot_of())
 
-    page.wait_for_function("window.__e2eSocketCloseCodes.includes(4001)")
+    page.wait_for_function("() => window.__e2eSocketCloseCodes.includes(4001)")
     expect(page).to_have_url(server.url + "/#/login")
     expect(page.get_by_role("button", name="Log in", exact=True)).to_be_visible()
     expect(page.get_by_role("button", name="Log out")).to_have_count(0)
