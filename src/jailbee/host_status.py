@@ -27,7 +27,8 @@ def status(*, as_json: bool = False) -> int:
             result = client.call("host.status", {}, timeout=120.0)
     except TimeoutError:
         print(
-            transport.UNREACHABLE_MESSAGE.replace("jailbee inbox:", "jailbee host:"),
+            "jailbee host: the host broker did not answer in time; "
+            "if this persists, tell the human (`jailbee doctor` on the host)",
             file=sys.stderr,
         )
         return transport.EXIT_UNREACHABLE

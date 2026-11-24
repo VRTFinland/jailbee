@@ -98,7 +98,8 @@ def test_host_status_broker_read_timeout_exits_four(monkeypatch) -> None:
     monkeypatch.setattr(Client, "call", timeout)
     result = CliRunner().invoke(container_app, ["host", "status"])
     assert result.exit_code == 4
-    assert "host broker is not reachable" in result.output
+    assert "host broker did not answer in time" in result.output
+    assert "not reachable" not in result.output
 
 
 def test_host_status_broker_down_retries_then_exits_four(sockdir, monkeypatch) -> None:

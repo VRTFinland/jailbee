@@ -1,17 +1,20 @@
 """On-demand broker queries and their per-field visibility policy.
 
-Readers run on the bounded query workers, never on the listener or round loop.
+Readers run on dedicated bounded live-query workers, never on the listener or round loop.
 They receive the caller's socket identity and immutable view, not broker memory.
 """
 
 from __future__ import annotations
 
 import os
+import threading
+from time import monotonic
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from jailbee import sysstat
+from jailbee.incus import IncusError
 from jailbee.orchestration import wire
 
 if TYPE_CHECKING:
@@ -46,8 +49,33 @@ class LiveQuery:
 def host_queries(incus: Incus) -> dict[str, LiveQuery]:
     """The production registry; later queries use this same transport and policy."""
 
-    def status(uuid: str, view: ContainerSnapshot) -> Mapping[str, object]:
-        inventory = incus.list_containers(fast=True, all_projects=True, timeout=10)
+    lock = threading.Lock()
+    expires = 0.0
+    inventory: list[dict[str, Any]] = []
+    inventory_error: IncusError | None = None
+    pools: dict[str, dict[str, Any] | IncusError] = {}
+
+    def readings(uuid: str) -> tuple[list[dict[str, Any]], str | None, int | None]:
+        nonlocal expires, inventory, inventory_error
+        # One refresh at a time across containers; failures share the same short TTL.
+        with lock:
+            refresh = monotonic() >= expires
+            if refresh:
+                pools.clear()
+                inventory_error = None
+                try:
+                    inventory = incus.list_containers(fast=True, all_projects=True, timeout=10)
+                except IncusError as exc:
+                    inventory_error = exc
+            try:
+                if inventory_error is not None:
+                    raise inventory_error
+                return pool_reading(uuid)
+            finally:
+                if refresh:
+                    expires = monotonic() + 2.0
+
+    def pool_reading(uuid: str) -> tuple[list[dict[str, Any]], str | None, int | None]:
         caller = next(
             (row for row in inventory if (row.get("config") or {}).get("volatile.uuid") == uuid),
             None,
@@ -65,10 +93,22 @@ def host_queries(incus: Incus) -> dict[str, LiveQuery]:
         )
         available = None
         if isinstance(pool, str) and pool:
-            space = incus.storage_pool_resources(pool, timeout=10).get("space") or {}
+            if pool not in pools:
+                try:
+                    pools[pool] = incus.storage_pool_resources(pool, timeout=10)
+                except IncusError as exc:
+                    pools[pool] = exc
+            resources = pools[pool]
+            if isinstance(resources, IncusError):
+                raise resources
+            space = resources.get("space") or {}
             total, used = space.get("total"), space.get("used")
             if type(total) is int and type(used) is int and 0 <= used <= total:
                 available = total - used
+        return inventory, pool if isinstance(pool, str) else None, available
+
+    def status(uuid: str, view: ContainerSnapshot) -> Mapping[str, object]:
+        inventory, pool, available = readings(uuid)
         load = sysstat.read_load()
         memory = sysstat.read_memory()
         return {
@@ -80,6 +120,7 @@ def host_queries(incus: Incus) -> dict[str, LiveQuery]:
             "disk_available": available,
             "running_containers": sum(
                 row.get("status") == "Running"
+                and bool((row.get("config") or {}).get("user.jailbee.repo_dir"))
                 and any(p.endswith("-base") for p in row.get("profiles") or [])
                 for row in inventory
             ),

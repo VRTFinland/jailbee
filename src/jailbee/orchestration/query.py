@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import TYPE_CHECKING
 
+from jailbee.incus import IncusError
 from jailbee.orchestration import wire
 from jailbee.orchestration.live_query import LIVE_OPS, LiveQuery
 from jailbee.orchestration.outbox import grant_json_text
@@ -72,6 +73,10 @@ class Queries:
             return wire.fail(exc.code, exc.detail)
         except StoreError as exc:
             return wire.fail(wire.STORE, str(exc))
+        except IncusError as exc:
+            detail = " ".join(str(exc).split())
+            log.warning("broker: query %r unavailable: %s", request.op, detail)
+            return wire.fail(wire.REFUSED, f"host status unavailable: {detail}")
         except Exception:
             log.exception("broker: query %r failed", request.op)
             return wire.fail(wire.REFUSED, "broker error")
@@ -89,7 +94,7 @@ class Queries:
                 raise wire.WireError(wire.BAD_REQUEST, f"{op} accepts no arguments")
             handler = self.live.get(op)
             if handler is None:
-                raise wire.WireError(wire.STORE, "live query is not ready; retry shortly")
+                raise wire.WireError(wire.REFUSED, "live query is not supported by this broker")
             return handler.answer(uuid, view)
         if op in wire.OUTBOX_OPS:
             return self._outbox(uuid, op, args)
