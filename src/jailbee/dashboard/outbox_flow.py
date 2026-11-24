@@ -207,7 +207,8 @@ def _fingerprint(proposal: dob.ProposalItem, key: dob.RowKey) -> tuple[object, .
     comment = next((c for c in action.comments if c.index == key[3]), None)
     if comment is None:
         return None
-    return ("comment", action.kind, comment.label, comment.text)
+    parent = (action.kind, action.title, action.body)
+    return ("comment", parent, comment.label, comment.text)
 
 
 def _action_print(action: dob.ActionItem) -> tuple[object, ...]:
@@ -871,11 +872,18 @@ class OutboxController:
             self.state = replace(self.state, busy=self._delete_busy())
 
             def listed(result: CliResult) -> None:
-                fetched = self._parse(result)
-                if not isinstance(fetched, str):
-                    self.state = self._listed(fetched, cursor=None, status=())
-                else:
-                    self._delete_status.append(fetched)
+                try:
+                    fetched = self._parse(result)
+                    if not isinstance(fetched, str):
+                        self.state = self._listed(fetched, cursor=None, status=())
+                    else:
+                        self._delete_status.append(fetched)
+                except Exception as exc:
+                    self._delete_status.append(f"could not refresh the outbox: {_safe(exc)}")
+                    self._delete_failed += max(
+                        0, self._delete_total - self._delete_deleted - self._delete_failed
+                    )
+                    self._delete_queue.clear()
                 # A confirmation may have queued more work while the final read ran.
                 if self._delete_queue:
                     self._next_delete()
@@ -909,6 +917,15 @@ class OutboxController:
                 argv = next(steps) if result is None else steps.send(result)
             except StopIteration as finished:
                 self._delete_status.extend(finished.value)
+                self._next_delete()
+                return
+            except Exception as exc:
+                self._delete_failed += max(
+                    0, self._delete_total - self._delete_deleted - self._delete_failed
+                )
+                self._delete_status.append(f"delete failed: {_safe(exc)}")
+                self._deleting.clear()
+                self._delete_queue.clear()
                 self._next_delete()
                 return
             self.state = replace(self.state, busy=self._delete_busy())
@@ -978,6 +995,52 @@ class OutboxController:
                 else:
                     fresh = _find(fetched, name, pid)
                     previous = _find(self.state.containers, name, pid)
+                    candidates = (
+                        _keys_of((dob.ContainerListing(name, None, (), (fresh,)),))
+                        if fresh is not None
+                        else set()
+                    )
+
+                    def matching(
+                        key: dob.RowKey,
+                        fresh: dob.ProposalItem | None = fresh,
+                        previous: dob.ProposalItem | None = previous,
+                        candidates: set[dob.RowKey] = candidates,
+                    ) -> list[dob.RowKey]:
+                        if fresh is None or previous is None:
+                            return []
+                        return [
+                            candidate
+                            for candidate in candidates
+                            if candidate[2] is not None
+                            and _fingerprint(fresh, candidate) == _fingerprint(previous, key)
+                        ]
+
+                    cursor = self.state.cursor
+                    if cursor is not None and cursor[:2] == (name, pid) and cursor[2] is not None:
+                        matches = matching(cursor)
+                        if len(matches) == 1:
+                            cursor = matches[0]
+                        else:
+                            old_cursor = cursor
+                            peers = [
+                                k
+                                for k in candidates
+                                if k[2] is not None and (k[3] is None) == (old_cursor[3] is None)
+                            ]
+                            cursor = (
+                                min(
+                                    peers,
+                                    key=lambda k: (
+                                        abs((k[2] or 0) - (old_cursor[2] or 0)),
+                                        abs((k[3] or 0) - (old_cursor[3] or 0)),
+                                        k[2] or 0,
+                                        k[3] or 0,
+                                    ),
+                                )
+                                if peers
+                                else (name, pid, None, None)
+                            )
                     marks = set(self.state.marks)
                     for marked in self.state.marks:
                         if marked[:2] != (name, pid) or marked[2] is None:
@@ -985,14 +1048,7 @@ class OutboxController:
                         marks.discard(marked)
                         if fresh is None or previous is None:
                             continue
-                        matches = [
-                            candidate
-                            for candidate in _keys_of(
-                                (dob.ContainerListing(name, None, (), (fresh,)),)
-                            )
-                            if candidate[2] is not None
-                            and _fingerprint(fresh, candidate) == _fingerprint(previous, marked)
-                        ]
+                        matches = matching(marked)
                         if len(matches) == 1:
                             marks.add(matches[0])
                     self.state = replace(self.state, marks=frozenset(marks))
@@ -1010,13 +1066,12 @@ class OutboxController:
                         for c in self.state.containers
                     )
                     self.state = self._listed(
-                        containers, cursor=None, status=self.state.status, refresh_metadata=False
+                        containers, cursor=cursor, status=self.state.status, refresh_metadata=False
                     )
             self._deleting.discard((name, pid))
             # Safety refusals skip this proposal's remaining children too: progress
             # counts handled selections, not only successful CLI calls.
             self._delete_attempted += len(chosen) - (self._delete_attempted - before)
-            self._delete_deleted += done
             if failure is not None:
                 self._delete_failed += len(chosen) - done
                 status.append(f"{_safe(pid)}: {_safe(failure)}")
@@ -1079,6 +1134,7 @@ class OutboxController:
             if not result.ok:
                 return done, result.message or "delete failed"
             done += 1
+            self._delete_deleted += 1
             self._deleted_row(name, listed, key)
         return done, None
 

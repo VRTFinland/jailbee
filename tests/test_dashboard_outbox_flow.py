@@ -417,6 +417,72 @@ def test_marks_added_during_delete_are_kept_for_next_action():
     assert _key() not in ctl.state.marks
 
 
+def test_cursor_follows_surviving_action_after_delete():
+    before = _proposal(actions=[_action(0), _action(1), _action(2)])
+    after = _proposal(revision="r2", actions=[_action(0, body="body 1"), _action(1, body="body 2")])
+    runner = FakeRunner(_listing(before), _listing(after))
+    ctl = _controller(runner)
+    ctl.load()
+    ctl.intent("delete", _key(action=0))
+    runner.hold_loads = True
+    ctl.intent("answer", None, "yes")
+    ctl.intent("expand", _key(action=1))
+    while runner.held:
+        runner.finish_loads()
+    assert ctl.state.cursor == _key(action=0)
+    ctl.intent("delete", None)
+    assert ctl.state.question is not None
+    assert ctl.state.question.lines == dob.delete_scope_lines(ctl.state, [_key(action=0)])
+
+
+def test_comment_mark_does_not_move_to_another_action():
+    comment = _comment(0)
+    before = _proposal(actions=[_action(0, comments=[comment]), _action(1, comments=[comment])])
+    after = _proposal(revision="r2", actions=[_action(0, body="body 1", comments=[comment])])
+    runner = FakeRunner(_listing(before), _listing(after))
+    ctl = _controller(runner)
+    ctl.load()
+    ctl.intent("delete", _key(action=1))
+    runner.hold_loads = True
+    ctl.intent("answer", None, "yes")
+    ctl.intent("mark", _key(action=0, comment=0))
+    while runner.held:
+        runner.finish_loads()
+    assert not ctl.state.marks
+
+
+def test_comment_mark_survives_sibling_comment_deletion():
+    before = _proposal(actions=[_action(0, comments=[_comment(0), _comment(1), _comment(2)])])
+    after = _proposal(revision="r2", actions=[_action(0, comments=[{**_comment(1), "index": 0}])])
+    runner = FakeRunner(_listing(before), _listing(after))
+    ctl = _controller(runner)
+    ctl.load()
+    ctl.intent("delete", _key(action=0, comment=0))
+    runner.hold_loads = True
+    ctl.intent("answer", None, "yes")
+    ctl.intent("mark", _key(action=0, comment=1))
+    while runner.held:
+        runner.finish_loads()
+    assert ctl.state.marks == {_key(action=0, comment=0)}
+
+
+def test_delete_exception_releases_reservations_and_reports_failure(mocker):
+    runner = FakeRunner(_listing(_proposal()))
+    ctl = _controller(runner)
+    ctl.load()
+    ctl.intent("delete", _key(action=0))
+    runner.hold_loads = True
+    ctl.intent("answer", None, "yes")
+    mocker.patch.object(ctl, "_deleted_row", side_effect=RuntimeError("unexpected failure"))
+    while runner.held:
+        runner.finish_loads()
+    assert ctl.state.busy is None
+    assert not ctl.mutation_running
+    assert "unexpected failure" in ctl.state.status[0]
+    ctl.intent("delete", _key(action=1))
+    assert ctl.state.question is not None
+
+
 def test_delete_worker_start_failure_is_reported_and_clears_busy():
     runner = FakeRunner(_listing(_proposal()))
     ctl = _controller(runner)
