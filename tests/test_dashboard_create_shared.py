@@ -136,7 +136,10 @@ def test_missing_answer_retries_once_with_live_queue_state(tmp_path, result, out
         ("╭─ Error ─╮\n│ disk failure │\n╰──────────────╯\n", "disk failure"),
         ("disk failure\n╭─ Error ─╮\n│   │\n╰─────────╯\n", "disk failure"),
         ("│ ordinary text │\n", "│ ordinary text │"),
-        ("╭─ Error ─╮\n│ disk failure │\n│ on volume 1 │\n╰──────────────╯\n", "disk failure on volume 1"),
+        (
+            "╭─ Error ─╮\n│ disk failure │\n│ on volume 1 │\n╰──────────────╯\n",
+            "disk failure on volume 1",
+        ),
     ],
 )
 def test_create_failure_notice_contains_full_unboxed_message(tmp_path, output, expected):
