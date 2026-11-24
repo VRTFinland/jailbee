@@ -449,6 +449,20 @@ def test_outbox_publish_over_ssh_uses_questions_without_yes(mocker, tmp_path):
     assert terminal.handed == []
 
 
+def test_outbox_pre_spawn_refusal_stays_in_notification_queue(mocker, tmp_path):
+    from jailbee.dashboard.tui.outbox_wiring import SessionOutboxRunner
+
+    _quiet(mocker)
+    session, terminal = bare_session(mocker, [_outbox_group(tmp_path)])
+    pending = mocker.patch.object(terminal, "run_actions")
+    completed = []
+    SessionOutboxRunner(session, "gone").publish(["pr", "push", "gone"], completed.append)
+    (entry,) = session.queue
+    assert entry.state == "failed" and "gone" in entry.output
+    assert completed[0].returncode != 0
+    pending.assert_not_called()
+
+
 def test_late_job_result_after_close_is_a_notice(mocker, tmp_path):
     from jailbee.dashboard.runner import ActionOutcome, RunResult
 

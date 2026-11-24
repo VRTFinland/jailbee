@@ -112,7 +112,8 @@ def test_prompt_during_action_is_a_modal_and_the_answer_reaches_the_child(mocker
 
 
 @pytest.mark.parametrize("kind", ["pr", "issue", "source"])
-def test_outbox_publish_uses_runner_modal_and_keeps_queue_result(mocker, tmp_path, kind):
+@pytest.mark.parametrize("transport", ["none", "ssh"])
+def test_outbox_publish_uses_runner_modal_and_keeps_queue_result(mocker, tmp_path, kind, transport):
     from jailbee.dashboard.accounts import CliResult
     from tests.test_dashboard_outbox_flow import _listing, _proposal
 
@@ -122,7 +123,7 @@ def test_outbox_publish_uses_runner_modal_and_keeps_queue_result(mocker, tmp_pat
     mocker.patch("jailbee.dashboard.accounts.run_cli_quiet", return_value=CliResult(True, "", _listing(row)))
     from jailbee.config.models_remote import RemoteSSHConfig
 
-    app = make_app(mocker, [_group(tmp_path)], transport="ssh", remote=True, ssh_policy=RemoteSSHConfig())
+    app = make_app(mocker, [_group(tmp_path)], transport=transport, remote=transport != "none", ssh_policy=RemoteSSHConfig())
     app.threaded_actions = True
     app.action_runner = drunner.run_action
     spawn = Spawns([_prompt(question="Publish proposal?", default=False)])

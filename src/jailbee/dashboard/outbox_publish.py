@@ -49,6 +49,9 @@ def publish(
         output = outcome.outputs[0] if outcome.outputs else outcome.output
         reason = (result.refused or result.error) if result else "publication did not run"
         status = result.status if result and result.status is not None else 1
+        if result and (result.cancelled or "Nothing published." in output.splitlines()):
+            status = status or 1
+            reason = reason or "publication cancelled"
         if reason:
             status = status or 1
             output = "\n".join(part for part in (output.rstrip(), reason) if part)

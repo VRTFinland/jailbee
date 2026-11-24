@@ -40,6 +40,41 @@ def test_publish_retains_output_and_failure_in_queue(tmp_path):
     assert completed == [JobResult(1, "", "permission denied")]
 
 
+def test_success_keeps_published_url(tmp_path):
+    from jailbee.dashboard.outbox_publish import publish
+
+    queue = NotificationQueue()
+    url = "https://github.com/o/r/issues/42"
+
+    def questions(runs, done, progress):
+        done(ActionOutcome([RunResult(status=0)], url, [url]))
+
+    publish(
+        ["issue", "apply", "alpha-x", "a.json"], cwd=tmp_path, target="alpha-x",
+        queue=queue, run_questions=questions, changed=lambda: None, done=lambda result: None,
+    )
+    (entry,) = queue
+    assert entry.state == "done" and entry.output == url
+
+
+@pytest.mark.parametrize("cancelled, output", [(True, "Aborted."), (False, "Nothing published.")])
+def test_cancelled_creation_does_not_report_success(tmp_path, cancelled, output):
+    from jailbee.dashboard.outbox_publish import publish
+
+    queue = NotificationQueue()
+    completed = []
+
+    def questions(runs, done, progress):
+        done(ActionOutcome([RunResult(status=0, cancelled=cancelled)], output))
+
+    publish(
+        ["pr", "push", "alpha-x"], cwd=tmp_path, target="alpha-x", queue=queue,
+        run_questions=questions, changed=lambda: None, done=completed.append,
+    )
+    assert completed[0].returncode != 0
+    assert next(iter(queue)).state == "failed"
+
+
 @pytest.mark.parametrize("remote", [False, True])
 def test_marked_manifest_then_source_publish_without_handoff(remote):
     from jailbee.dashboard.outbox_flow import OutboxController

@@ -1240,23 +1240,26 @@ class OutboxController:
         status: list[str],
         creations: tuple[_Creation, ...],
     ) -> None:
-        if self.run_publish is not None:
-            failed = False
+        failed = False
 
+        def finish_batch() -> None:
+            marks = self._unmarked(targets)
+    
+            def finish(created: tuple[_Creation, ...], lines: tuple[str, ...]) -> None:
+                self.state = replace(self.state, marks=marks - self._creation_keys(created))
+                self._after_mutation((*status, *lines))
+    
+            if failed and creations:
+                status.append("PR creations not run: " + ", ".join(_safe(p.id) for _, p in creations))
+                finish((), ())
+            else:
+                self._run_creations(creations, finish)
+
+        if self.run_publish is not None:
             def advance(i: int) -> None:
                 nonlocal failed
                 if i == len(targets):
-                    marks = self._unmarked(targets)
-
-                    def finish(created: tuple[_Creation, ...], lines: tuple[str, ...]) -> None:
-                        self.state = replace(self.state, marks=marks - self._creation_keys(created))
-                        self._after_mutation((*status, *lines))
-
-                    if failed and creations:
-                        status.append("PR creations not run: " + ", ".join(_safe(p.id) for _, p in creations))
-                        finish((), ())
-                    else:
-                        self._run_creations(creations, finish)
+                    finish_batch()
                     return
                 name, pid, revision, _ = targets[i]
 
@@ -1270,7 +1273,6 @@ class OutboxController:
 
             advance(0)
             return
-        failed = False
         for name, pid, revision, _ in targets:
             rc = self.runner.hand_off(dob.outbox_apply_argv(name, pid, revision, yes=False))
             if rc is None:
@@ -1279,17 +1281,7 @@ class OutboxController:
             elif rc != 0:
                 status.append(f"{_safe(pid)}: outbox apply exited {rc}")
                 failed = True
-        marks = self._unmarked(targets)
-
-        def finish(created: tuple[_Creation, ...], lines: tuple[str, ...]) -> None:
-            self.state = replace(self.state, marks=marks - self._creation_keys(created))
-            self._after_mutation((*status, *lines))
-
-        if failed and creations:
-            status.append("PR creations not run: " + ", ".join(_safe(p.id) for _, p in creations))
-            finish((), ())
-        else:
-            self._run_creations(creations, finish)
+        finish_batch()
 
     def _unmarked(self, targets: Iterable[_BatchTarget]) -> frozenset[dob.RowKey]:
         marks = set(self.state.marks)
