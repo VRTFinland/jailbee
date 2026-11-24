@@ -32,6 +32,32 @@ from jailbee.config.models_net import _reject_offline
 _AGENT_NAME_RE = re.compile(r"[a-z0-9-]+")
 
 
+AGENT_SETTINGS_KEYS = frozenset({"default_runner", "models", "model_policy"})
+
+
+class ModelGuidance(BaseModel):
+    """User-authored guidance for a model alias, not a runner constraint."""
+
+    model_config = ConfigDict(extra="forbid")
+    label: str = Field(default="", description="Short description of this model.")
+    use_for: str = Field(default="", description="Tasks this model suits.")
+    avoid_for: str = Field(default="", description="Tasks to avoid assigning to this model.")
+    notes: str = Field(default="", description="Other model guidance or alias details.")
+
+
+class AgentModelGuidance(BaseModel):
+    """The non-agent model settings under `agents`. No built-in opinions."""
+
+    model_config = ConfigDict(extra="forbid")
+    models: dict[str, ModelGuidance] = Field(
+        default_factory=dict,
+        description="Model guidance keyed by runner model name; query with jailbee agent models.",
+    )
+    model_policy: str = Field(
+        default="", description="General rules for choosing subagent and child-runner models."
+    )
+
+
 class AutostartStep(BaseModel):
     """A single shell step to run inside a container during autostart,
     listed under `autostart.on_create` or `autostart.on_start`. Steps run

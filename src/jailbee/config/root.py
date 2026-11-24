@@ -28,6 +28,7 @@ from jailbee.config.common import CONTAINER_USERNAME, PathExpanded
 from jailbee.config.models_agents import (
     _AGENT_NAME_RE,
     AgentConfig,
+    AgentModelGuidance,
     Autostart,
     AutostartStage,
     ClaudeAgentConfig,
@@ -518,6 +519,8 @@ class Config(BaseModel):
     # key. Private for the reason `_synthetic` is: no YAML key on the repo
     # layer, no `config show` entry. `model_copy` carries it.
     _agent_instructions: bool = PrivateAttr(default=True)
+    # Loaded from the reserved agents.models/model_policy keys, not agent entries.
+    _agent_models: AgentModelGuidance = PrivateAttr(default_factory=AgentModelGuidance)
     # Set by `load_config_from_layers` from `global.yaml`'s own
     # `defaults.storage_pool`, *before* the repo layers merge over it: the pool
     # of the host-wide service containers, which no repo owns. Private for the
@@ -553,6 +556,10 @@ class Config(BaseModel):
     def orchestration_view(self) -> OrchestrationView:
         """This repo's orchestration inputs: profiles and the repo's narrowing."""
         return self._orchestration_view
+
+    def agent_models(self) -> AgentModelGuidance:
+        """Effective user-authored model map and selection policy for this repo."""
+        return self._agent_models
 
     def agent_instructions_enabled(self) -> bool:
         """Whether host-wide agent instructions are mounted (see agent_instructions.py)."""

@@ -144,7 +144,7 @@ def _validate_guidance_commands(skill: str, preamble: str) -> None:
             continue  # This is a prose list, not a command invocation.
         examples.extend(re.findall(r"\bjailbee\s+.*?(?=\s+and\s+jailbee|\s+\(|[.;]|$)", line))
     host_roots = {"net", "git", "pr", "port", "display"}
-    container_roots = {"service", "config", "host", "inbox", "version"}
+    container_roots = {"agent", "service", "config", "host", "inbox", "version"}
     for example in examples:
         if not example.startswith("jailbee "):
             continue
@@ -197,6 +197,7 @@ def test_container_guidance_commands_resolve() -> None:
     skill = (agent_skills._skills_root() / "jailbee-container" / "SKILL.md").read_text()
     _validate_guidance_commands(skill, PREAMBLE)
     commands = {
+        "agent models": False,
         "service ls": False,
         "service start": False,
         "service restart": False,

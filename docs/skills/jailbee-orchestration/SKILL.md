@@ -410,10 +410,13 @@ A spawn may name an optional `runner`: `agent` (`claude` or `claude-jb`),
 
 - Run `jailbee inbox runners` first to see the user's default and the profiles
   and tiers you may name.
-- Omit `runner` to start the default. Choose per task: use a cheaper tier for
-  routine, well-specified work and a stronger one for hard or open-ended work.
-  Follow the user's guidance on model choice (CLAUDE.md or the task prompt)
-  whenever it exists; when in doubt, use the default.
+- Before choosing a model for a child runner or your own subagent, run
+  `jailbee agent models` (or `--json`). Follow `model_policy` and the model's
+  `label`, `use_for`, `avoid_for` and `notes`, alongside the session's explicit
+  instructions. This effective repo guidance is live: host config edits appear
+  on the next query without `apply` or restart. JailBee supplies no model
+  opinions; an empty map gives a configuration hint.
+- Omit `runner` to start the default when no user guidance calls for a change.
 - Keep the default's agent and profile unless the user's guidance says
   otherwise; vary the `model` tier.
 - A `restart` without `runner` keeps the child's previous runner;

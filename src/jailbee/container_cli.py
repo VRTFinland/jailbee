@@ -19,6 +19,7 @@ VERSION_FILE = Path(__file__).resolve().parent.parent / "VERSION"
 
 # Explicit host-only branches: unknown names must still be reported as typos.
 HOST_SUBCOMMANDS = {
+    "agent": frozenset({"use", "show", "open"}),
     "config": frozenset({"show", "migrate", "edit", "init"}),
     "pr": frozenset({"push", "bind", "unbind", "ls", "open", "fetch"}),
     "issue": frozenset({"apply", "resolve"}),
@@ -82,6 +83,8 @@ container_app = typer.Typer(
         "operator to publish (gh here is read-only); other management runs on the host."
     ),
 )
+agent_app = typer.Typer(no_args_is_help=True, help="Read live agent model guidance from the host.")
+container_app.add_typer(agent_app, name="agent", cls=SharedGroup)
 host_app = typer.Typer(no_args_is_help=True, help="Read live host state over the broker socket.")
 container_app.add_typer(host_app, name="host")
 config_app = typer.Typer(no_args_is_help=True, help="Check the repository configuration.")
@@ -137,6 +140,16 @@ def root(
 def version() -> None:
     """Print the JailBee version."""
     typer.echo(display_version(__version__))
+
+
+@agent_app.command()
+def models(
+    as_json: Annotated[bool, typer.Option("--json", help="Print machine-readable JSON.")] = False,
+) -> None:
+    """Show the effective model map and model selection policy for this repo."""
+    from jailbee.agent_models import models as agent_models
+
+    raise typer.Exit(agent_models(as_json=as_json))
 
 
 @host_app.command()

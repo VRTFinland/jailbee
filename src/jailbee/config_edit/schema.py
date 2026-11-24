@@ -588,9 +588,13 @@ def _default_runner_specs() -> tuple[FieldSpec, ...]:
     `agents` is a collection of agents, so the key is not part of `Config`'s tree
     (the loader peels it off each layer); it gets its own leaves here.
     """
+    from jailbee.config.models_agents import AgentModelGuidance
     from jailbee.orchestration.runner_model import Runner
 
-    return rebase(build_specs(Runner), ("agents", "default_runner"))
+    return (
+        *rebase(build_specs(Runner), ("agents", "default_runner")),
+        *rebase(build_specs(AgentModelGuidance), ("agents",)),
+    )
 
 
 def repo_specs() -> tuple[FieldSpec, ...]:

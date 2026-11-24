@@ -22,7 +22,8 @@ if TYPE_CHECKING:
     from jailbee.orchestration.query import ContainerSnapshot
 
 HOST_STATUS = "host.status"
-LIVE_OPS = frozenset({HOST_STATUS})
+AGENT_MODELS = "agent.models"
+LIVE_OPS = frozenset({HOST_STATUS, AGENT_MODELS})
 Visibility = Literal["all", "orchestrator"]
 
 
@@ -132,7 +133,17 @@ def host_queries(incus: Incus) -> dict[str, LiveQuery]:
             ),
         }
 
+    def models(uuid: str, view: ContainerSnapshot) -> Mapping[str, object]:
+        from jailbee.config import load_repo_config
+
+        if view.project_config is None:
+            raise wire.WireError(wire.STORE, "calling container has no repository config")
+        # The snapshot identifies the repo only: never return its cached settings.
+        cfg = load_repo_config(view.project_config.repo_root)
+        return cfg.agent_models().model_dump(mode="json")
+
     return {
+        AGENT_MODELS: LiveQuery(models, {"models": "all", "model_policy": "all"}),
         HOST_STATUS: LiveQuery(
             status,
             {

@@ -2547,6 +2547,46 @@ agents:
 |---|---|---|---|
 | `agents.default_runner` | `{agent, profile?, model?}` | none | The repo's default [runner](orchestration.md) for **every** container of the repo, not only spawned children. Allowed in `global.yaml`, the repo's `.jailbee/config.yaml` and the host-local `repos/<prefix>.yaml`; layered local → repo → global, the first layer that sets it wins. It is not an agent: it never appears under `agents.<name>`. Autostart resolves a container's Claude command as: the container's own runner label (a child spawned with a runner), then `agents.default_runner`, then the legacy path (`primary_agent`, `litellm.autostart`, `litellm.default_profile`, no model). With a runner the `agents.claude.command` is rewritten (`claude` ↔ `claude-jb`, `-P`, `--model`); a command that is not a Claude command keeps its configured form and logs a warning. It does not change which agent is the primary agent. When the runner names a `claude-jb` profile, that profile is also the `claude-jb` default inside the repo's containers (written by `jailbee apply`, `new` and `jailbee agent use`). Set it with [`jailbee agent use`](commands.md#jailbee-agent). The deprecated alias `orchestration.default_runner` is still read (in a layer, `agents.default_runner` wins over it); spawned children get the same default as before. |
 
+### `agents.models` and `agents.model_policy`
+
+Describe your model aliases once in `~/.config/jailbee/global.yaml`:
+
+```yaml
+agents:
+  models:
+    haiku:
+      label: "Small coding model"
+      use_for: "Well-scoped fixes and coding subagents"
+      avoid_for: "Architectural reviews"
+      notes: "This alias uses our coding backend"
+    opus:
+      label: "Review model"
+  model_policy: "Prefer haiku for coding; use opus for difficult reviews."
+```
+
+These are **user-authored examples**, not JailBee recommendations. JailBee ships
+an empty map and no model policy. Model keys are the names used when selecting a
+runner model (`fable`, `opus`, `sonnet`, `haiku`, or another alias); the map is
+advisory and does not change runner validation or grant access to a model.
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `agents.models` | map of model name to guidance | `{}` | Each entry accepts only the optional free-text strings `label`, `use_for`, `avoid_for` and `notes`; each defaults to `""`. |
+| `agents.model_policy` | string | `""` | General rules for choosing models for subagents and child runners. |
+
+The repo's `.jailbee/config.yaml` and the host-local `repos/<prefix>.yaml` may
+override individual model fields: setting `haiku.use_for` keeps the global
+`haiku.label` and all other models. The host-local layer wins over the repo
+layer, which wins over global. Both keys have their own fields in the config
+editor; they are not agent entries.
+
+Inside **any** container, run `jailbee agent models` (or `--json`) before choosing
+a subagent or child-runner model, and follow `model_policy`. It queries the
+broker for the calling container's effective repo config on every invocation.
+Host config edits are visible on the next query, without `apply` or a restart.
+An empty map prints a configuration hint; JSON always returns
+`{"models": {}, "model_policy": ""}` for the unconfigured case.
+
 ### `docker_registry_mirror.extra_registries`
 
 ```yaml

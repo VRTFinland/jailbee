@@ -23,6 +23,9 @@ def test_host_commands_snapshot():
 @pytest.mark.parametrize(
     "args",
     [
+        ["agent", "use"],
+        ["agent", "show"],
+        ["agent", "open"],
         ["pr", "push"],
         ["pr", "bind", "dev", "42"],
         ["pr", "unbind"],
@@ -53,6 +56,7 @@ def test_shared_host_subcommands_get_host_hint(args):
 @pytest.mark.parametrize(
     "args",
     [
+        ["agent", "modles"],
         ["pr", "psuh"],
         ["issue", "aply"],
         ["outbox", "aply"],
@@ -75,6 +79,7 @@ def test_shared_group_typos_stay_unknown_commands(args):
         ["pr", "review", "add"],
         ["issue", "create"],
         ["outbox", "submit"],
+        ["agent", "models"],
         ["service", "refresh"],
         ["config", "validate"],
     ],
