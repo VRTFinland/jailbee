@@ -155,7 +155,9 @@ def test_pr_push_picker_publishes_picked_manifest(source_choice):
 @pytest.mark.parametrize("updating", [False, True])
 @pytest.mark.parametrize("numbered", [False, True])
 @pytest.mark.parametrize("fail_edit", [False, True])
-def test_matching_source_updates_via_own_branch_flow(mocker, tmp_path, entry, updating, numbered, fail_edit):
+def test_matching_source_updates_via_own_branch_flow(
+    mocker, tmp_path, entry, updating, numbered, fail_edit
+):
     import json
 
     from tests.test_branch_pr import StoreFiles
@@ -165,12 +167,19 @@ def test_matching_source_updates_via_own_branch_flow(mocker, tmp_path, entry, up
     cfg.pr.ai_description = False
     incus.config_get_checked.return_value = None
     files = StoreFiles("uuid-full")
-    files["own.json"] = json.dumps({
-        "version": 1, "repo": "acme/widgets", "pr": 123 if numbered and updating else None, "head_sha": None,
-        "source": "refs/heads/feat/foo", "source_sha": "a" * 40,
-        "actions": [{"type": "description", "title": "Staged title", "body": "Staged body"}],
-    })
+    files["own.json"] = json.dumps(
+        {
+            "version": 1,
+            "repo": "acme/widgets",
+            "pr": 123 if numbered and updating else None,
+            "head_sha": None,
+            "source": "refs/heads/feat/foo",
+            "source_sha": "a" * 40,
+            "actions": [{"type": "description", "title": "Staged title", "body": "Staged body"}],
+        }
+    )
     incus.list_containers.return_value[0]["config"] = {"volatile.uuid": "uuid-full"}
+
     def probe(full, argv, **kwargs):
         if "symbolic-ref" in argv:
             return "feat/foo\n"
@@ -182,7 +191,9 @@ def test_matching_source_updates_via_own_branch_flow(mocker, tmp_path, entry, up
 
     incus.exec.side_effect = probe
     mocker.patch("jailbee.pr_outbox.pending_pr_text", wraps=pending_text)
-    publish = mocker.patch("jailbee.sync.publish_branch_from_container", return_value=_publish_result())
+    publish = mocker.patch(
+        "jailbee.sync.publish_branch_from_container", return_value=_publish_result()
+    )
     pinned = mocker.patch("jailbee.sync.fetch_ref_from_container")
     create = mocker.patch("jailbee.pr.create_pr", return_value=_pr_created())
     edit = mocker.patch("jailbee.pr.edit_pr")
@@ -199,8 +210,13 @@ def test_matching_source_updates_via_own_branch_flow(mocker, tmp_path, entry, up
     elif entry == "outbox":
         mocker.patch("jailbee.config.load_repo_config", return_value=cfg)
         mocker.patch("jailbee.incus.Incus", return_value=incus)
-        mocker.patch("jailbee.lifecycle.resolve_container_for_interactive", return_value="sampleapp-feat-foo")
-        mocker.patch("jailbee.outbox.commands.pr_creation", return_value={"kind": "source", "manifest": "own.json"})
+        mocker.patch(
+            "jailbee.lifecycle.resolve_container_for_interactive", return_value="sampleapp-feat-foo"
+        )
+        mocker.patch(
+            "jailbee.outbox.commands.pr_creation",
+            return_value={"kind": "source", "manifest": "own.json"},
+        )
         args = ["outbox", "apply", "feat-foo", "pr/own.json", "--yes"]
     result = CliRunner().invoke(app, args)
     if fail_edit and updating:
@@ -235,11 +251,16 @@ def test_matching_source_updates_via_own_branch_flow(mocker, tmp_path, entry, up
     pinned.assert_not_called()
     if updating:
         create.assert_not_called()
-        edit.assert_called_once_with(tmp_path, 123, title="Staged title", body="Staged body", repo="acme/widgets")
+        edit.assert_called_once_with(
+            tmp_path, 123, title="Staged title", body="Staged body", repo="acme/widgets"
+        )
     else:
         assert create.call_args.kwargs["title"] == "Staged title"
         assert create.call_args.kwargs["body"] == "Staged body"
-        assert any(c.args == ("sampleapp-feat-foo", "user.jailbee.pr", "123") for c in incus.config_set.call_args_list)
+        assert any(
+            c.args == ("sampleapp-feat-foo", "user.jailbee.pr", "123")
+            for c in incus.config_set.call_args_list
+        )
     assert "own.json" not in files
 
 
@@ -253,7 +274,9 @@ def test_matching_source_never_overrides_explicit_target(source_choice, options)
     # replace explicit arguments before normal PR targeting starts.
     from jailbee.sync import SyncError
 
-    p["mocker"].patch("jailbee.sync.assert_container_publishable", side_effect=SyncError("preflight"))
+    p["mocker"].patch(
+        "jailbee.sync.assert_container_publishable", side_effect=SyncError("preflight")
+    )
     result = CliRunner().invoke(app, ["pr", "push", "feat-foo", *options])
     assert result.exit_code == 1 and "preflight" in result.output
     p["source"].assert_not_called()

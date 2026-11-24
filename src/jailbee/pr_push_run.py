@@ -228,7 +228,9 @@ def run_pr_push(
         return
 
     short = short_name(cfg, full)
-    pending = [] if source_manifest is not None else branch_pr.pending_source_manifests(cfg, incus, full)
+    pending = (
+        [] if source_manifest is not None else branch_pr.pending_source_manifests(cfg, incus, full)
+    )
     if (
         len(pending) == 1
         and pending[0].own_branch
@@ -448,14 +450,20 @@ def run_pr_push(
                 from jailbee.outbox.models import OutboxChanged
 
                 own_text = pr_outbox.pending_pr_text(
-                    cfg, incus, full, scope=scope, source_branch=container_branch,
+                    cfg,
+                    incus,
+                    full,
+                    scope=scope,
+                    source_branch=container_branch,
                     uid=cfg.container_user.uid,
                     for_pr=record.number,
                     numbered_only=is_foreign_pr_head,
                     source_manifest=selected_own,
                 )
                 if own_text is None:
-                    raise OutboxChanged(f"{selected_own}: staged description unavailable for this PR")
+                    raise OutboxChanged(
+                        f"{selected_own}: staged description unavailable for this PR"
+                    )
             plan = pr_flow.resolve_pr_text_and_head(
                 cfg,
                 incus,

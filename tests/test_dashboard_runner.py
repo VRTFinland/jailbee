@@ -388,6 +388,4 @@ def test_run_actions_progress_sees_a_question_close_when_the_handler_raises(tmp_
         [runner.ActionRun(["merge"], tmp_path)], run=fake, progress=heard, on_prompt=boom
     )
 
-    assert heard.events == [
-        ("ask", 0, True), ("ask", 0, False), ("out", 0, "\nui gone\n")
-    ]
+    assert heard.events == [("ask", 0, True), ("ask", 0, False), ("out", 0, "\nui gone\n")]

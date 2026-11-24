@@ -174,7 +174,9 @@ def test_own_source_picker_has_identical_terminal_and_dashboard_rows(at_terminal
         PendingSource("child.json", "Child", "refs/jailbee/from/child/topic", "main"),
     ]
     terminal, dashboard, first, second = _both(
-        at_terminal, at_dashboard, lambda asked: asked.options[0],
+        at_terminal,
+        at_dashboard,
+        lambda asked: asked.options[0],
         lambda: choose_pr_source(pending, own_label="container branch"),
     )
     assert terminal == dashboard

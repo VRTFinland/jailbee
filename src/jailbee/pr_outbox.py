@@ -1808,7 +1808,10 @@ def pending_pr_text(
         if is_source_manifest(manifest):
             from jailbee.branch_pr import own_source_branch
 
-            if name != source_manifest or own_source_branch(cfg, incus, container, manifest) is None:
+            if (
+                name != source_manifest
+                or own_source_branch(cfg, incus, container, manifest) is None
+            ):
                 continue
         if manifest.repo != slug:
             if known_slugs is None:

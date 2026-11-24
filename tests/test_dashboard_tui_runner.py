@@ -228,7 +228,8 @@ def test_source_update_exception_remains_in_queue_detail_and_log(mocker, tmp_pat
     session.run_action(
         RepoTarget(tmp_path, None),
         ["pr", "push", "alpha-x", "--source-manifest", "own.json"],
-        style="output", label="pr push alpha-x",
+        style="output",
+        label="pr push alpha-x",
     )
     (entry,) = session.queue
     assert entry.state == "failed"
@@ -237,7 +238,9 @@ def test_source_update_exception_remains_in_queue_detail_and_log(mocker, tmp_pat
     assert "permission denied [remote]" in session.notice
     from jailbee.dashboard.tui.session import PickerEntry
 
-    session._queue_chosen(session.queue_entry_picker(entry.id), PickerEntry("Show output", "output", "o"))
+    session._queue_chosen(
+        session.queue_entry_picker(entry.id), PickerEntry("Show output", "output", "o")
+    )
     assert "permission denied [remote]" in terminal.shown[-1][1]
 
 

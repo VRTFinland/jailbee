@@ -128,9 +128,7 @@ def own_source_branch(
     repo_dir = container_repo_dir(cfg, incus, full)
 
     def probe(*args: str) -> str:
-        value = incus.exec(
-            full, ["git", "-C", repo_dir, *args], uid=cfg.container_user.uid
-        )
+        value = incus.exec(full, ["git", "-C", repo_dir, *args], uid=cfg.container_user.uid)
         return value.strip() if isinstance(value, str) else ""
 
     try:

@@ -500,8 +500,7 @@ def source(
 
         cwd = Path.cwd()
         if not allow_same_commit and (
-            sha == git.get_head_sha(cwd)
-            or ref == f"refs/heads/{git.get_current_branch(cwd)}"
+            sha == git.get_head_sha(cwd) or ref == f"refs/heads/{git.get_current_branch(cwd)}"
         ):
             raise OutboxCommandError(
                 "source is your own branch; use `jailbee pr description --new` instead "
