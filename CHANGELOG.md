@@ -182,7 +182,11 @@ before editing `## Unreleased`.
   already listed does not reopen the queue after a hand-off). A bulk verb run in
   parallel (stop, outbox clear, …) is one entry per container, with its
   exit status and output; start, restart and destroy run as background jobs, so
-  their progress and failure are the job row, not an entry.
+  their progress and failure are the job row, not an entry. Creation retries
+  an existing-branch confirmation through a dashboard modal; declining shows
+  "Pick a different name", not a failure. Failures before the create worker
+  starts (including spawn errors) stay as failed entries until dismissed
+  ([#146](https://github.com/VRTFinland/jailbee/issues/146)).
   The critical actions (`merge` or `git merge`, `git push --merge`, `git pull`, `pr push`) open
   directly in their entry's live screen as a modal and refuse every terminal
   hand-off while they run in the foreground; `b` (continue in the background)

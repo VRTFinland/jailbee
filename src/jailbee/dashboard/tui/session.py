@@ -90,7 +90,8 @@ from jailbee.dashboard.egress import (
 )
 from jailbee.dashboard.egress_data import load_egress_rows
 from jailbee.dashboard.hit import Hit
-from jailbee.dashboard.jobs import JobResult, JobRunner, needs_terminal
+from jailbee.dashboard.create import start_create
+from jailbee.dashboard.jobs import JobResult, JobRunner
 from jailbee.dashboard.menus import (
     APPS_RUN_PREFIX,
     ATTACH_VERBS,
@@ -1458,9 +1459,9 @@ class DashboardSession:
         questions — the escalation question is asked by the foreground
         parent before it detaches (`lifecycle._autostart_approved`) —
         and a detached run has no terminal to ask on. When it stops
-        for that reason the command is re-run through `foreground`
-        (`needs_terminal`). The only other option is `--yes`, i.e.
-        accepting a network-widening branch config unseen.
+        for that reason the shared create runner retries through the prompt
+        channel, asking in dashboard modals rather than releasing the terminal.
+        It never adds `--yes`, which would accept unseen branch config.
         """
         try:
             check_dashboard_command(["new"], self.ssh_policy, transport=self.transport)
@@ -1494,36 +1495,32 @@ class DashboardSession:
             self.set_notice(f"'{prefix}' is no longer listed")
             return
         argv = build_argv(repo)
-        # `jailbee new` or `jailbee fork`: a failure is reported as the
-        # command the user asked for.
-        command = " ".join(argv[:2])
         try:
             check_dashboard_command(argv[1:], self.ssh_policy, transport=self.transport)
         except RouteError as exc:
             self.set_notice(str(exc))
             return
 
-        def run_with_questions() -> None:
-            # `argv` starts with the program name; the runner adds its own.
-            self.run_action(repo, argv[1:], style="output", label=command.removeprefix("jailbee "))
-
-        def finish(result: JobResult) -> None:
-            if needs_terminal(result):
-                # It stopped to ask something: run it again where its
-                # questions are asked as dashboard modals.
-                run_with_questions()
-                return
-            if result.returncode != 0:
-                reason = result.failure_line() or f"exited {result.returncode}"
-                self.set_notice(f"{command} failed: {reason}", seconds=FAILURE_NOTICE_SECONDS)
+        def finished(notice: str | None) -> None:
+            if notice is not None:
+                self.set_notice(f"{notice} · Q: queue", seconds=FAILURE_NOTICE_SECONDS)
             self.client.refresh()
 
         try:
-            self.jobs.start(f"new:{prefix}:{what}", f"creating {what}…", argv, repo.cwd(), finish)
+            start_create(
+                self.jobs,
+                self.queue,
+                key=f"new:{prefix}:{what}",
+                label=f"creating {what}…",
+                argv=argv,
+                cwd=repo.cwd(),
+                target=what,
+                run_questions=self.terminal.run_actions,
+                changed=self._queue_changed,
+                done=finished,
+            )
         except ValueError:
             self.set_notice("That container is already being created")
-        except OSError:
-            self._report_vanished_repo(repo)
 
     def run_dashboard_command(
         self,
