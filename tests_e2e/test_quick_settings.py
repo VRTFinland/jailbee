@@ -193,6 +193,21 @@ def test_resizing_menu_clamps_pages_and_keeps_all_rows_reachable(
         "Active",
         "Settings",
     ]
+    page.set_viewport_size({"width": 600, "height": 320})
+    seen: list[str] = []
+    while True:
+        seen.extend(
+            panel.locator(".menu-row:visible").evaluate_all(
+                "rows => rows.map(row => (row.classList.contains('font-row') "
+                "? row.querySelector('span').innerText : row.innerText)"
+                ".replace(/\\s+/g, ' ').trim())"
+            )
+        )
+        assert panel.evaluate("el => el.getBoundingClientRect().bottom <= innerHeight - 32")
+        if not next_page.is_visible() or next_page.is_disabled():
+            break
+        next_page.click()
+    assert seen == rows
 
 
 @pytest.mark.parametrize("public_page", ["login", "setup"])
