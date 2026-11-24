@@ -1052,7 +1052,7 @@ def test_outbox_publish_defers_plan_and_questions_to_the_channel_child(mocker, t
         "r1",
         *flags,
     ]
-    assert any("output of jailbee outbox apply" in line for line in _boxes(run)[-1].status)
+    assert _boxes(run)[-1].status == ("published",)
     wait.assert_not_called()
 
 
