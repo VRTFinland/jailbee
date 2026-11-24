@@ -920,8 +920,13 @@ class OutboxController:
             listed = _find(shown, name, pid)
             if listed is None:
                 status.append(f"{_safe(pid)}: {_CHANGED}")
+                self._delete_attempted += len(chosen)
                 continue
+            before = self._delete_attempted
             done, failure = yield from self._delete_proposal(name, listed, chosen)
+            # Safety refusals skip this proposal's remaining children too: progress
+            # counts handled selections, not only successful CLI calls.
+            self._delete_attempted += len(chosen) - (self._delete_attempted - before)
             deleted += done
             if failure is not None:
                 status.append(f"{_safe(pid)}: {_safe(failure)}")
@@ -982,7 +987,6 @@ class OutboxController:
             result = yield argv
             self._delete_attempted += 1
             if not result.ok:
-                self._delete_attempted += len(steps) - step - 1
                 return done, result.message or "delete failed"
             done += 1
             self._deleted_row(name, listed, key)

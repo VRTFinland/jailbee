@@ -525,7 +525,7 @@ def test_reopening_outbox_cannot_start_a_concurrent_delete(mocker, tmp_path):
     controller = session.outbox
     session.overlay_cancel()
     session.menu_chosen("outbox browse", None, 0)
-    assert session.overlay.busy == "Deleting 1 from the outbox…"
+    assert session.overlay.busy == "Deleting 1/1… · Esc leaves; deletion continues"
     session.outbox_intent("delete", key)
     assert session.overlay.question is None
     while jobs.calls:

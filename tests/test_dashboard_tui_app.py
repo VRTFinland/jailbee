@@ -458,6 +458,7 @@ def test_outbox_batch_delete_progress_rows_and_deferred_refresh(mocker, tmp_path
                     # Unmark d and ask about a again: the same proposal is reserved.
                     await pilot.press("space", "home", "d")
                     assert controller.state.status == ("pr/a.json: already in the delete queue",)
+                    await pilot.pause()
                     assert "already in the delete queue" in screen_text(app)
                     await pilot.press("end", "space", "d", "down", "enter")
                     assert controller.state.question is None
@@ -489,6 +490,103 @@ def test_outbox_batch_delete_progress_rows_and_deferred_refresh(mocker, tmp_path
             finally:
                 for event in release:
                     event.set()
+
+    asyncio.run(scenario())
+
+
+def test_delete_progress_counts_children_skipped_by_a_changed_scope(mocker, tmp_path):
+    import asyncio
+
+    from tests.dashboard_pilot import container_menu_keys, screen_text
+    from tests.test_dashboard_outbox import _action, _container, _listing, _proposal
+
+    shown = _proposal(actions=[_action(0), _action(1), _action(2)])
+    changed = _proposal(revision="r2", actions=[_action(0, body="changed"), _action(1)])
+    other = _proposal("pr/b.json")
+    app, group, entered, release, calls, gate = _blocking_outbox_app(
+        mocker, tmp_path,
+        [_listing(_container(shown, other)), _listing(_container(changed, other))], "drop"
+    )
+
+    quiet = tsession.da.run_cli_quiet.side_effect
+
+    def block_b(argv, **kwargs):
+        if argv[1] == "drop" and argv[3] == "pr/b.json":
+            gate["on"] = True
+        return quiet(argv, **kwargs)
+
+    tsession.da.run_cli_quiet.side_effect = block_b
+
+    async def scenario():
+        async with app.run_test(size=(140, 35)) as pilot:
+            try:
+                for key in container_menu_keys(group, "outbox browse"):
+                    await pilot.press(key)
+                controller = app.session.outbox
+                await _settle_outbox(app, pilot, controller)
+                # Expand a; mark its three children, then b, not the parent.
+                await pilot.press("enter", "down", "space", "down", "space", "down", "space", "down", "space", "d", "down", "enter")
+                async with asyncio.timeout(5):
+                    while len([a for a in calls if a[1] == "drop"]) < 2:
+                        app.session.jobs.poll()
+                        app.refresh_frame()
+                        await pilot.pause(0.001)
+                assert await asyncio.to_thread(entered.wait, 2)
+                assert "Deleting 4/4" in screen_text(app)
+                release.set()
+                await _settle_outbox(app, pilot, controller)
+                assert "pr/a.json: changed; refreshed" in controller.state.status
+            finally:
+                release.set()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("confirm_during_reload", [False, True])
+def test_delete_question_and_queue_survive_the_final_reload(mocker, tmp_path, confirm_during_reload):
+    import asyncio
+
+    from tests.dashboard_pilot import container_menu_keys
+    from tests.test_dashboard_outbox import _container, _listing, _proposal
+
+    a, b = _proposal(), _proposal("pr/b.json")
+    app, group, entered, release, calls, gate = _blocking_outbox_app(
+        mocker, tmp_path,
+        [_listing(_container(a, b)), _listing(_container(b)), _listing(_container())], "ls"
+    )
+
+    async def scenario():
+        async with app.run_test(size=(140, 35)) as pilot:
+            try:
+                for key in container_menu_keys(group, "outbox browse"):
+                    await pilot.press(key)
+                controller = app.session.outbox
+                await _settle_outbox(app, pilot, controller)
+                calls.clear()
+                gate["on"] = True
+                await pilot.press("d", "down", "enter")
+                async with asyncio.timeout(5):
+                    while not entered.is_set():
+                        app.session.jobs.poll()
+                        app.refresh_frame()
+                        await pilot.pause(0.001)
+                await pilot.pause()
+                await pilot.press("d")  # a is gone; b is the highlighted proposal
+                assert controller.state.question is not None
+                if confirm_during_reload:
+                    await pilot.press("down", "enter")
+                release.set()
+                await _settle_outbox(app, pilot, controller)
+                if not confirm_during_reload:
+                    assert controller.state.question is not None
+                    assert controller.state.question.lines[0].startswith("pr/b.json")
+                    await pilot.press("down", "enter")
+                    await _settle_outbox(app, pilot, controller)
+                assert [a[1] for a in calls] == ["drop", "ls", "drop", "ls"]
+                assert [a[3] for a in calls if a[1] == "drop"] == ["pr/a.json", "pr/b.json"]
+                assert not any(c.proposals for c in controller.state.containers)
+            finally:
+                release.set()
 
     asyncio.run(scenario())
 
