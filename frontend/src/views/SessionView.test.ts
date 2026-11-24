@@ -150,6 +150,16 @@ describe("SessionView", () => {
         expect(wrapper.get(".jump-latest").text()).toBe("Scroll to bottom ↓")
     })
 
+    it("offers the bottom after passing the latest answer when later tool content remains", async () => {
+        vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
+            if (this.classList.contains("transcript")) return {top: -3000, bottom: 2000} as DOMRect
+            if (this.id === "entry-a2") return {top: -2000, bottom: -1000} as DOMRect
+            return {top: 0, bottom: 120} as DOMRect
+        })
+        const {wrapper} = await mountSession(vi.fn().mockResolvedValue(jsonResponse(200, transcript)))
+        expect(wrapper.get(".jump-latest").text()).toBe("Scroll to bottom ↓")
+    })
+
     it("jumps to the latest answer", async () => {
         vi.spyOn(Element.prototype, "getBoundingClientRect").mockReturnValue({top: 1200, bottom: 1300} as DOMRect)
         const scrolled: string[] = []

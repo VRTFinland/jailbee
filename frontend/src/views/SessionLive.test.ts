@@ -67,11 +67,20 @@ async function mountLive(path: string) {
         handlers!.onMessage({type: "append", v: PROTOCOL_VERSION, key, entries, offset: 999})
         await flushPromises()
     }
+    const burst = async (key: FollowKey, first: RenderedEntry[], second: RenderedEntry[]) => {
+        handlers!.onMessage({type: "append", v: PROTOCOL_VERSION, key, entries: first, offset: 700})
+        // Deliver another frame after Vue patches the first, before its scroll.
+        queueMicrotask(() => {
+            handlers!.onMessage({type: "append", v: PROTOCOL_VERSION, key, entries: second, offset: 999})
+        })
+        await flushPromises()
+    }
     const hello = () => handlers!.onMessage({type: "hello", v: PROTOCOL_VERSION, device_name: "boox"})
     return {
         wrapper,
         sent,
         append,
+        burst,
         hello,
         fetchMock,
         connection: (connected: boolean) => handlers!.onConnectionChange?.(connected),
@@ -164,6 +173,24 @@ describe("SessionView live follow", () => {
         const {append} = await mountLive("/repos/alpha/sessions/claude/s-1")
         await append(sessionKey, [answer])
         expect(scrollTo).toHaveBeenCalled()
+    })
+
+    it.each(["normal", "eink"] as const)("keeps following a burst across DOM updates (%s)", async (displayProfile) => {
+        updateSettings({displayProfile, einkFollow: true})
+        setPageGeometry(5000, 0)
+        let y = 3200
+        Object.defineProperty(window, "scrollY", {get: () => y, configurable: true})
+        vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
+            const bottom = document.querySelector("#entry-a1") ? 4500 : 4000
+            if (this.classList.contains("transcript")) return {top: -y, bottom: bottom - y} as DOMRect
+            if (this.classList.contains("page-nav")) return {top: 800, bottom: 800} as DOMRect
+            return {top: 0, bottom: 0} as DOMRect
+        })
+        vi.spyOn(window, "scrollTo").mockImplementation((_x, top) => { y = top ?? 0 })
+        const {wrapper, burst} = await mountLive("/repos/alpha/sessions/claude/s-1")
+        await burst(sessionKey, [answer], [{...answer, id: "a2"}])
+        expect(wrapper.findAll(".entry.assistant")).toHaveLength(2)
+        expect(wrapper.find(".new-messages").exists()).toBe(false)
     })
 
     it("leaves the scroll position alone when the reader was further up", async () => {

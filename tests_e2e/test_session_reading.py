@@ -165,6 +165,28 @@ def test_end_follow_and_new_messages_restore_follow(
     expect(page.locator(".jump-latest")).to_have_count(0)
 
 
+def test_eink_default_holds_new_entries_even_at_the_end(
+    page: Page, make_server: Callable[..., E2EServer], tmp_path: Path
+) -> None:
+    server, transcript = open_transcript(page, make_server, tmp_path)
+    page.get_by_role("link", name="Settings", exact=True).click()
+    page.get_by_role("radio", name="E-ink (page turns").check()
+    expect(page.get_by_role("checkbox", name="Follow new messages on e-ink")).not_to_be_checked()
+    page.go_back()
+    page.get_by_role("button", name="Latest answer").click()
+    page.get_by_role("button", name="Scroll to bottom").click()
+    expect(page.locator(".jump-latest")).to_have_count(0)
+    position = page.evaluate("window.scrollY")
+    with transcript.open("a") as stream:
+        stream.write(record(25, "assistant", "Held even at the end."))
+    server.watches.open[-1].fire()
+    expect(page.get_by_role("button", name="New messages")).to_be_visible()
+    expect(page.get_by_text("Held even at the end.", exact=True)).to_have_count(0)
+    assert page.evaluate("window.scrollY") == position
+    page.get_by_role("button", name="New messages").click()
+    expect(page.get_by_text("Held even at the end.", exact=True)).to_be_in_viewport()
+
+
 def test_partial_keyboard_scroll_keeps_the_current_eink_page(
     page: Page, make_server: Callable[..., E2EServer], tmp_path: Path
 ) -> None:

@@ -89,15 +89,19 @@ const latestAnswer = computed(() => {
 })
 
 const atTranscriptEnd = ref(false)
-const latestVisible = ref(false)
+const answerAhead = ref(false)
 const unseen = ref<RenderedEntry | null>(null)
 const autoFollow = computed(() => !eink.value || settings.einkFollow)
-const jumpLabel = computed(() => {
-    if (pending.value.length || unseen.value) return "New messages ↓"
+const jumpAction = computed<"new" | "answer" | "bottom" | null>(() => {
+    if (pending.value.length || unseen.value) return "new"
     if (atTranscriptEnd.value) return null
-    if (latestAnswer.value && !latestVisible.value) return "Latest answer ↓"
-    return "Scroll to bottom ↓"
+    return answerAhead.value ? "answer" : "bottom"
 })
+const jumpLabel = computed(() => jumpAction.value === null ? null : {
+    new: "New messages ↓",
+    answer: "Latest answer ↓",
+    bottom: "Scroll to bottom ↓",
+}[jumpAction.value])
 
 function measureVisibility() {
     const headerRect = header.value?.getBoundingClientRect()
@@ -107,14 +111,13 @@ function measureVisibility() {
     if (atTranscriptEnd.value && pending.value.length === 0) unseen.value = null
     const el = latestAnswer.value === null ? null : document.getElementById(entryDomId(latestAnswer.value))
     if (el === null) {
-        latestVisible.value = false
+        answerAhead.value = false
         return
     }
     const rect = el.getBoundingClientRect()
-    const top = Math.max(0, headerRect?.bottom ?? 0)
-    const bottom = readableBottom()
-    // Any visible part counts, including a reply taller than the viewport.
-    latestVisible.value = rect.bottom > top && rect.top < bottom && rect.bottom > rect.top
+    // Once the answer's start is visible or passed, offer the end, not a jump
+    // backwards to an answer the reader has already reached.
+    answerAhead.value = rect.top >= readableBottom()
 }
 
 watch(shown, () => void nextTick(measureVisibility))
@@ -144,6 +147,8 @@ function entryDomId(id: string): string {
 const dashboard = useDashboard()
 let unfollow: (() => void) | null = null
 let unmounted = false
+// Finish each DOM update and its follow jump before measuring the next frame.
+let appendQueue = Promise.resolve()
 
 /** Scroll to the transcript, not the blank space reserved for answer jumps. */
 function scrollToEnd() {
@@ -189,6 +194,7 @@ watch(autoFollow, async () => {
 
 function startFollowing(view: TranscriptView) {
     if (unmounted) return // left before the transcript arrived
+    const activeTranscript = transcript.value
     unfollow = dashboard?.follow(
         {
             prefix: prefix.value,
@@ -198,7 +204,11 @@ function startFollowing(view: TranscriptView) {
         },
         view.offset,
         settings.agentContext,
-        {onAppend: (entries) => void onLiveAppend(entries)},
+        {onAppend: (entries) => {
+            appendQueue = appendQueue.then(async () => {
+                if (!unmounted && transcript.value === activeTranscript) await onLiveAppend(entries)
+            })
+        }},
     ) ?? null
 }
 
@@ -212,7 +222,7 @@ async function jump() {
     const firstUnseen = unseen.value
     const target = firstUnseen
         ? (firstUnseen.kind === "assistant" ? firstUnseen.id : null)
-        : (jumpLabel.value === "Latest answer ↓" ? latestAnswer.value : null)
+        : (jumpAction.value === "answer" ? latestAnswer.value : null)
     await applyPending()
     unseen.value = null
     const el = target === null ? null : document.getElementById(entryDomId(target))
