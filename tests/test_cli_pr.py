@@ -710,6 +710,8 @@ def test_pr_outbox_pins_creation_and_update_lookup(mocker, tmp_path, is_update):
             }
         )
     _setup(mocker, tmp_path, labels=labels)
+    mocker.patch("jailbee.git.rev_parse", return_value=None)
+    mocker.patch("jailbee.git.update_ref", return_value=True)
     mocker.patch("jailbee.sync.publish_branch_from_container", return_value=_publish_result())
     mocker.patch(
         "jailbee.pr_outbox.pending_pr_text", return_value=_outbox_source(branch="feat/foo")
@@ -737,6 +739,144 @@ def test_pr_outbox_pins_creation_and_update_lookup(mocker, tmp_path, is_update):
     assert commands[0][:3] == ["gh", "pr", "view" if is_update else "create"]
     assert all("--repo" in cmd for cmd in commands)
     assert all(cmd[cmd.index("--repo") + 1] == "acme/widgets" for cmd in commands)
+
+
+@pytest.mark.parametrize("updating", [False, True])
+def test_pr_push_updates_the_pr_head_ref_to_the_pushed_commit(mocker, tmp_path, updating):
+    import subprocess
+
+    from jailbee.host_target import SyncInputs, TargetSnapshot, resolve_sync_target
+
+    labels = None
+    if updating:
+        labels = {
+            "user.jailbee.pr": "123",
+            "user.jailbee.pr_branch": "feat/foo",
+            "user.jailbee.pr_author": "1",
+            "user.jailbee.base_branch": "main",
+        }
+    _setup(mocker, tmp_path, labels=labels)
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(tmp_path),
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.com",
+            "commit",
+            "--allow-empty",
+            "-qm",
+            "pushed",
+        ],
+        check=True,
+    )
+    pushed_sha = subprocess.run(
+        ["git", "-C", str(tmp_path), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    result = _publish_result()
+    from dataclasses import replace
+
+    result = replace(result, fetch=replace(result.fetch, new_oid=pushed_sha))
+    if updating:
+        # The cache may predate a successful force-push with rewritten history.
+        subprocess.run(
+            [
+                "git",
+                "-C",
+                str(tmp_path),
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.com",
+                "commit",
+                "--allow-empty",
+                "-qm",
+                "old cached head",
+            ],
+            check=True,
+        )
+        old_cached_sha = subprocess.run(
+            ["git", "-C", str(tmp_path), "rev-parse", "HEAD"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        subprocess.run(
+            ["git", "-C", str(tmp_path), "update-ref", "refs/jailbee/pr/123/head", old_cached_sha],
+            check=True,
+        )
+    mocker.patch("jailbee.sync.publish_branch_from_container", return_value=result)
+    mocker.patch("jailbee.pr.create_pr", return_value=_pr_created())
+    mocker.patch("jailbee.pr.view_existing_pr", return_value=_pr_created(already=True))
+
+    command = CliRunner().invoke(app, ["pr", "push", "feat-foo"])
+
+    assert command.exit_code == 0, command.output
+    if updating:
+        assert old_cached_sha != pushed_sha
+    host = TargetSnapshot("main", None, "local", "refs/heads/main", "equal")
+    target = resolve_sync_target(tmp_path, SyncInputs(pr_number=123), host)
+    assert target.sha == pushed_sha
+    divergence = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(tmp_path),
+            "rev-list",
+            "--left-right",
+            "--count",
+            f"{pushed_sha}...{target.ref}",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.split()
+    assert divergence == ["0", "0"]
+
+
+@pytest.mark.parametrize("failure", ["push", "pr"])
+def test_pr_push_does_not_update_head_ref_after_failure(mocker, tmp_path, failure):
+    from jailbee.pr import PrCreateError
+    from jailbee.sync import SyncError
+
+    _setup(mocker, tmp_path)
+    update_ref = mocker.patch("jailbee.git.update_ref")
+    if failure == "push":
+        mocker.patch(
+            "jailbee.sync.publish_branch_from_container", side_effect=SyncError("push failed")
+        )
+    else:
+        mocker.patch("jailbee.sync.publish_branch_from_container", return_value=_publish_result())
+        mocker.patch("jailbee.pr.create_pr", side_effect=PrCreateError("PR failed"))
+
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo"])
+
+    assert result.exit_code == 1
+    update_ref.assert_not_called()
+
+
+def test_pr_push_does_not_refresh_a_foreign_pr_head(mocker, tmp_path):
+    labels = {
+        "user.jailbee.pr": "123",
+        "user.jailbee.pr_branch": "feat/foo",
+        "user.jailbee.pr_adopted": "1",
+        "user.jailbee.base_branch": "main",
+    }
+    _setup(mocker, tmp_path, labels=labels)
+    mocker.patch("jailbee.sync.publish_branch_from_container", return_value=_publish_result())
+    mocker.patch("jailbee.pr.view_existing_pr", return_value=_pr_created(already=True))
+    update_ref = mocker.patch("jailbee.git.update_ref")
+
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo", "--yes"])
+
+    assert result.exit_code == 0, result.output
+    update_ref.assert_not_called()
 
 
 def test_create_pr_happy_path(mocker, tmp_path):

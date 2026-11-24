@@ -832,6 +832,22 @@ def run_pr_push(
                     f"ignored. To move the base later: jailbee git retarget {short} <branch>"
                 )
             pr_links.link_pr_family(cfg, incus, full, short)
+            # SYNC reads this cached PR head ref; the successful push is already
+            # authoritative for a same-repository head we just published.
+            if not is_foreign_pr_head and (
+                stored_pr_branch is None or publish.publish_name == stored_pr_branch
+            ):
+                head_ref = pr_mod.pr_head_ref(created.number)
+                cached_sha = git_mod.rev_parse(cfg.repo_root, head_ref)
+                # A force-push may replace a divergent cached head, so ancestry
+                # is not a safe freshness test. Compare-and-swap avoids overwriting
+                # an autofetch that changes the ref after this read.
+                git_mod.update_ref(
+                    cfg.repo_root,
+                    head_ref,
+                    publish.fetch.new_oid,
+                    old_oid=cached_sha or "",
+                )
             # The offer to publish what else the container wrote, deliberately *not*
             # adjacent to `render_pr_outcome`: the description this run consumed is
             # recorded just above (here on the create path, inside `apply_pr_updates`

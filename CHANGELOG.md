@@ -352,6 +352,9 @@ before editing `## Unreleased`.
   last fetched (`refs/jailbee/pr/<N>/head`), so ↑ reads "push needed" and ↓
   "someone else pushed"; SYNC shows dim `pr`, or yellow `pr?` when the host
   branch stands in ([#145](https://github.com/VRTFinland/jailbee/issues/145)).
+  A successful push to the PR's own head branch refreshes that comparison
+  immediately, without waiting for the next automatic fetch
+  ([#144](https://github.com/VRTFinland/jailbee/issues/144)).
   Orchestration children (including PR children) and forks compare with their
   parent ahead of a PR binding: ↑ counts commits not yet imported, ↓ the
   parent's commits they lack (the parent's HEAD as the dashboard's previous

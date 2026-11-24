@@ -560,7 +560,9 @@ diff from the sync target), **↑** (commits unique to the container), **↓**
 host target branch, except for a PR-bound container, which compares with the
 PR head the host last fetched (↑ = push needed, ↓ = someone else pushed; cells
 marked dim `pr`, or yellow `pr?` when that ref is missing and the host branch
-stands in), and an orchestration child or fork, which compares with its parent
+stands in). A successful PR push to its own head branch updates that ref
+immediately, before the next git-status refresh. An orchestration child or fork
+compares with its parent
 container ahead of any PR (↑ = commits not yet imported, ↓ = parent commits it
 lacks; dim `⑂`, or yellow `⑂?` when the parent is stopped or not yet seen by the
 dashboard and the host branch stands in; plain `jb ls` has no gather pass, so a
