@@ -110,6 +110,114 @@ def test_large_font_menu_pages_fit_above_the_bottom_guard(
         next_page.click()
 
 
+@pytest.mark.parametrize("page_context", ["containers", "session"])
+@pytest.mark.parametrize("profile", ["normal", "eink"])
+def test_small_viewport_pages_show_every_context_row_in_order(
+    page: Page,
+    make_server: Callable[..., E2EServer],
+    tmp_path: Path,
+    page_context: str,
+    profile: str,
+) -> None:
+    page.set_viewport_size({"width": 390, "height": 320})
+    server, _transcript = open_transcript(page, make_server, tmp_path)
+    if page_context == "containers":
+        page.goto(f"{server.url}/#/")
+        expect(page.get_by_role("heading", name="JailBee")).to_be_visible()
+    if profile == "eink":
+        page.evaluate("localStorage.setItem('jailbee.displayProfile', 'eink')")
+        page.reload()
+    open_quick_settings(page)
+    panel = page.get_by_role("dialog", name="Quick settings")
+    assert panel.evaluate("el => el.getBoundingClientRect().bottom <= innerHeight - 32")
+
+    expected_rows = ["Body: 16px", "Code: 14px", "Theme: Auto", "View"]
+    expected_rows += (
+        ["All", "Running", "Active"]
+        if page_context == "containers"
+        else ["Follow new messages", "Show thinking", "Agent context Hidden Collapsed Shown"]
+    )
+    expected_rows.append("Settings")
+    seen: list[str] = []
+    previous = panel.get_by_role("button", name="Previous settings page")
+    while previous.is_visible() and previous.is_enabled():
+        previous.click()
+    while True:
+        seen.extend(
+            panel.locator(".menu-row:visible").evaluate_all(
+                "rows => rows.map(row => (row.classList.contains('font-row') "
+                "? row.querySelector('span').innerText : row.innerText)"
+                ".replace(/\\s+/g, ' ').trim())"
+            )
+        )
+        next_page = panel.get_by_role("button", name="Next settings page")
+        if not next_page.is_visible() or next_page.is_disabled():
+            break
+        next_page.click()
+        assert panel.evaluate("el => el.getBoundingClientRect().bottom <= innerHeight - 32")
+    assert seen == expected_rows
+    assert panel.evaluate("el => el.scrollHeight === el.clientHeight")
+
+
+@pytest.mark.parametrize("profile", ["normal", "eink"])
+def test_resizing_menu_clamps_pages_and_keeps_all_rows_reachable(
+    logged_in: Page, profile: str
+) -> None:
+    page = logged_in
+    page.set_viewport_size({"width": 390, "height": 320})
+    if profile == "eink":
+        page.evaluate("localStorage.setItem('jailbee.displayProfile', 'eink')")
+        page.reload()
+    open_quick_settings(page)
+    panel = page.get_by_role("dialog", name="Quick settings")
+    next_page = panel.get_by_role("button", name="Next settings page")
+    while next_page.is_visible() and next_page.is_enabled():
+        next_page.click()
+    page.set_viewport_size({"width": 600, "height": 600})
+    page.wait_for_function("""() => {
+        const status = document.querySelector('.menu-pages [role=status]');
+        return status && status.textContent === '1 / 1';
+    }""")
+    assert panel.evaluate("el => el.getBoundingClientRect().bottom <= innerHeight - 32")
+    rows = panel.locator(".menu-row:visible").evaluate_all(
+        "rows => rows.map(row => (row.classList.contains('font-row') "
+        "? row.querySelector('span').innerText : row.innerText).replace(/\\s+/g, ' ').trim())"
+    )
+    assert rows == [
+        "Body: 16px",
+        "Code: 14px",
+        "Theme: Auto",
+        "View",
+        "All",
+        "Running",
+        "Active",
+        "Settings",
+    ]
+
+
+@pytest.mark.parametrize("public_page", ["login", "setup"])
+def test_quick_settings_icon_does_not_overlap_public_page_content(
+    page: Page, make_server: Callable[..., E2EServer], public_page: str
+) -> None:
+    server = make_server(setup=public_page == "setup")
+    page.set_viewport_size({"width": 320, "height": 600})
+    page.goto(f"{server.url}/#/{public_page}")
+    heading = "JailBee" if public_page == "login" else "Register a security key"
+    expect(page.get_by_role("heading", name=heading)).to_be_visible()
+    expect(page.locator("main input").first).to_be_visible()
+
+    overlaps = page.evaluate("""() => {
+        const icon = document.querySelector('.quick-trigger').getBoundingClientRect();
+        return [...document.querySelectorAll('main h1, main input, main button')].some(element => {
+            const rect = element.getBoundingClientRect();
+            return rect.width > 0 && rect.height > 0
+                && icon.left < rect.right && icon.right > rect.left
+                && icon.top < rect.bottom && icon.bottom > rect.top;
+        });
+    }""")
+    assert not overlaps
+
+
 def test_menu_follow_opt_out_keeps_live_entries_from_scrolling(
     page: Page, make_server: Callable[..., E2EServer], tmp_path: Path
 ) -> None:

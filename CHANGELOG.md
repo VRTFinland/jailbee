@@ -244,7 +244,7 @@ before editing `## Unreleased`.
   thinking and agent-context controls; container pages have no contextual section.
   Short-screen menus paginate whole rows instead of scrolling, with large e-ink
   touch targets and no shadow. All / Running / Active filters live in the menu,
-  with an icon marker and a slim reset notice for non-All selections. They are
+  with an accessible icon marker and a slim reset notice for non-All selections. They are
   remembered per browser, follow live snapshots and keep nonmatching parents
   dimmed above matching children, with tree prefixes recomputed for the visible rows. Active includes recently idle sessions independently
   of cell width or session count, with a bold idle-age label in the browser;

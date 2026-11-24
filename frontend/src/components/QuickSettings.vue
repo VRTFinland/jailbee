@@ -66,12 +66,14 @@ const open = ref(false)
 const trigger = ref<HTMLButtonElement | null>(null)
 const panel = ref<HTMLElement | null>(null)
 
-async function close() {
+async function close(restoreFocus = true) {
     open.value = false
-    await nextTick()
-    trigger.value?.focus({preventScroll: true})
+    if (restoreFocus) {
+        await nextTick()
+        trigger.value?.focus({preventScroll: true})
+    }
 }
-watch(() => route.path, () => { if (open.value) void close() })
+watch(() => route.path, () => { if (open.value) void close(false) })
 async function toggle() {
     if (open.value) return close()
     open.value = true
@@ -87,6 +89,8 @@ function focusable(): HTMLElement[] {
 function onKey(event: KeyboardEvent) {
     if (!open.value) return
     if (event.key === "Escape") {
+        // Native select popups consume Escape themselves; their open state is not exposed.
+        if (event.target instanceof HTMLSelectElement) return
         event.preventDefault()
         void close()
         return
@@ -122,11 +126,11 @@ onBeforeUnmount(() => {
 <template>
     <div class="quick-settings">
         <button ref="trigger" type="button" class="quick-trigger" aria-label="Quick settings"
-            aria-haspopup="dialog" :aria-expanded="open" @click="toggle">
+            aria-haspopup="dialog" :aria-expanded="open" :aria-describedby="filtered ? 'filter-description' : undefined" @click="toggle">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16" /></svg>
-            <span v-if="filtered" class="filter-marker" aria-label="Container filter enabled" />
+            <span v-if="filtered" id="filter-description" class="filter-marker"><span class="visually-hidden">Container filter enabled</span></span>
         </button>
-        <div v-if="open" class="quick-backdrop" @click="close" />
+        <div v-if="open" class="quick-backdrop" @click="close()" />
         <section v-if="open" ref="panel" class="quick-panel" role="dialog" aria-label="Quick settings" aria-modal="true" tabindex="-1">
             <div v-for="font in fonts" :key="font.field" class="menu-row font-row">
                 <span>{{ font.label }}: {{ settings[font.field] }}px</span>
@@ -140,11 +144,11 @@ onBeforeUnmount(() => {
             <button type="button" class="menu-row theme-cycle" :aria-label="`Theme: ${THEME_LABELS[settings.theme]}`" @click="cycleTheme">Theme: {{ THEME_LABELS[settings.theme] }}</button>
             <template v-if="context">
                 <div class="menu-row view-heading">View</div>
-                <template v-if="context === 'containers'">
+                <div v-if="context === 'containers'" role="group" aria-label="Container filter">
                     <button v-for="filter in filters" :key="filter.mode" type="button" class="menu-row"
                         :aria-label="filter.label" :title="filter.label" :aria-pressed="settings.containerFilter === filter.mode"
                         @click="updateSettings({containerFilter: filter.mode})">{{ filter.label }}</button>
-                </template>
+                </div>
                 <template v-else>
                     <label class="menu-row"><input type="checkbox" aria-label="Follow new messages" :checked="follow" @change="setFollow" /> Follow new messages</label>
                     <label class="menu-row"><input type="checkbox" aria-label="Show thinking" :checked="settings.showThinking" @change="updateSettings({showThinking: ($event.target as HTMLInputElement).checked})" /> Show thinking</label>
@@ -155,7 +159,7 @@ onBeforeUnmount(() => {
                     </label>
                 </template>
             </template>
-            <router-link class="menu-row" :to="{name: 'settings'}" @click="close">Settings</router-link>
+            <router-link class="menu-row" :to="{name: 'settings'}" @click="close(false)">Settings</router-link>
             <nav class="menu-pages" hidden aria-label="Settings pages">
                 <button type="button" aria-label="Previous settings page" :disabled="page === 0" @click="turn(-1)">&uarr;</button>
                 <span role="status">{{ page + 1 }} / {{ pageCount }}</span>
@@ -182,6 +186,7 @@ onBeforeUnmount(() => {
 .context-row { justify-content: space-between; flex-wrap: wrap; }
 .view-heading { color: var(--muted); border-top: 1px solid var(--border); }
 .menu-pages { display: flex; align-items: center; justify-content: space-between; padding-top: 0.5rem; }
+.visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 .filter-marker { position: absolute; top: 0.2rem; right: 0.2rem; width: 0.5rem; height: 0.5rem; border-radius: 50%; background: var(--accent); border: 1px solid var(--text); }
 :root[data-profile="eink"] .quick-panel, :root[data-theme="eink"] .quick-panel { box-shadow: none; }
 :root[data-profile="eink"] .quick-backdrop { background: transparent; }
