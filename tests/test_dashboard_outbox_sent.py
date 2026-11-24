@@ -14,7 +14,7 @@ from jailbee.outbox import sent
 from jailbee.outbox.sent import SentAction
 from tests.dashboard_fixtures import cfg_group, ci
 from tests.dashboard_pilot import bare_session
-from tests.test_dashboard_session import _PLAN, _HeldJobs, _open_box, _quiet, _settle
+from tests.test_dashboard_session import _HeldJobs, _open_box, _quiet, _settle
 
 T0 = datetime(2026, 11, 4, 10, 0, tzinfo=UTC)
 CREATED = "uuid-alpha-x"  # the instance uuid names the incarnation

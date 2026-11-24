@@ -50,8 +50,13 @@ def test_success_keeps_published_url(tmp_path):
         done(ActionOutcome([RunResult(status=0)], url, [url]))
 
     publish(
-        ["issue", "apply", "alpha-x", "a.json"], cwd=tmp_path, target="alpha-x",
-        queue=queue, run_questions=questions, changed=lambda: None, done=lambda result: None,
+        ["issue", "apply", "alpha-x", "a.json"],
+        cwd=tmp_path,
+        target="alpha-x",
+        queue=queue,
+        run_questions=questions,
+        changed=lambda: None,
+        done=lambda result: None,
     )
     (entry,) = queue
     assert entry.state == "done" and entry.output == url
@@ -68,8 +73,13 @@ def test_cancelled_creation_does_not_report_success(tmp_path, cancelled, output)
         done(ActionOutcome([RunResult(status=0, cancelled=cancelled)], output))
 
     publish(
-        ["pr", "push", "alpha-x"], cwd=tmp_path, target="alpha-x", queue=queue,
-        run_questions=questions, changed=lambda: None, done=completed.append,
+        ["pr", "push", "alpha-x"],
+        cwd=tmp_path,
+        target="alpha-x",
+        queue=queue,
+        run_questions=questions,
+        changed=lambda: None,
+        done=completed.append,
     )
     assert completed[0].returncode != 0
     assert next(iter(queue)).state == "failed"
@@ -83,13 +93,20 @@ def test_marked_manifest_then_source_publish_without_handoff(remote):
     runner = FakeRunner(
         _listing(
             _proposal(),
-            _proposal("pr/source.json", state="awaiting-push", create_scope={"kind": "source", "manifest": "source.json"}),
+            _proposal(
+                "pr/source.json",
+                state="awaiting-push",
+                create_scope={"kind": "source", "manifest": "source.json"},
+            ),
         ),
         allow=lambda argv: not remote or "-y" not in argv,
     )
     pending = []
     ctl = OutboxController(
-        runner, title="Outbox", container=C, standalone=False,
+        runner,
+        title="Outbox",
+        container=C,
+        standalone=False,
         on_change=lambda state: None,
         run_publish=lambda argv, done: pending.append((list(argv), done)),
     )

@@ -120,10 +120,18 @@ def test_outbox_publish_uses_runner_modal_and_keeps_queue_result(mocker, tmp_pat
     row = _proposal(f"{kind if kind != 'source' else 'pr'}/a.json")
     if kind == "source":
         row.update(state="awaiting-push", create_scope={"kind": "source", "manifest": "a.json"})
-    mocker.patch("jailbee.dashboard.accounts.run_cli_quiet", return_value=CliResult(True, "", _listing(row)))
+    mocker.patch(
+        "jailbee.dashboard.accounts.run_cli_quiet", return_value=CliResult(True, "", _listing(row))
+    )
     from jailbee.config.models_remote import RemoteSSHConfig
 
-    app = make_app(mocker, [_group(tmp_path)], transport=transport, remote=transport != "none", ssh_policy=RemoteSSHConfig())
+    app = make_app(
+        mocker,
+        [_group(tmp_path)],
+        transport=transport,
+        remote=transport != "none",
+        ssh_policy=RemoteSSHConfig(),
+    )
     app.threaded_actions = True
     app.action_runner = drunner.run_action
     spawn = Spawns([_prompt(question="Publish proposal?", default=False)])

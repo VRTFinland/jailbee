@@ -675,7 +675,9 @@ def test_closing_the_box_during_pr_preflight_runs_no_terminal_hand_off(mocker, t
     app, group, entered, release, _calls, gate = _blocking_outbox_app(
         mocker, tmp_path, [_listing(_container(awaiting))], "ls"
     )
-    handed = mocker.patch.object(app.session, "run_dashboard_command", side_effect=AssertionError("terminal hand-off"))
+    handed = mocker.patch.object(
+        app.session, "run_dashboard_command", side_effect=AssertionError("terminal hand-off")
+    )
     published = mocker.patch.object(app, "run_actions")
 
     async def scenario():
@@ -713,7 +715,9 @@ def test_pr_preflight_with_the_box_open_runs_the_action_runner_once(mocker, tmp_
     app, group, entered, release, _calls, gate = _blocking_outbox_app(
         mocker, tmp_path, [_listing(_container(awaiting))], "ls"
     )
-    handed = mocker.patch.object(app.session, "run_dashboard_command", side_effect=AssertionError("terminal hand-off"))
+    handed = mocker.patch.object(
+        app.session, "run_dashboard_command", side_effect=AssertionError("terminal hand-off")
+    )
     published = mocker.patch.object(app, "run_actions")
 
     async def scenario():

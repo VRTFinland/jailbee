@@ -174,7 +174,16 @@ def test_outbox_publish_questions_match_terminal(publication_env, at_terminal, a
         at_terminal,
         at_dashboard,
         lambda q: False,
-        lambda: CliRunner().invoke(app, ["outbox", "apply", "feature", f"{kind}/001.json", *(["--draft"] if kind == "pr" else [])]),
+        lambda: CliRunner().invoke(
+            app,
+            [
+                "outbox",
+                "apply",
+                "feature",
+                f"{kind}/001.json",
+                *(["--draft"] if kind == "pr" else []),
+            ],
+        ),
     )
     assert tr.exit_code == dr.exit_code == 0, (tr.output, dr.output)
     assert terminal == dashboard and terminal

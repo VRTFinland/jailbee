@@ -274,7 +274,9 @@ def _unpublishable_reason(proposal: dob.ProposalItem) -> str | None:
     return None
 
 
-def _creation_lines(name: str, proposal: dob.ProposalItem, *, dashboard: bool = False) -> tuple[str, ...]:
+def _creation_lines(
+    name: str, proposal: dob.ProposalItem, *, dashboard: bool = False
+) -> tuple[str, ...]:
     """What the batch question says a PR creation does."""
     scope = proposal.create_scope or {}
     argv = dob.create_pr_argv(name, proposal.create_scope) or []
@@ -286,7 +288,9 @@ def _creation_lines(name: str, proposal: dob.ProposalItem, *, dashboard: bool = 
         what = f"the branch of {_safe(name)}"
     return (
         f"pushes {what}, opens/updates its PR: jailbee {_safe(' '.join(argv))}",
-        "runs in the dashboard; questions open as modals" if dashboard else "runs in the terminal; it may ask its own questions",
+        "runs in the dashboard; questions open as modals"
+        if dashboard
+        else "runs in the terminal; it may ask its own questions",
     )
 
 
@@ -585,7 +589,11 @@ class OutboxController:
         """
         self.state = replace(self.state, busy=busy, question=None, status=())
         try:
-            if self.run_publish is not None and argv[:2] == ["outbox", "apply"] and "--dry-run" not in argv:
+            if (
+                self.run_publish is not None
+                and argv[:2] == ["outbox", "apply"]
+                and "--dry-run" not in argv
+            ):
                 self.run_publish(argv, done)
             else:
                 self.runner.start(key, label, argv, done, on_progress=on_progress)
@@ -1065,9 +1073,14 @@ class OutboxController:
             if done is not None:
                 done(result)
             else:
-                self._after_mutation(_lines(result.stdout, result.stderr) or (
-                    "published" if result.returncode == 0 else f"publication exited {result.returncode}",
-                ))
+                self._after_mutation(
+                    _lines(result.stdout, result.stderr)
+                    or (
+                        "published"
+                        if result.returncode == 0
+                        else f"publication exited {result.returncode}",
+                    )
+                )
 
         try:
             self.run_publish(argv, finished)
@@ -1208,7 +1221,12 @@ class OutboxController:
                 + " (each asks under its own plan; PR creations run only if all succeed)"
             )
             # Creations run after the hand-offs, so a refusal there must stop them.
-            lines.insert(0, "manifests publish first" if self.run_publish is not None else "manifests are handed to the terminal first")
+            lines.insert(
+                0,
+                "manifests publish first"
+                if self.run_publish is not None
+                else "manifests are handed to the terminal first",
+            )
         lines.extend(skipped)
         self._pending_skipped = tuple(skipped)
         self._pending_publish = targets
@@ -1244,18 +1262,21 @@ class OutboxController:
 
         def finish_batch() -> None:
             marks = self._unmarked(targets)
-    
+
             def finish(created: tuple[_Creation, ...], lines: tuple[str, ...]) -> None:
                 self.state = replace(self.state, marks=marks - self._creation_keys(created))
                 self._after_mutation((*status, *lines))
-    
+
             if failed and creations:
-                status.append("PR creations not run: " + ", ".join(_safe(p.id) for _, p in creations))
+                status.append(
+                    "PR creations not run: " + ", ".join(_safe(p.id) for _, p in creations)
+                )
                 finish((), ())
             else:
                 self._run_creations(creations, finish)
 
         if self.run_publish is not None:
+
             def advance(i: int) -> None:
                 nonlocal failed
                 if i == len(targets):
@@ -1266,10 +1287,14 @@ class OutboxController:
                 def finished(result: JobResult) -> None:
                     nonlocal failed
                     failed = failed or result.returncode != 0
-                    status.extend(f"{_safe(pid)}: {line}" for line in _lines(result.stdout, result.stderr))
+                    status.extend(
+                        f"{_safe(pid)}: {line}" for line in _lines(result.stdout, result.stderr)
+                    )
                     advance(i + 1)
 
-                self._interactive_publish(dob.outbox_apply_argv(name, pid, revision, yes=False), finished)
+                self._interactive_publish(
+                    dob.outbox_apply_argv(name, pid, revision, yes=False), finished
+                )
 
             advance(0)
             return
@@ -1546,6 +1571,7 @@ class OutboxController:
                 done(False, False, (f"{what} not run: outbox box closed",))
                 return
             if self.run_publish is not None:
+
                 def published(result: JobResult) -> None:
                     lines = _lines(result.stdout, result.stderr)
                     if result.returncode and not lines:

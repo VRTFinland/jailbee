@@ -437,7 +437,10 @@ def test_outbox_publish_over_ssh_uses_questions_without_yes(mocker, tmp_path):
 
     _quiet(mocker)
     session, terminal = bare_session(
-        mocker, [_outbox_group(tmp_path)], transport="ssh", remote=True,
+        mocker,
+        [_outbox_group(tmp_path)],
+        transport="ssh",
+        remote=True,
         ssh_policy=RemoteSSHConfig(),
     )
     pending = mocker.patch.object(terminal, "run_actions")
