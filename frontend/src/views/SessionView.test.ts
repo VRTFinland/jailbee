@@ -130,7 +130,28 @@ describe("SessionView", () => {
         updateSettings({showThinking: false})
     })
 
+    it("hides the jump button at the transcript end even when the last answer starts above the viewport", async () => {
+        vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
+            if (this.classList.contains("transcript")) return {top: -3000, bottom: 700} as DOMRect
+            if (this.id === "entry-a2") return {top: -2000, bottom: 700} as DOMRect
+            return {top: 0, bottom: 120} as DOMRect
+        })
+        const {wrapper} = await mountSession(vi.fn().mockResolvedValue(jsonResponse(200, transcript)))
+        expect(wrapper.find(".jump-latest").exists()).toBe(false)
+    })
+
+    it("offers Scroll to bottom while reading inside a long latest answer", async () => {
+        vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
+            if (this.classList.contains("transcript")) return {top: -1000, bottom: 3000} as DOMRect
+            if (this.id === "entry-a2") return {top: -200, bottom: 3000} as DOMRect
+            return {top: 0, bottom: 120} as DOMRect
+        })
+        const {wrapper} = await mountSession(vi.fn().mockResolvedValue(jsonResponse(200, transcript)))
+        expect(wrapper.get(".jump-latest").text()).toBe("Scroll to bottom ↓")
+    })
+
     it("jumps to the latest answer", async () => {
+        vi.spyOn(Element.prototype, "getBoundingClientRect").mockReturnValue({top: 1200, bottom: 1300} as DOMRect)
         const scrolled: string[] = []
         Element.prototype.scrollIntoView = vi.fn(function (this: Element) {
             scrolled.push(this.id)
@@ -144,6 +165,7 @@ describe("SessionView", () => {
         let answerTop = 1200
         vi.spyOn(window, "innerHeight", "get").mockReturnValue(800)
         vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
+            if (this.classList.contains("transcript")) return {top: -1000, bottom: answerTop + 100} as DOMRect
             return {
                 top: this.id === "entry-a2" ? answerTop : 0,
                 bottom: this.id === "entry-a2" ? answerTop + 100 : 120,
@@ -179,6 +201,7 @@ describe("SessionView", () => {
         vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
             if (this.classList.contains("bottom-guard")) return {top: 740, bottom: 800} as DOMRect
             if (this.classList.contains("page-nav")) return {top: 684, bottom: 740} as DOMRect
+            if (this.classList.contains("transcript")) return {top: -1000, bottom: answerTop + 20} as DOMRect
             return {
                 top: this.id === "entry-a2" ? answerTop : 0,
                 bottom: this.id === "entry-a2" ? answerTop + 20 : 120,
@@ -190,7 +213,7 @@ describe("SessionView", () => {
         answerTop = displayProfile === "eink" ? 680 : 730
         window.dispatchEvent(new Event("scroll"))
         await wrapper.vm.$nextTick()
-        expect(wrapper.find(".jump-latest").exists()).toBe(false)
+        expect(wrapper.get(".jump-latest").text()).toBe("Scroll to bottom ↓")
     })
 
     it("keeps title and context in the header and treats replies hidden behind it as out of view", async () => {
@@ -198,7 +221,7 @@ describe("SessionView", () => {
         vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
             return {
                 top: this.id === "entry-a2" ? answerTop : 0,
-                bottom: this.id === "entry-a2" ? answerTop + 50 : 120,
+                bottom: this.classList.contains("transcript") ? 3000 : this.id === "entry-a2" ? answerTop + 50 : 120,
             } as DOMRect
         })
         const {wrapper} = await mountSession(vi.fn().mockResolvedValue(jsonResponse(200, transcript)))
@@ -209,7 +232,7 @@ describe("SessionView", () => {
         answerTop = 130
         window.dispatchEvent(new Event("resize"))
         await wrapper.vm.$nextTick()
-        expect(wrapper.find(".jump-latest").exists()).toBe(false)
+        expect(wrapper.get(".jump-latest").text()).toBe("Scroll to bottom ↓")
     })
 
     it("says the session was not found on a 404", async () => {

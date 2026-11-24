@@ -85,7 +85,7 @@ def test_latest_answer_and_sticky_title_follow_the_readable_area(
     expect(latest).to_be_visible()
 
     latest.click()
-    expect(latest).to_be_hidden()
+    expect(page.get_by_role("button", name="Scroll to bottom")).to_be_visible()
     expect(page.get_by_text("Reply 24", exact=True)).to_be_in_viewport()
     assert_latest_starts_below_header(page)
     expect(title).to_be_in_viewport()
@@ -95,7 +95,7 @@ def test_latest_answer_and_sticky_title_follow_the_readable_area(
     expect(latest).to_be_visible()
     expect(title).to_be_in_viewport()
     latest.click()
-    expect(latest).to_be_hidden()
+    expect(page.get_by_role("button", name="Scroll to bottom")).to_be_visible()
 
     # Stay on a visible answer, but not at the end: appended answers must not
     # scroll the reader away, and must bring the jump button back.
@@ -107,16 +107,62 @@ def test_latest_answer_and_sticky_title_follow_the_readable_area(
     with transcript.open("a") as stream:
         stream.write(record(25, "assistant", "The live answer below the fold."))
     server.watches.open[0].fire()
-    if profile == "eink":
-        page.get_by_role("button", name="1 new message — tap to show").click()
-    expect(page.get_by_text("The live answer below the fold.", exact=True)).to_be_attached()
-    expect(latest).to_be_visible()
+    new_messages = page.get_by_role("button", name="New messages")
+    expect(new_messages).to_be_visible()
     assert page.evaluate("window.scrollY") == position
     expect(title).to_be_in_viewport()
-    latest.click()
-    expect(latest).to_be_hidden()
+    new_messages.click()
+    expect(new_messages).to_be_hidden()
     expect(page.get_by_text("The live answer below the fold.", exact=True)).to_be_in_viewport()
     assert_latest_starts_below_header(page)
+
+
+@pytest.mark.parametrize("width", [1280, 390], ids=["desktop", "phone"])
+@pytest.mark.parametrize("profile", ["normal", "eink"])
+def test_end_follow_and_new_messages_restore_follow(
+    page: Page, make_server: Callable[..., E2EServer], tmp_path: Path, width: int, profile: str
+) -> None:
+    page.set_viewport_size({"width": width, "height": 800})
+    server, transcript = open_transcript(page, make_server, tmp_path)
+    if profile == "eink":
+        page.get_by_role("link", name="Settings", exact=True).click()
+        page.get_by_role("radio", name="E-ink (page turns").check()
+        page.get_by_role("checkbox", name="Follow new messages on e-ink").check()
+        page.go_back()
+        expect(page.get_by_role("heading", name=TITLE, exact=True)).to_be_visible()
+    page.get_by_role("button", name="Latest answer").click()
+    page.get_by_role("button", name="Scroll to bottom").click()
+    expect(page.locator(".jump-latest")).to_have_count(0)
+    if profile == "eink":
+        expect(page.get_by_role("button", name="Next", exact=False).last).to_be_disabled()
+
+    with transcript.open("a") as stream:
+        stream.write(record(25, "assistant", "Automatically followed answer."))
+    server.watches.open[-1].fire()
+    reply = page.get_by_text("Automatically followed answer.", exact=True)
+    expect(reply).to_be_in_viewport()
+    expect(page.locator(".jump-latest")).to_have_count(0)
+    if profile == "eink":
+        expect(page.get_by_role("button", name="Next", exact=False).last).to_be_disabled()
+
+    page.evaluate("window.scrollTo(0, 600)")
+    expect(page.get_by_role("button", name="Latest answer")).to_be_visible()
+    position = page.evaluate("window.scrollY")
+    # A non-answer first unseen entry makes this jump go straight to the end.
+    with transcript.open("a") as stream:
+        stream.write(record(26, "user", "New prompt while reading earlier replies."))
+        stream.write(record(27, "assistant", "Follow is restored."))
+    server.watches.open[-1].fire()
+    page.get_by_role("button", name="New messages").wait_for()
+    assert page.evaluate("window.scrollY") == position
+    page.get_by_role("button", name="New messages").click()
+    expect(page.get_by_text("Follow is restored.", exact=True)).to_be_in_viewport()
+    expect(page.locator(".jump-latest")).to_have_count(0)
+    with transcript.open("a") as stream:
+        stream.write(record(28, "assistant", "Still following."))
+    server.watches.open[-1].fire()
+    expect(page.get_by_text("Still following.", exact=True)).to_be_in_viewport()
+    expect(page.locator(".jump-latest")).to_have_count(0)
 
 
 def test_partial_keyboard_scroll_keeps_the_current_eink_page(

@@ -111,6 +111,14 @@ function number(event: Event): number {
                 />
                 {{ PROFILE_LABELS[p] }}
             </label>
+            <label class="choice">
+                <input
+                    type="checkbox"
+                    :checked="settings.einkFollow"
+                    @change="updateSettings({einkFollow: ($event.target as HTMLInputElement).checked})"
+                />
+                Follow new messages on e-ink
+            </label>
         </fieldset>
 
         <fieldset>

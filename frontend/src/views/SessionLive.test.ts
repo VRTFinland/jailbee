@@ -87,10 +87,14 @@ function setPageGeometry(scrollHeight: number, scrollY: number) {
     })
     Object.defineProperty(window, "scrollY", {value: scrollY, configurable: true})
     Object.defineProperty(window, "innerHeight", {value: 800, configurable: true})
+    vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
+        if (this.classList.contains("transcript")) return {top: -scrollY, bottom: scrollHeight - scrollY} as DOMRect
+        return {top: 0, bottom: 0} as DOMRect
+    })
 }
 
 afterEach(() => {
-    updateSettings({displayProfile: "normal"})
+    updateSettings({displayProfile: "normal", einkFollow: false})
     document.body.innerHTML = ""
     vi.restoreAllMocks()
 })
@@ -170,18 +174,56 @@ describe("SessionView live follow", () => {
         expect(scrollTo).not.toHaveBeenCalled()
     })
 
-    it("shows Latest answer when a newer reply arrives below the fold", async () => {
+    it("keeps the first unseen answer as the New messages jump target", async () => {
         setPageGeometry(5000, 100)
         vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
+            if (this.classList.contains("transcript")) return {top: -100, bottom: 4000} as DOMRect
             const top = this.id === "entry-a2" ? 1200 : this.id === "entry-a1" ? 200 : 0
             return {top, bottom: top + 100} as DOMRect
         })
         const {wrapper, append} = await mountLive("/repos/alpha/sessions/claude/s-1")
         await append(sessionKey, [answer])
-        expect(wrapper.find(".jump-latest").exists()).toBe(false)
+        expect(wrapper.get(".jump-latest").text()).toBe("New messages ↓")
         await append(sessionKey, [{...answer, id: "a2"}])
-        expect(wrapper.find(".jump-latest").exists()).toBe(true)
+        expect(wrapper.get(".jump-latest").text()).toBe("New messages ↓")
+        const scroll = vi.fn()
+        Element.prototype.scrollIntoView = scroll
+        await wrapper.get(".jump-latest").trigger("click")
+        expect(scroll.mock.instances[0]).toBe(document.getElementById("entry-a1"))
+        Reflect.deleteProperty(Element.prototype, "scrollIntoView")
         wrapper.unmount()
+    })
+
+    it("turns follow off on scroll up and restores it with a non-answer New messages jump", async () => {
+        setPageGeometry(5000, 0)
+        let y = 3200
+        let bottom = 4000
+        Object.defineProperty(window, "scrollY", {get: () => y, configurable: true})
+        vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
+            if (this.classList.contains("transcript")) return {top: -y, bottom: bottom - y} as DOMRect
+            return {top: 0, bottom: 0} as DOMRect
+        })
+        const scrollTo = vi.spyOn(window, "scrollTo").mockImplementation((_x, top) => {
+            y = top ?? 0
+            window.dispatchEvent(new Event("scroll"))
+        })
+        const {wrapper, append} = await mountLive("/repos/alpha/sessions/claude/s-1")
+        expect(wrapper.find(".jump-latest").exists()).toBe(false)
+        await append(sessionKey, [answer])
+        expect(scrollTo).toHaveBeenCalled()
+        y = 100
+        window.dispatchEvent(new Event("scroll"))
+        scrollTo.mockClear()
+        bottom = 4500
+        await append(sessionKey, [{...transcript.entries[0], id: "u2"}, {...answer, id: "a2"}])
+        expect(scrollTo).not.toHaveBeenCalled()
+        expect(wrapper.get(".jump-latest").text()).toBe("New messages ↓")
+        await wrapper.get(".jump-latest").trigger("click")
+        expect(y).toBe(3700)
+        expect(wrapper.find(".jump-latest").exists()).toBe(false)
+        scrollTo.mockClear()
+        await append(sessionKey, [{...answer, id: "a3"}])
+        expect(scrollTo).toHaveBeenCalled()
     })
 
     it("keeps the connection notice with the session context", async () => {
@@ -226,11 +268,11 @@ describe("SessionView in the e-ink profile", () => {
         const {wrapper, append} = await mountLive("/repos/alpha/sessions/claude/s-1")
         await append(sessionKey, [answer, second])
         expect(wrapper.findAll(".entry.assistant")).toHaveLength(0)
-        expect(wrapper.get(".new-messages").text()).toContain("2 new messages")
+        expect(wrapper.get(".new-messages").text()).toBe("New messages ↓")
         expect(scrollTo).not.toHaveBeenCalled()
 
         await append(sessionKey, [{...answer, id: "a3"}])
-        expect(wrapper.get(".new-messages").text()).toContain("3 new messages")
+        expect(wrapper.get(".new-messages").text()).toBe("New messages ↓")
     })
 
     it("renders the held entries only when the notice is tapped", async () => {
@@ -265,6 +307,7 @@ describe("SessionView in the e-ink profile", () => {
         Object.defineProperty(window, "scrollY", {get: () => y, configurable: true})
         vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
             if (this.classList.contains("page-nav")) return {top: 712, bottom: 768} as DOMRect
+            if (this.classList.contains("transcript")) return {top: -y, bottom: 2500 - y} as DOMRect
             const top = this.id === "entry-a1" ? 1400 - y : 0
             return {top, bottom: top + (this.id === "entry-a1" ? 50 : 120)} as DOMRect
         })
@@ -275,12 +318,11 @@ describe("SessionView in the e-ink profile", () => {
         const {wrapper, append} = await mountLive("/repos/alpha/sessions/claude/s-1")
         await append(sessionKey, [answer])
         await wrapper.get(".new-messages").trigger("click")
-        await wrapper.get(".jump-latest").trigger("click")
         expect(scrollTo).toHaveBeenLastCalledWith(0, 1280)
         await wrapper.get("button.next").trigger("click")
-        expect(scrollTo).toHaveBeenLastCalledWith(0, 1872)
+        expect(scrollTo).toHaveBeenLastCalledWith(0, 1788)
         await wrapper.get("button.prev").trigger("click")
-        expect(wrapper.find(".jump-latest").exists()).toBe(false)
+        expect(wrapper.get(".jump-latest").text()).toBe("Scroll to bottom ↓")
         await wrapper.get("button.prev").trigger("click")
         expect(wrapper.find(".jump-latest").exists()).toBe(true)
         wrapper.unmount()
@@ -299,6 +341,7 @@ describe("SessionView in the e-ink profile", () => {
         })
         Object.defineProperty(window, "scrollY", {get: () => y, configurable: true})
         vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
+            if (this.classList.contains("transcript")) return {top: -y, bottom: 9500 - y} as DOMRect
             return this.classList.contains("page-nav")
                 ? {top: 712, bottom: 768} as DOMRect
                 : {top: 0, bottom: height} as DOMRect
@@ -326,14 +369,18 @@ describe("SessionView in the e-ink profile", () => {
         vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
             if (this.classList.contains("page-nav")) return {top: 712, bottom: 768} as DOMRect
             if (this.id === "entry-a1") return {top: 1500, bottom: 1550} as DOMRect
+            if (this.classList.contains("transcript")) return {top: 0, bottom: 2500} as DOMRect
             return {top: 0, bottom: 0} as DOMRect
         })
         const scrollTo = vi.spyOn(window, "scrollTo").mockImplementation(() => {})
         const {wrapper, append} = await mountLive("/repos/alpha/sessions/claude/s-1")
         await append(sessionKey, [answer])
         await wrapper.get(".new-messages").trigger("click")
-        await wrapper.get(".jump-latest").trigger("click")
         expect(scrollTo).toHaveBeenLastCalledWith(0, 1500)
+        // Let the mocked browser's scroll event synchronise the page counter.
+        Object.defineProperty(window, "scrollY", {value: 1500, configurable: true})
+        window.dispatchEvent(new Event("scroll"))
+        await flushPromises()
         expect(wrapper.get(".page-indicator").text()).toContain("Page 4 /")
     })
 })

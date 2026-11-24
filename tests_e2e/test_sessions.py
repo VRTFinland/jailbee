@@ -138,9 +138,10 @@ def test_live_append_and_latest_answer_jump(
     reply = page.get_by_text("The newest live reply.", exact=True)
     expect(reply).to_have_count(1)
     expect(reply).not_to_be_in_viewport()
-    page.get_by_role("button", name="Latest answer").click()
+    page.get_by_role("button", name="New messages").click()
+    expect(page.get_by_text("An initial live reply.", exact=True)).to_be_in_viewport()
     expect(reply).to_be_in_viewport()
-    expect(page.get_by_role("button", name="Latest answer")).to_have_count(0)
+    expect(page.get_by_role("button", name="New messages")).to_have_count(0)
     expect(page.get_by_text("Done.", exact=True)).not_to_be_in_viewport()
     assert_no_horizontal_scroll(page)
 

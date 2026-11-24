@@ -24,6 +24,7 @@ export interface Settings {
     bodyFontSize: number
     codeFontSize: number
     showThinking: boolean
+    einkFollow: boolean
     agentContext: MetaMode
 }
 
@@ -80,6 +81,12 @@ const FIELDS: {[K in keyof Settings]: Field<K>} = {
         serialize: (v) => (v ? "1" : "0"),
         fallback: () => false,
     },
+    einkFollow: {
+        key: "jailbee.einkFollow",
+        parse: (raw) => (raw === "1" ? true : raw === "0" ? false : undefined),
+        serialize: (v) => (v ? "1" : "0"),
+        fallback: () => false,
+    },
     agentContext: {
         key: "jailbee.agentContext",
         parse: (raw) => AGENT_CONTEXT_MODES.find((m) => m === raw),
@@ -100,6 +107,7 @@ function loadAll(): Settings {
         bodyFontSize: load("bodyFontSize"),
         codeFontSize: load("codeFontSize"),
         showThinking: load("showThinking"),
+        einkFollow: load("einkFollow"),
         agentContext: load("agentContext"),
     }
 }
