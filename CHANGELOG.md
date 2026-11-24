@@ -403,7 +403,9 @@ before editing `## Unreleased`.
   in the PR picker or fails an update by colliding with the container's own
   PR label. The PR menu and outbox publish use the same normal PR flow, push
   the tip with the staged description and preserve its binding; an older
-  own-branch pin warns about newer commits. `pr source` now directs own-branch
+  own-branch pin warns about newer commits. Unselected own proposals and differing
+  bases are reported; explicit source publication rejects conflicting branch and
+  outbox flags. `pr source` now directs own-branch
   descriptions to `pr description --new`, with `--allow-same-commit` for a
   deliberately separate pinned head. Dashboard action exceptions remain in
   the notification and output log instead of leaving only the manifest text
