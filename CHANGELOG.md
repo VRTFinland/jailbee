@@ -260,8 +260,9 @@ before editing `## Unreleased`.
   offers **Latest answer**, **Scroll to bottom** or **New messages** as needed,
   stays hidden at the transcript's end and aligns answer starts below the header.
   Normal displays follow new entries at the end and stop when scrolled up;
-  e-ink holds entries until tapped unless per-device follow is enabled, which
-  follows on the pager's last content page. E-ink page turns never skip unread
+  e-ink counts visible held entries and a tap reveals them at the first new
+  answer or the end. Optional per-device follow uses the pager's last content
+  page. E-ink page turns never skip unread
   text after partial keyboard scrolling. The agent's own wrapper records (task
   notifications, system reminders, also those appended to tool results, command
   output) are hidden by default; the
