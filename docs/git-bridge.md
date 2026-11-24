@@ -273,6 +273,8 @@ work flows next, chosen automatically:
   instead, and SYNC shows a yellow `pr?`. The dashboard's state
   service refetches the ref every `pr.autofetch_interval` seconds (default 300)
   while [`pr.autofetch`](config.md#pr) is on, so ↓ follows pushes made elsewhere.
+  A successful PR push to its own head branch also updates the ref immediately,
+  so the next git-status refresh reflects that push without waiting for autofetch.
   The fetch never prompts (git's terminal prompt off, `ssh -o BatchMode=yes`,
   a 30 s timeout) and a failure keeps the old head. With autofetch off, or to
   refresh at once, run `jailbee pr fetch [<name>] [--all]` (auth prompts are

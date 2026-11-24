@@ -4167,6 +4167,8 @@ def _sync_count_segment(arrow: str, value: str, width: int) -> str:
 
 def _sync_diff(diff: str) -> str:
     """Colour ``+N -M`` (green insertions, red deletions, zeros dim)."""
+    if diff == "clean":
+        return "[dim]clean[/dim]"
     match = _SYNC_DIFF_RE.match(diff)
     if match is None:
         return diff

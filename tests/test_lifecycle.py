@@ -8692,6 +8692,7 @@ def test_submodule_sub_rows_formats_changed_submodules():
     assert rows[0]["wt"] == "clean"
     assert rows[1]["name"] == "  └ vendor/bar"
     assert rows[1]["wt"] == "+3 -0"
+    assert "[dim]clean[/dim]" in rows[1]["sync"]
 
 
 def test_submodule_sub_rows_empty_when_no_status():
@@ -12921,6 +12922,21 @@ def test_sync_columns_carry_a_pr_marker_only_for_a_pr_head_target():
     assert "[dim]pr[/dim]" in specs["sync"].cell(pr)
     # JSON stays the bare value; the target is in the git_status payload.
     assert specs["ahead_count"].json(pr) == "2"
+
+
+def test_sync_cell_dims_a_clean_diff():
+    from jailbee.host_target import SyncTarget
+    from jailbee.lifecycle import ls_field_specs
+
+    specs = {f.name: f for f in ls_field_specs(now=_NOW)}
+    container = _ci_with_status(
+        target_diff="clean",
+        ahead_count="0",
+        behind_count="0",
+        sync_target=SyncTarget("pr", "PR #7", "p" * 40, "refs/jailbee/pr/7/head"),
+    )
+
+    assert "[dim]clean[/dim]" in specs["sync"].cell(container)
 
 
 def test_sync_columns_mark_a_pr_container_that_fell_back_to_the_host_branch():
