@@ -861,11 +861,25 @@ def test_pr_push_does_not_update_head_ref_after_failure(mocker, tmp_path, failur
     update_ref.assert_not_called()
 
 
+def test_pr_push_is_silent_when_racing_fetch_already_updated_head(mocker, tmp_path):
+    _setup(mocker, tmp_path)
+    published = _publish_result()
+    mocker.patch("jailbee.sync.publish_branch_from_container", return_value=published)
+    mocker.patch("jailbee.pr.create_pr", return_value=_pr_created())
+    mocker.patch("jailbee.git.rev_parse", side_effect=[None, published.fetch.new_oid])
+    mocker.patch("jailbee.git.update_ref", return_value=False)
+
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo"])
+
+    assert result.exit_code == 0, result.output
+    assert "could not refresh the cached PR head" not in result.output
+
+
 def test_pr_push_warns_when_cached_head_ref_cannot_be_updated(mocker, tmp_path):
     _setup(mocker, tmp_path)
     mocker.patch("jailbee.sync.publish_branch_from_container", return_value=_publish_result())
     mocker.patch("jailbee.pr.create_pr", return_value=_pr_created())
-    mocker.patch("jailbee.git.rev_parse", return_value=None)
+    mocker.patch("jailbee.git.rev_parse", side_effect=["old-sha", "other-sha"])
     update_ref = mocker.patch("jailbee.git.update_ref", return_value=False)
 
     result = CliRunner().invoke(app, ["pr", "push", "feat-foo"])
@@ -873,6 +887,27 @@ def test_pr_push_warns_when_cached_head_ref_cannot_be_updated(mocker, tmp_path):
     assert result.exit_code == 0, result.output
     update_ref.assert_called_once()
     assert "could not refresh the cached PR head" in result.output
+
+
+def test_pr_push_does_not_refresh_head_for_a_different_published_branch(mocker, tmp_path):
+    labels = {
+        "user.jailbee.pr": "123",
+        "user.jailbee.pr_branch": "feat/foo",
+        "user.jailbee.pr_author": "1",
+        "user.jailbee.base_branch": "main",
+    }
+    _setup(mocker, tmp_path, labels=labels)
+    mocker.patch(
+        "jailbee.sync.publish_branch_from_container",
+        return_value=_publish_result(publish_name="other"),
+    )
+    mocker.patch("jailbee.pr.view_existing_pr", return_value=_pr_created(already=True))
+    update_ref = mocker.patch("jailbee.git.update_ref")
+
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo"])
+
+    assert result.exit_code == 0, result.output
+    update_ref.assert_not_called()
 
 
 def test_pr_push_does_not_refresh_a_foreign_pr_head(mocker, tmp_path):

@@ -847,7 +847,7 @@ def run_pr_push(
                     head_ref,
                     publish.fetch.new_oid,
                     old_oid=cached_sha or "",
-                ):
+                ) and git_mod.rev_parse(cfg.repo_root, head_ref) != publish.fetch.new_oid:
                     warn(
                         f"PR #{created.number} was published, but JailBee could not refresh "
                         "the cached PR head; SYNC may be stale until the next head fetch."
