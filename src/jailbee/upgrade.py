@@ -642,6 +642,14 @@ UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
             "low-noise inbox followers"
         ),
     ),
+    UpgradeNote(
+        version=(1, 8, 10),
+        actions=frozenset({"apply"}),
+        reason=(
+            "`jailbee apply` stages the short agent-instructions preamble and syncs "
+            "the container skill carrying service, network, GitHub and live host/model guidance"
+        ),
+    ),
 )
 """What each release requires, ascending by version. Maintained by hand.
 

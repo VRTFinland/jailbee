@@ -590,7 +590,11 @@ page covers the generic `agents:` mechanism they sit on top of.
 Claude's preset also declares `global_instructions: {dir: /etc/claude-code,
 file: CLAUDE.md}`. The host's `~/.config/jailbee/AGENTS.md` reaches every repo's
 containers there as read-only managed-policy memory, before the shared and
-project CLAUDE.md files. Edits reach new sessions after a successful refresh,
+project CLAUDE.md files. A five-line JailBee preamble comes first: it points to
+container identity and the **jailbee-container** and **jailbee-orchestration-child**
+skills instead of repeating the detailed environment instructions.
+`jailbee apply` refreshes this text and the bundled skills through existing
+mounts without restarting containers. Edits reach new sessions after a successful refresh,
 not sessions already running; a failed host-file read leaves the previous
 staged copy in place. See [Agent-wide instructions](config.md#agent-wide-instructions-configjailbeeagentsmd)
 for first-time apply, refresh commands and the host-wide opt-out.

@@ -383,6 +383,11 @@ before editing `## Unreleased`.
 
 ### Changed
 
+- Host-wide agent instructions start with a five-line JailBee preamble pointing
+  to the container and child skills. Service, network and GitHub guidance lives
+  in the container skill, including service descriptions, live host status and
+  model guidance. `jailbee apply` refreshes the text for existing containers
+  without a restart ([#149](https://github.com/VRTFinland/jailbee/issues/149)).
 - The dashboards and `jailbee ls` show the sync comparison in one **SYNC**
   column: a fixed three-terminal-cell target-marker slot, aligned ↑/↓ commit
   counts, then the diff. PR-bound containers compare with the PR head the host
