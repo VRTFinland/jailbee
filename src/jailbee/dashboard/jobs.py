@@ -26,13 +26,13 @@ from jailbee.publish_progress import PROGRESS_ENV, parse_progress
 _T = TypeVar("_T")
 
 # What `jailbee new` says when it needed an answer a detached run cannot give:
-# the branch-reuse confirmation (`typer.confirm` on EOF aborts) and the
-# privilege-widening gate (`create_flow.preflight_background`). Pinned against
-# `cli.py` / `create_flow.py` by a test, because the fallback below is only as
-# good as this wording.
+# the branch-reuse confirmation (`prompting.NonInteractiveBackend`) and the
+# privilege-widening gate (`create_flow.preflight_background`). Real CLI
+# stream/exit tests pin the former, not just the marker's presence in source.
 NEEDS_TERMINAL_MARKERS: tuple[str, ...] = (
     "no terminal to ask on",
     "already exists in source repo",
+    "confirmation needed",
 )
 
 
@@ -50,7 +50,9 @@ class JobResult:
 
 def needs_terminal(result: JobResult) -> bool:
     """Whether a failed detached run stopped because it wanted to ask something."""
-    return result.returncode != 0 and any(m in result.stderr for m in NEEDS_TERMINAL_MARKERS)
+    return result.returncode != 0 and any(
+        m in result.stderr or m in result.stdout for m in NEEDS_TERMINAL_MARKERS
+    )
 
 
 class JobRunner:
@@ -73,6 +75,18 @@ class JobRunner:
         """Whether ``key`` has a job that has not been delivered by ``poll`` yet."""
         with self._lock:
             return key in self._labels
+
+    def reserve(self, key: str, label: str) -> None:
+        """Keep an action busy while it continues outside this runner (a UI question)."""
+        with self._lock:
+            if key in self._labels:
+                raise ValueError(f"job '{key}' is already running")
+            self._labels[key] = label
+
+    def release(self, key: str) -> None:
+        """End a reservation made by :meth:`reserve`."""
+        with self._lock:
+            self._labels.pop(key, None)
 
     def active(self) -> list[str]:
         """Labels of the jobs not yet delivered, oldest first."""

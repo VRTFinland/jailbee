@@ -740,8 +740,13 @@ and keeps drawing while it runs; the status line names the running command.
   outbox clear, …) is one entry per container, with the child's output. A bulk
   start, restart or destroy runs as a background job and has no entry: its
   job row is what the queue shows, red if it fails.
-  An action refused by the policy or
-  that could not start is only a notice. The badge `⟳ R · ⚠ A` at the top-right
+  Creation first runs detached: if it needs an answer, it retries through the
+  prompt channel and asks in a modal (never with `--yes`). Declining an existing
+  branch shows "Pick a different name" and is not a failure. A create failure
+  before its worker starts, including a spawn error, stays as a failed entry
+  with its output until dismissed, even though no job row exists yet.
+  Other actions refused by the policy or
+  that could not start are only a notice. The badge `⟳ R · ⚠ A` at the top-right
   of the dashboard title (R running, A needs attention: failed or awaiting an answer)
   appears once anything has run. The bold accent running glyph animates while R is
   non-zero; attention stays red and bold, and a narrow title shortens before the badge.

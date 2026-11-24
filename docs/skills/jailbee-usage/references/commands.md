@@ -1176,11 +1176,15 @@ stop).
 a branch name and a base branch — the base is a separate field because
 `jailbee new` forks a new branch off `default_branch` when its second
 positional is omitted, so leaving it implicit would fork off the wrong branch
-— then hands the terminal to `jailbee new`. It is deliberately not dispatched
-detached and never gets `--yes`: `jailbee new` asks about reusing an existing
-branch and about a branch autostart config that widens network access, and
-that question is asked in the foreground parent even under `--background`. A
-row in an orphan group (no repo config) gets a notice explaining why nothing
+— then asks for the autostart profile and runs `jailbee new --background`
+detached without releasing the terminal. If preflight needs an answer (reusing
+an existing branch or widening network access), the shared create runner retries
+the command through the prompt channel and the dashboard asks in a modal. It
+never adds `--yes`. Declining reuse shows the CLI's "Pick a different name"
+hint and is not a failure. A failure before the background worker starts,
+including an inability to spawn the command, stays in Notifications (`Q`) with
+its output until dismissed; a successful worker is tracked by its job row.
+A row in an orphan group (no repo config) gets a notice explaining why nothing
 happened.
 
 The repo-header menu's **New container…** runs this same flow; orphan repo

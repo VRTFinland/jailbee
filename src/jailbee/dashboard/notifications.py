@@ -6,8 +6,9 @@ created when an action starts and finishes with its exit status and output;
 it stays until the user dismisses it. Alongside them the queue lists the
 background lifecycle jobs of the latest snapshot (:class:`JobRow`): read-only,
 never dismissed, gone when the job is. Actions that were refused or never
-started are not entries: :meth:`NotificationQueue.drop` takes such an entry
-back out without a trace.
+started are normally not entries: :meth:`NotificationQueue.drop` takes such
+an entry back out without a trace. Creation is the exception: its shared runner
+retains pre-worker failures, including spawn errors, since no job can report them.
 """
 
 from __future__ import annotations

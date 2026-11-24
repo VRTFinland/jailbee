@@ -69,6 +69,7 @@ class RunResult:
     status: int | None = None
     refused: str | None = None
     error: str | None = None
+    cancelled: bool = False  # the UI cancelled a prompt, not the answer "no"
 
     @property
     def ok(self) -> bool:
@@ -372,8 +373,16 @@ def run_action(
     reader = threading.Thread(target=_pump, args=(child, on_output), daemon=True)
     reader.start()
     ui = UiEnd(ui_sock)
+    cancelled = False
+
+    def ask(prompt: Prompt) -> Any:
+        nonlocal cancelled
+        answer = on_prompt(prompt)
+        cancelled |= answer is None
+        return answer
+
     try:
-        ui.serve(on_prompt)
+        ui.serve(ask)
     except BaseException:
         child.kill()
         child.wait()
@@ -385,7 +394,7 @@ def run_action(
     status = child.wait()
     reader.join()
     record(f"exit:{status}")
-    return RunResult(status=status)
+    return RunResult(status=status, cancelled=cancelled)
 
 
 def _pump(child: ChildProcess, on_output: OutputSink) -> None:

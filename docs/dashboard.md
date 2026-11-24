@@ -62,6 +62,11 @@ finished one):
 
 ![One failed entry of the queue](images/dashboard/dashboard-queue-entry.png)
 
+Creating a container asks any existing-branch confirmation in a dashboard
+modal; declining shows the "Pick a different name" hint, not a failure. If
+creation fails before its background worker starts, the reason stays as a
+failed queue entry until dismissed, even when no container row exists yet.
+
 The queue lives as long as the dashboard; the rules are in
 [Commands](commands.md#terminal-dashboard-actions).
 
