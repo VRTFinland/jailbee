@@ -59,7 +59,13 @@ def publish(
         queue.finish(entry, status, output)
         changed()
         summary = reason or JobResult(status, output).failure_line()
-        done(JobResult(status, "", summary or ("published" if status == 0 else f"publication exited {status}")))
+        done(
+            JobResult(
+                status,
+                "",
+                summary or ("published" if status == 0 else f"publication exited {status}"),
+            )
+        )
 
     try:
         run = route(argv)

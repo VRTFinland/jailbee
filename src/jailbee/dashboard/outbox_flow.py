@@ -884,7 +884,8 @@ class OutboxController:
         proposals = sorted({(key[0], key[1]) for keys, _ in self._delete_queue for key in keys})
         if proposals:
             self._delete_status.append(
-                "not deleted: " + ", ".join(f"{_safe(name)}/{_safe(pid)}" for name, pid in proposals)
+                "not deleted: "
+                + ", ".join(f"{_safe(name)}/{_safe(pid)}" for name, pid in proposals)
             )
 
     def _next_delete(self) -> None:

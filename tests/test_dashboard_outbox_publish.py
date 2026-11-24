@@ -12,7 +12,9 @@ from tests.test_cli_outbox import publication_env as publication_env
 
 @pytest.mark.parametrize("transport", ["none", "ssh"])
 @pytest.mark.parametrize("kind", ["pr", "pr-choice", "issue", "source"])
-def test_cli_declined_publication_is_not_success(request, mocker, monkeypatch, tmp_path, transport, kind):
+def test_cli_declined_publication_is_not_success(
+    request, mocker, monkeypatch, tmp_path, transport, kind
+):
     import threading
 
     from typer.testing import CliRunner
@@ -73,18 +75,34 @@ def test_cli_declined_publication_is_not_success(request, mocker, monkeypatch, t
             return None if prompt.kind == "choose_one" else False
 
         outcome = run_actions(
-            runs, transport=transport, policy=RemotePolicy(commands=RemoteCommandPolicy(mode="full"), restrict_host=False), on_prompt=answer,
+            runs,
+            transport=transport,
+            policy=RemotePolicy(commands=RemoteCommandPolicy(mode="full"), restrict_host=False),
+            on_prompt=answer,
             spawn=lambda args, **kw: CliChild(args[3:], kw["prompt_sock"]),
             audit=lambda record: None,
         )
         assert cli_results, outcome
-        done(ActionOutcome(outcome.results, cli_results[0].output.replace("Nothing published.", "Declined.")))
+        done(
+            ActionOutcome(
+                outcome.results, cli_results[0].output.replace("Nothing published.", "Declined.")
+            )
+        )
 
     completed = []
     queue = NotificationQueue()
-    publish(argv, route=lambda argv: ActionRun(list(argv), tmp_path), target="feature", queue=queue, run_questions=questions,
-            changed=lambda: None, done=completed.append)
-    assert answers and answers[-1].kind == ("choose_one" if kind == "pr-choice" else "confirm"), cli_results[0].output
+    publish(
+        argv,
+        route=lambda argv: ActionRun(list(argv), tmp_path),
+        target="feature",
+        queue=queue,
+        run_questions=questions,
+        changed=lambda: None,
+        done=completed.append,
+    )
+    assert answers and answers[-1].kind == ("choose_one" if kind == "pr-choice" else "confirm"), (
+        cli_results[0].output
+    )
     assert completed[0].returncode != 0, cli_results[0].output
     assert next(iter(queue)).state == "failed"
     for mutation in mutations:
@@ -107,8 +125,13 @@ def test_route_refusal_is_retained_without_starting_questions(tmp_path, reason):
         pytest.fail("a refused publication must not start")
 
     publish(
-        ["pr", "push", "gone"], route=route, target="gone", queue=queue,
-        run_questions=questions, changed=lambda: changes.append(True), done=completed.append,
+        ["pr", "push", "gone"],
+        route=route,
+        target="gone",
+        queue=queue,
+        run_questions=questions,
+        changed=lambda: changes.append(True),
+        done=completed.append,
     )
     (entry,) = queue
     assert entry.state == "failed" and entry.output == reason
@@ -177,16 +200,22 @@ def test_status_is_only_the_outcome_while_queue_keeps_full_log(tmp_path, status)
 
     queue = NotificationQueue()
     completed = []
-    conclusion = "opened PR #42 Title: https://github.com/o/r/pull/42" if not status else "permission denied"
+    conclusion = (
+        "opened PR #42 Title: https://github.com/o/r/pull/42" if not status else "permission denied"
+    )
     output = f"Plan: https://github.com/o/r/pull/1\nDescription preview\n{conclusion}\n"
 
     def questions(runs, done, progress):
         done(ActionOutcome([RunResult(status=status)], output))
 
     publish(
-        ["pr", "push", "alpha-x"], route=lambda argv: ActionRun(list(argv), tmp_path),
-        target="alpha-x", queue=queue, run_questions=questions,
-        changed=lambda: None, done=completed.append,
+        ["pr", "push", "alpha-x"],
+        route=lambda argv: ActionRun(list(argv), tmp_path),
+        target="alpha-x",
+        queue=queue,
+        run_questions=questions,
+        changed=lambda: None,
+        done=completed.append,
     )
     assert next(iter(queue)).output == output
     assert completed == [JobResult(status, "", conclusion)]
@@ -200,7 +229,9 @@ def test_cancelled_creation_does_not_report_success(tmp_path, cancelled, decline
     completed = []
 
     def questions(runs, done, progress):
-        done(ActionOutcome([RunResult(status=0, cancelled=cancelled, declined=declined)], "preview"))
+        done(
+            ActionOutcome([RunResult(status=0, cancelled=cancelled, declined=declined)], "preview")
+        )
 
     publish(
         ["pr", "push", "alpha-x"],
@@ -260,13 +291,23 @@ def test_closing_during_creation_batch_keeps_dashboard_work_but_not_terminal_han
     from jailbee.dashboard.outbox_flow import OutboxController
     from tests.test_dashboard_outbox_flow import C, FakeRunner, _listing, _proposal
 
-    runner = FakeRunner(_listing(
-        _proposal("pr/a.json", state="awaiting-pr", create_scope={"kind": "repo"}),
-        _proposal("pr/b.json", state="awaiting-push", create_scope={"kind": "source", "manifest": "b.json"}),
-    ))
+    runner = FakeRunner(
+        _listing(
+            _proposal("pr/a.json", state="awaiting-pr", create_scope={"kind": "repo"}),
+            _proposal(
+                "pr/b.json",
+                state="awaiting-push",
+                create_scope={"kind": "source", "manifest": "b.json"},
+            ),
+        )
+    )
     pending = []
     ctl = OutboxController(
-        runner, title="Outbox", container=C, standalone=False, on_change=lambda state: None,
+        runner,
+        title="Outbox",
+        container=C,
+        standalone=False,
+        on_change=lambda state: None,
         run_publish=(lambda argv, done: pending.append((list(argv), done))) if dashboard else None,
     )
     ctl.load()

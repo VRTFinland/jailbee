@@ -112,7 +112,6 @@ class SessionOutboxRunner:
 
     def publish(self, argv: Sequence[str], done: Callable[[JobResult], None]) -> None:
         from jailbee.dashboard.outbox_publish import publish
-
         from jailbee.dashboard.runner import ActionRun
 
         def route(command: Sequence[str]) -> ActionRun:
