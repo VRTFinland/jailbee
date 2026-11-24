@@ -248,11 +248,13 @@ def boot_entries(
         log.debug("Could not consume agent sessions", exc_info=True)
         return []
     adapter = ClaudeAdapter()
-    return [
-        entry
-        for entry in parse_snapshot(raw)
-        if adapter.session_exists(cfg, container, entry.session_id)
-    ]
+    entries = []
+    for entry in parse_snapshot(raw):
+        if adapter.session_exists(cfg, container, entry.session_id):
+            entries.append(entry)
+        elif retain:
+            acknowledge_boot(cfg, incus, container, entry.session_id)
+    return entries
 
 
 def acknowledge_boot(cfg: Config, incus: Incus, container: str, session_id: str) -> None:

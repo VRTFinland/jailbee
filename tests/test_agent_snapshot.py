@@ -359,6 +359,20 @@ def test_retained_boot_acknowledges_only_launched_session_and_preserves_new_hook
     ]
 
 
+def test_partial_restore_survives_another_clean_stop(tmp_path, monkeypatch):
+    other_id = "aaaaaaaa-1234-1234-1234-123456789abc"
+    monkeypatch.setattr(snapshot, "PROC", tmp_path / "proc")
+    snapshot.register_session(tmp_path, {"session_id": ID, "cwd": "/work"})
+    snapshot.register_session(tmp_path, {"session_id": other_id, "cwd": "/other"})
+    assert len(snapshot.boot(tmp_path, retain=True)["sessions"]) == 2
+    snapshot.register_session(tmp_path, {"session_id": ID, "cwd": "/work"})
+    snapshot.acknowledge(tmp_path, [ID])
+    snapshot.capture(tmp_path, proc=tmp_path / "proc", windows={})
+    assert {row["session_id"] for row in snapshot.boot(tmp_path, retain=True)["sessions"]} == {
+        ID, other_id,
+    }
+
+
 def test_window_names_and_failure(monkeypatch: pytest.MonkeyPatch) -> None:
     from subprocess import CompletedProcess
 

@@ -1493,7 +1493,10 @@ def test_failed_pre_agent_stage_keeps_sessions_for_retry(
 
     cfg = _claude_cfg(tmp_path)
     cfg = cfg.model_copy(
-        update={"autostart": Autostart(on_start=[AutostartStep(name="prepare", run="prepare")])}
+        update={"autostart": Autostart.model_validate({"on_start": [
+            {"stage": "prepare", "detach": detached, "steps": [{"name": "prepare", "run": "prepare"}]},
+            {"stage": "agents"},
+        ]})}
     )
     entry = ResumeEntry("12345678-abcd-1234-abcd-1234567890ab", "/work", ("claude",), "claude")
     if source == "stale":
@@ -1556,9 +1559,11 @@ def test_failed_pre_agent_stage_keeps_sessions_for_retry(
             "box",
             AutostartTrigger.ON_START,
             "/work",
-            override="no_wait" if detached else None,
+            already_detached=detached,
         )
         if detached:
+            assert not plan.blocking
+            assert [stage.stage for stage in plan.detached] == ["prepare", "agents"]
             run_detached(
                 cfg,
                 incus,
@@ -1570,7 +1575,7 @@ def test_failed_pre_agent_stage_keeps_sessions_for_retry(
                     mirror_endpoint=None,
                     log_path="/tmp/test.log",
                     progress_path="/tmp/test-progress.json",
-                    override="no_wait",
+                    override=None,
                     agent_steps=plan.agent_steps,
                     agents_last=plan.agents_last,
                 ),
