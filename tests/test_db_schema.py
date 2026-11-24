@@ -1431,7 +1431,7 @@ def test_v26_database_migrates_to_v27_with_the_fido2_key_table() -> None:
 
 
 def test_v27_database_migrates_to_v28_with_the_session_info_cache_table() -> None:
-    from jailbee.db import _ensure_schema, _migrate_to_v29
+    from jailbee.db import _ensure_schema
     from jailbee.db.models import SchemaMeta, SessionInfoRow
 
     engine = create_engine("sqlite:///:memory:")
