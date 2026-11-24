@@ -234,7 +234,11 @@ before editing `## Unreleased`.
   host-side, read-only browser dashboard, included in every install
   ([#109](https://github.com/VRTFinland/jailbee/issues/109)). The front page
   shows repositories and containers with the terminal dashboard's core columns
-  and agent state. Stopped rows include a readable state label alongside their
+  and agent state. Compact All / Running / Active icon filters are remembered
+  per browser, follow live snapshots and keep nonmatching parents dimmed above
+  matching children, with a hidden-container count
+  ([#152](https://github.com/VRTFinland/jailbee/issues/152)).
+  Stopped rows include a readable state label alongside their
   distinct e-ink outline. Front-page and repository container lists nest children under
   their orchestrator, showing child counts across all visible repositories,
   states and runners; container pages link between children and their

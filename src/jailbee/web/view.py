@@ -22,8 +22,8 @@ from jailbee.dashboard.columns import default_columns, nonempty_columns, visible
 from jailbee.dashboard.fork_tree import fork_layout, name_prefix
 from jailbee.dashboard.format import row_phase
 from jailbee.dashboard.sorting import DEFAULT_SORT, sort_groups
-from jailbee.dashboard.visibility import visible_repo_groups
-from jailbee.web.protocol import ChildRelation, ColumnHead, ContainerRow, FrontPageView, RepoRow
+from jailbee.dashboard.visibility import filter_repo_groups, visible_repo_groups
+from jailbee.web.protocol import ChildRelation, ColumnHead, ContainerFilterRows, ContainerRow, FrontPageView, RepoRow
 
 if TYPE_CHECKING:
     from jailbee.lifecycle import ContainerInfo
@@ -58,6 +58,14 @@ def front_page_view(snapshot: Snapshot, scope: RemoteRepoScope, now: datetime) -
         seq=snapshot.seq,
         gathered_at=snapshot.gathered_at,
         columns=[ColumnHead(name=s.name, header=s.header) for s in specs],
+        filters={
+            mode: ContainerFilterRows(
+                visible=[c.name for g in filtered.groups for c in g.containers],
+                context=sorted(filtered.context),
+            )
+            for mode in ("running", "active")
+            for filtered in [filter_repo_groups(groups, mode, now=now)]
+        },
         repos=[
             RepoRow(
                 prefix=group.prefix,

@@ -1,7 +1,7 @@
 // Mirror of src/jailbee/web/protocol.py. Bump PROTOCOL_VERSION in both files
 // on any change either side could misread.
 
-export const PROTOCOL_VERSION = 5
+export const PROTOCOL_VERSION = 6
 
 export const CLOSE_UNAUTHORIZED = 4001
 export const CLOSE_PROTOCOL_MISMATCH = 4002
@@ -72,11 +72,19 @@ export interface RepoRow {
     containers: ContainerRow[]
 }
 
+export type ContainerFilter = "all" | "running" | "active"
+
+export interface ContainerFilterRows {
+    visible: string[]
+    context: string[]
+}
+
 export interface FrontPageView {
     seq: number
     gathered_at: string
     columns: ColumnHead[]
     repos: RepoRow[]
+    filters?: Partial<Record<Exclude<ContainerFilter, "all">, ContainerFilterRows>>
 }
 
 export interface ServerHello {

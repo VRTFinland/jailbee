@@ -6,7 +6,7 @@
 // To add a setting: extend `Settings`,
 // give it a key, a default and a parser in `FIELDS`.
 import {reactive, watch} from "vue"
-import type {MetaMode} from "./protocol"
+import type {ContainerFilter, MetaMode} from "./protocol"
 import {readItem, writeItem} from "./storage"
 
 export type Theme = "light" | "dark" | "eink"
@@ -25,6 +25,7 @@ export interface Settings {
     codeFontSize: number
     showThinking: boolean
     agentContext: MetaMode
+    containerFilter: ContainerFilter
 }
 
 interface Field<K extends keyof Settings> {
@@ -60,6 +61,12 @@ function prefersDark(): boolean {
 }
 
 const FIELDS: {[K in keyof Settings]: Field<K>} = {
+    containerFilter: {
+        key: "jailbee.containerFilter",
+        parse: (raw) => (["all", "running", "active"] as const).find(mode => mode === raw),
+        serialize: String,
+        fallback: () => "all",
+    },
     theme: {
         key: "jailbee.theme",
         parse: (raw) => THEMES.find((t) => t === raw),
@@ -101,6 +108,7 @@ function loadAll(): Settings {
         codeFontSize: load("codeFontSize"),
         showThinking: load("showThinking"),
         agentContext: load("agentContext"),
+        containerFilter: load("containerFilter"),
     }
 }
 
