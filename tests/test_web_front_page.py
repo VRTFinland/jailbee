@@ -85,6 +85,7 @@ def test_snapshot_includes_shared_filter_membership_and_context(
     factory: FakeSourceFactory,
 ) -> None:
     from jailbee.orchestration.view import ChildView
+
     parent = container("alpha-parent", state="Stopped")
     child = container(
         "alpha-child",
@@ -117,20 +118,35 @@ def test_recent_idle_emphasis_and_age_survive_the_snapshot(
 ) -> None:
     client, token = started
     fresh = AgentSummary(
-        "claude", "idle", START - timedelta(hours=2), None, 20,
-        activity=AgentActivity(None, None, state="idle", last_event_at=START - timedelta(minutes=5)),
+        "claude",
+        "idle",
+        START - timedelta(hours=2),
+        None,
+        20,
+        activity=AgentActivity(
+            None, None, state="idle", last_event_at=START - timedelta(minutes=5)
+        ),
     )
     # A second session can be fresh even when the summary's first session is old.
     mixed = AgentSummary(
-        "claude", "idle", START - timedelta(hours=2), None, 2,
-        sessions=(SessionMark("idle", START - timedelta(hours=2)),
-                  SessionMark("idle", START - timedelta(minutes=7))),
+        "claude",
+        "idle",
+        START - timedelta(hours=2),
+        None,
+        2,
+        sessions=(
+            SessionMark("idle", START - timedelta(hours=2)),
+            SessionMark("idle", START - timedelta(minutes=7)),
+        ),
     )
-    snap = snapshot_of(repo_group("alpha",
-        container("alpha-fresh", agent_status=(fresh,)),
-        container("alpha-mixed", agent_status=(mixed,)),
-        container("alpha-old", agent_status=(agent("idle"),)),
-    ))
+    snap = snapshot_of(
+        repo_group(
+            "alpha",
+            container("alpha-fresh", agent_status=(fresh,)),
+            container("alpha-mixed", agent_status=(mixed,)),
+            container("alpha-old", agent_status=(agent("idle"),)),
+        )
+    )
     view = json.loads(first_page(client, token, factory, snap))["view"]
     rows = {row["name"]: row for row in view["repos"][0]["containers"]}
     assert rows["alpha-fresh"]["agent_recent_idle"] == "5m"

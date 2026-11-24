@@ -11971,8 +11971,14 @@ def test_agent_compact_cell_preserves_recent_idle_emphasis_at_every_width(max_ce
     from jailbee.lifecycle import agent_compact_cell, agent_compact_is_active
 
     fresh = (_agent("idle", since=_AGENT_NOW - timedelta(minutes=5)),)
-    cell = agent_compact_cell(fresh, _AGENT_NOW, recent_idle=timedelta(minutes=30),
-                              recent_idle_style="bold", activity_age=True, max_cells=max_cells)
+    cell = agent_compact_cell(
+        fresh,
+        _AGENT_NOW,
+        recent_idle=timedelta(minutes=30),
+        recent_idle_style="bold",
+        activity_age=True,
+        max_cells=max_cells,
+    )
     assert "[bold]" in cell
     assert agent_compact_is_active(fresh, _AGENT_NOW, recent_idle=timedelta(minutes=30))
 

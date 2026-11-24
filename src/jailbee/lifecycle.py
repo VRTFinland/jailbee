@@ -3853,9 +3853,9 @@ def agent_compact_marks(
     marks: list[AgentCompactMark] = []
     for summary in statuses:
         # Old snapshots carry no per-session marks: `count` stands in for them.
-        entries = [(m.state, m.since) for m in summary.sessions] or [
-            (summary.state, None)
-        ] * max(summary.count, 1)
+        entries = [(m.state, m.since) for m in summary.sessions] or [(summary.state, None)] * max(
+            summary.count, 1
+        )
         for i, (state, stamp) in enumerate(entries):
             if i == 0:
                 # Agent-wide stamps describe only the most urgent session.

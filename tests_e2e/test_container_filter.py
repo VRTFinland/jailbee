@@ -76,12 +76,22 @@ def test_active_explains_recent_idle_in_a_crowded_session_cell(
     server = make_server(clock=clock, monotonic=clock.monotonic)
     parent = container("work-parent", repo="work", state="Stopped")
     children = [
-        container(f"work-{suffix}", repo="work", child=ChildView(parent.name, "working", (), False, ()))
+        container(
+            f"work-{suffix}", repo="work", child=ChildView(parent.name, "working", (), False, ())
+        )
         for suffix in ("a", "b", "c")
     ]
     children[1].agent_status = (
-        AgentSummary("claude", "idle", START - timedelta(hours=2), None, 20,
-            activity=AgentActivity(None, None, state="idle", last_event_at=START - timedelta(minutes=5))),
+        AgentSummary(
+            "claude",
+            "idle",
+            START - timedelta(hours=2),
+            None,
+            20,
+            activity=AgentActivity(
+                None, None, state="idle", last_event_at=START - timedelta(minutes=5)
+            ),
+        ),
     )
     server.push(snapshot_of(repo_group("work", parent, *children)))
     log_in_with_pin(page, server.url, server.pin.current)
