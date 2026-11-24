@@ -61,8 +61,18 @@ def test_successful_handoff_leaves_no_parent_entry(tmp_path):
     "result,output,state,hint",
     [
         (RunResult(status=0), "worker started", None, None),
-        (RunResult(status=1, cancelled=True), "warning: prior notice\nAborted!\n", None, "cancelled"),
-        (RunResult(status=1, cancelled=True), "Aborted!\nError: disk failure", "failed", "disk failure"),
+        (
+            RunResult(status=1, cancelled=True),
+            "warning: prior notice\nAborted!\n",
+            None,
+            "cancelled",
+        ),
+        (
+            RunResult(status=1, cancelled=True),
+            "Aborted!\nError: disk failure",
+            "failed",
+            "disk failure",
+        ),
         (RunResult(status=7, cancelled=True), "error: disk failure", "failed", "disk failure"),
         (RunResult(status=2), "confirmation needed", "failed", "confirmation needed"),
         (

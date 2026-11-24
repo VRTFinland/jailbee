@@ -93,11 +93,19 @@ def start_create(
                 return
             status = result.status if result.status is not None else 1
             lines = [line.strip() for line in output.splitlines() if line.strip()]
-            cancellation = any(line in {"Aborted!", "Aborted.", "Error: cancelled"} for line in lines)
+            cancellation = any(
+                line in {"Aborted!", "Aborted.", "Error: cancelled"} for line in lines
+            )
             has_error = any(
                 line.lower().startswith("error:") and line != "Error: cancelled" for line in lines
             )
-            if result.cancelled and result.error is None and status == 1 and cancellation and not has_error:
+            if (
+                result.cancelled
+                and result.error is None
+                and status == 1
+                and cancellation
+                and not has_error
+            ):
                 queue.drop(entry)
                 changed()
                 done(f"'{command}' cancelled")
