@@ -7,10 +7,10 @@ import pwd
 import re
 import stat
 import sys
-from subprocess import TimeoutExpired
 import tempfile
 from collections.abc import Mapping
 from pathlib import Path
+from subprocess import TimeoutExpired
 
 SNAPSHOT_RELPATH = ".local/state/jailbee/agent-sessions.json"
 LAUNCHERS_RELPATH = ".local/state/jailbee/launchers"
@@ -172,18 +172,28 @@ def _hook_process(home: Path, proc: Path) -> tuple[str, str, list[str], str | No
 
 
 def register_session(
-    home: Path, data: Mapping[str, object], *, ended: bool = False,
+    home: Path,
+    data: Mapping[str, object],
+    *,
+    ended: bool = False,
     windows: Mapping[str, str] | None = None,
 ) -> None:
     """Persist a hook session without relying on Claude's transient PID files."""
     sid, cwd = data.get("session_id"), data.get("cwd")
     if not isinstance(sid, str) or not _UUID.fullmatch(sid):
         return
-    if not ended and (not isinstance(cwd, str) or not os.path.isabs(cwd) or any(c in cwd for c in "\0\n\r")):
+    if not ended and (
+        not isinstance(cwd, str) or not os.path.isabs(cwd) or any(c in cwd for c in "\0\n\r")
+    ):
         return
     pid, start, launcher, tmux = _hook_process(home, PROC)
     record = _record(home / SESSIONS_RELPATH / f"{pid}.json") if pid else None
-    if not ended and record and str(record["procStart"]) == start and record["kind"] != "interactive":
+    if (
+        not ended
+        and record
+        and str(record["procStart"]) == start
+        and record["kind"] != "interactive"
+    ):
         return
     match = re.fullmatch(r"autostart(?:-\d+)?:(@\d+)\.%\d+", tmux) if tmux else None
     window = (windows or {}).get(match[1]) if match else None
@@ -196,13 +206,28 @@ def register_session(
         rows = registry.get("sessions", []) if isinstance(registry, dict) else []
         if not isinstance(rows, list):
             rows = []
-        rows = [row for row in rows if isinstance(row, dict)
-                and row.get("session_id") != sid
-                and (ended or not pid or (row.get("pid"), row.get("procStart")) != (pid, start))]
+        rows = [
+            row
+            for row in rows
+            if isinstance(row, dict)
+            and row.get("session_id") != sid
+            and (ended or not pid or (row.get("pid"), row.get("procStart")) != (pid, start))
+        ]
         if not ended:
-            rows.append({"agent": "claude", "session_id": sid, "cwd": cwd,
-                         "launcher": launcher, "window": window, "pid": pid, "procStart": start})
-        _write_snapshot(path, json.dumps({"version": 1, "source": "capture", "sessions": rows}).encode())
+            rows.append(
+                {
+                    "agent": "claude",
+                    "session_id": sid,
+                    "cwd": cwd,
+                    "launcher": launcher,
+                    "window": window,
+                    "pid": pid,
+                    "procStart": start,
+                }
+            )
+        _write_snapshot(
+            path, json.dumps({"version": 1, "source": "capture", "sessions": rows}).encode()
+        )
     finally:
         os.close(fd)
 
@@ -359,7 +384,9 @@ def _boot(home: Path, *, proc: Path, path: Path, registry: bool = False) -> dict
     if isinstance(entries, list):
         result["sessions"] = [
             {key: value for key, value in row.items() if key not in {"pid", "procStart"}}
-            if isinstance(row, dict) else row for row in entries
+            if isinstance(row, dict)
+            else row
+            for row in entries
         ]
     return result
 
@@ -369,7 +396,9 @@ def window_names(*, timeout: float | None = None) -> dict[str, str]:
 
     try:
         args = ["list-windows", "-a", "-F", "#{session_name}\t#{window_id}\t#{window_name}"]
-        result = LocalProc().tmux(args) if timeout is None else LocalProc().tmux(args, timeout=timeout)
+        result = (
+            LocalProc().tmux(args) if timeout is None else LocalProc().tmux(args, timeout=timeout)
+        )
         if result.returncode:
             return {}
         rows = (line.split("\t", 2) for line in result.stdout.splitlines())

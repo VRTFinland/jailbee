@@ -5,10 +5,9 @@ import os
 import pwd
 from pathlib import Path
 
-from jailbee.agent_snapshot import register_session, window_names
-
 import typer
 
+from jailbee.agent_snapshot import register_session, window_names
 from jailbee.inbox import hooks
 from jailbee.inbox.role import local_role
 
@@ -24,7 +23,8 @@ def register_hooks(inbox_app: typer.Typer) -> None:
         try:
             if isinstance(data.get("session_id"), str) and isinstance(data.get("cwd"), str):
                 register_session(
-                    Path(pwd.getpwuid(os.getuid()).pw_dir), data,
+                    Path(pwd.getpwuid(os.getuid()).pw_dir),
+                    data,
                     windows=window_names(timeout=0.2) if os.environ.get("TMUX") else {},
                 )
         except Exception:

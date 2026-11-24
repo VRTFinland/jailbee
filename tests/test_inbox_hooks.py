@@ -116,7 +116,9 @@ def test_end_hook_removes_session_even_with_clean_stop_snapshot(tmp_path, monkey
 
 
 @pytest.mark.parametrize("source", ["resume", "fork", "clear", "compact"])
-def test_replacing_hook_session_preserves_launcher_and_drops_old_id(tmp_path, monkeypatch, set_role, source):
+def test_replacing_hook_session_preserves_launcher_and_drops_old_id(
+    tmp_path, monkeypatch, set_role, source
+):
     import pwd
     from types import SimpleNamespace
 
@@ -132,9 +134,14 @@ def test_replacing_hook_session_preserves_launcher_and_drops_old_id(tmp_path, mo
     monkeypatch.setattr(pwd, "getpwuid", lambda uid: SimpleNamespace(pw_dir=str(tmp_path)))
     set_role("plain")
     runner = CliRunner()
+
     def start(sid, event):
-        return runner.invoke(inbox_app, ["hook", "session-start"], input=json.dumps(
-            {"session_id": sid, "cwd": "/work", "source": event}))
+        return runner.invoke(
+            inbox_app,
+            ["hook", "session-start"],
+            input=json.dumps({"session_id": sid, "cwd": "/work", "source": event}),
+        )
+
     assert start(ID, "startup").exit_code == 0
     new_id = "aaaaaaaa-1234-1234-1234-123456789abc"
     assert start(new_id, source).exit_code == 0
@@ -142,12 +149,21 @@ def test_replacing_hook_session_preserves_launcher_and_drops_old_id(tmp_path, mo
     # Claude's own PID file may still contain the pre-clear session id.
     assert snapshot.capture(tmp_path, proc=proc, windows={}) == 1
     result = snapshot.boot(tmp_path, proc=tmp_path / "dead-proc")
-    assert result["sessions"] == [{"agent": "claude", "session_id": new_id,
-        "cwd": "/work", "launcher": ["claude-jb", "-P", "codex", "--tools", ""], "window": None}]
+    assert result["sessions"] == [
+        {
+            "agent": "claude",
+            "session_id": new_id,
+            "cwd": "/work",
+            "launcher": ["claude-jb", "-P", "codex", "--tools", ""],
+            "window": None,
+        }
+    ]
     assert snapshot.boot(tmp_path, proc=tmp_path / "dead-proc")["sessions"] == []
 
 
-def test_hook_registry_keeps_other_launchers_and_ignores_background_sessions(tmp_path, monkeypatch, set_role):
+def test_hook_registry_keeps_other_launchers_and_ignores_background_sessions(
+    tmp_path, monkeypatch, set_role
+):
     import pwd
     from types import SimpleNamespace
 
@@ -164,11 +180,16 @@ def test_hook_registry_keeps_other_launchers_and_ignores_background_sessions(tmp
     set_role("plain")
     runner = CliRunner()
     for pid, sid in [(7, ID), (8, "aaaaaaaa-1234-1234-1234-123456789abc")]:
-        monkeypatch.setattr(snapshot.os, "getppid", lambda: pid)
-        result = runner.invoke(inbox_app, ["hook", "session-start"], input=json.dumps(
-            {"session_id": sid, "cwd": "/work"}))
+        monkeypatch.setattr(snapshot.os, "getppid", lambda pid=pid: pid)
+        result = runner.invoke(
+            inbox_app,
+            ["hook", "session-start"],
+            input=json.dumps({"session_id": sid, "cwd": "/work"}),
+        )
         assert result.exit_code == 0
-    assert [s["session_id"] for s in snapshot.boot(tmp_path, proc=tmp_path / "dead")["sessions"]] == [ID]
+    assert [
+        s["session_id"] for s in snapshot.boot(tmp_path, proc=tmp_path / "dead")["sessions"]
+    ] == [ID]
 
 
 def test_hook_walks_parent_shell_and_preserves_autostart_window(tmp_path, monkeypatch, set_role):
@@ -192,17 +213,27 @@ def test_hook_walks_parent_shell_and_preserves_autostart_window(tmp_path, monkey
     monkeypatch.setattr(pwd, "getpwuid", lambda uid: SimpleNamespace(pw_dir=str(tmp_path)))
     monkeypatch.setenv("TMUX", "tmux-socket,1,0")
     calls = []
+
     def tmux(self, args, *, timeout=None):
         calls.append(timeout)
         return CompletedProcess(args, 0, "autostart\t@3\tclaude\n", "")
+
     monkeypatch.setattr(LocalProc, "tmux", tmux)
     set_role("plain")
-    result = CliRunner().invoke(inbox_app, ["hook", "session-start"], input=json.dumps(
-        {"session_id": ID, "cwd": "/work"}))
+    result = CliRunner().invoke(
+        inbox_app, ["hook", "session-start"], input=json.dumps({"session_id": ID, "cwd": "/work"})
+    )
     assert result.exit_code == 0
     assert calls == [0.2]
     assert snapshot.boot(tmp_path, proc=tmp_path / "dead")["sessions"] == [
-        {"agent": "claude", "session_id": ID, "cwd": "/work", "launcher": ["claude"], "window": "claude"}]
+        {
+            "agent": "claude",
+            "session_id": ID,
+            "cwd": "/work",
+            "launcher": ["claude"],
+            "window": "claude",
+        }
+    ]
 
 
 def test_ended_session_is_not_resurrected_from_claude_pid_file(tmp_path, monkeypatch, set_role):
@@ -228,7 +259,9 @@ def test_ended_session_is_not_resurrected_from_claude_pid_file(tmp_path, monkeyp
 
 
 @pytest.mark.parametrize("failure", ["locked", "unwritable", "tmux-timeout"])
-def test_hook_registry_failures_are_silent_and_keep_resume_context(tmp_path, monkeypatch, set_role, failure):
+def test_hook_registry_failures_are_silent_and_keep_resume_context(
+    tmp_path, monkeypatch, set_role, failure
+):
     import fcntl
     import os
     import pwd
@@ -251,17 +284,27 @@ def test_hook_registry_failures_are_silent_and_keep_resume_context(tmp_path, mon
         path.mkdir()
     else:
         monkeypatch.setenv("TMUX", "socket,1,0")
+
         def timeout(self, args, **kwargs):
             raise TimeoutExpired("tmux", 0.2)
+
         monkeypatch.setattr(LocalProc, "tmux", timeout)
     set_role("child")
     try:
-        result = CliRunner().invoke(inbox_app, ["hook", "session-start"], input=json.dumps(
-            {"session_id": ID, "cwd": "/work", "source": "resume"}))
+        result = CliRunner().invoke(
+            inbox_app,
+            ["hook", "session-start"],
+            input=json.dumps({"session_id": ID, "cwd": "/work", "source": "resume"}),
+        )
         assert result.exit_code == 0
         assert result.stderr == ""
-        assert "restarted automatically" in json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
-        result = CliRunner().invoke(inbox_app, ["hook", "session-end"], input=json.dumps({"session_id": ID}))
+        assert (
+            "restarted automatically"
+            in json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
+        )
+        result = CliRunner().invoke(
+            inbox_app, ["hook", "session-end"], input=json.dumps({"session_id": ID})
+        )
         assert result.exit_code == 0
         assert result.output == ""
     finally:
