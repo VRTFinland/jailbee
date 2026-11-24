@@ -8,7 +8,26 @@ from jailbee.dashboard.create import QuestionRunner
 from jailbee.dashboard.jobs import JobResult
 from jailbee.dashboard.notifications import NotificationQueue
 from jailbee.dashboard.runner import ActionOutcome, ActionRun, RunResult
-from jailbee.remote_ssh.router import RouteError
+from jailbee.remote_ssh.router import RouteError, command_path
+
+
+def _summary(status: int, output: str) -> str:
+    lines = [line.strip() for line in output.splitlines() if line.strip()]
+    if status:
+        errors = [line for line in lines if line.startswith(("Error:", "✗"))]
+        if errors:
+            return errors[-1].removeprefix("Error:").removeprefix("✗").strip()
+        return JobResult(status, output).failure_line()
+    # Success receipts precede optional follow-up plans and advice. Never turn
+    # URLs in a preview into outcomes: require a receipt marker or a bare URL.
+    receipts = [
+        line for line in lines
+        if "https://" in line and (
+            line.startswith(("✓", "opened PR #", "updated PR #", "PR #", "Draft PR #", "https://"))
+            or ": applied" in line
+        )
+    ]
+    return "\n".join(dict.fromkeys(receipts)) or "published"
 
 
 class _Progress:
@@ -50,7 +69,10 @@ def publish(
         output = outcome.outputs[0] if outcome.outputs else outcome.output
         reason = (result.refused or result.error) if result else "publication did not run"
         status = result.status if result and result.status is not None else 1
-        if result and (result.cancelled or result.declined):
+        # Apply's questions decide this publication; pr push also asks optional
+        # questions (AI generation, extra comments) whose "no" is not a failure.
+        applying = command_path(argv) in {"outbox apply", "issue apply", "review apply"}
+        if applying and result and (result.cancelled or result.declined):
             status = status or 1
             reason = reason or "publication cancelled"
         if reason:
@@ -58,7 +80,7 @@ def publish(
             output = "\n".join(part for part in (output.rstrip(), reason) if part)
         queue.finish(entry, status, output)
         changed()
-        summary = reason or JobResult(status, output).failure_line()
+        summary = reason or _summary(status, output)
         done(
             JobResult(
                 status,

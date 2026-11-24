@@ -11,7 +11,7 @@ from tests.test_cli_outbox import publication_env as publication_env
 
 
 @pytest.mark.parametrize("transport", ["none", "ssh"])
-@pytest.mark.parametrize("kind", ["pr", "pr-choice", "issue", "source"])
+@pytest.mark.parametrize("kind", ["pr", "pr-choice", "issue", "source", "optional-ai"])
 def test_cli_declined_publication_is_not_success(
     request, mocker, monkeypatch, tmp_path, transport, kind
 ):
@@ -26,7 +26,19 @@ def test_cli_declined_publication_is_not_success(
     from jailbee.dashboard.runner import run_actions
     from jailbee.remote_ssh.session import child_environment
 
-    if kind == "source":
+    if kind == "optional-ai":
+        from tests.test_cli_pr import _setup, _publish_result, _pr_created
+
+        from tests.conftest import mock_pr_agent
+
+        cfg, _ = _setup(mocker, tmp_path)
+        mock_pr_agent(cfg, True)
+        mocker.patch("jailbee.sync.publish_branch_from_container", return_value=_publish_result())
+        mocker.patch("jailbee.git.commit_subject", return_value="feat: do thing")
+        create = mocker.patch("jailbee.pr.create_pr", return_value=_pr_created())
+        argv = ["pr", "push", "feat-foo"]
+        mutations = []
+    elif kind == "source":
         p = request.getfixturevalue("source_publisher")
         mocker.patch("jailbee.config.load_repo_config", return_value=p["cfg"])
         mocker.patch("jailbee.incus.Incus", return_value=p["incus"])
@@ -103,8 +115,14 @@ def test_cli_declined_publication_is_not_success(
     assert answers and answers[-1].kind == ("choose_one" if kind == "pr-choice" else "confirm"), (
         cli_results[0].output
     )
-    assert completed[0].returncode != 0, cli_results[0].output
-    assert next(iter(queue)).state == "failed"
+    if kind == "optional-ai":
+        create.assert_called_once()
+        assert completed[0].returncode == 0, cli_results[0].output
+        assert next(iter(queue)).state == "done"
+        assert "https://github.com/acme/widgets/pull/123" in completed[0].stdout
+    else:
+        assert completed[0].returncode != 0, cli_results[0].output
+        assert next(iter(queue)).state == "failed"
     for mutation in mutations:
         mutation.assert_not_called()
 
@@ -203,7 +221,12 @@ def test_status_is_only_the_outcome_while_queue_keeps_full_log(tmp_path, status)
     conclusion = (
         "opened PR #42 Title: https://github.com/o/r/pull/42" if not status else "permission denied"
     )
-    output = f"Plan: https://github.com/o/r/pull/1\nDescription preview\n{conclusion}\n"
+    output = (
+        f"Plan: https://github.com/o/r/pull/1\nDescription preview\n{conclusion}\n"
+        "Nothing published. Additional comments can be posted later.\n"
+        if not status else
+        f"Error: {conclusion}\nStopped here; still pending: b.json\n"
+    )
 
     def questions(runs, done, progress):
         done(ActionOutcome([RunResult(status=status)], output))
@@ -221,8 +244,27 @@ def test_status_is_only_the_outcome_while_queue_keeps_full_log(tmp_path, status)
     assert completed == [JobResult(status, "", conclusion)]
 
 
+def test_declining_optional_questions_does_not_cancel_successful_pr(tmp_path):
+    from jailbee.dashboard.outbox_publish import publish
+
+    completed = []
+    queue = NotificationQueue()
+    url = "https://github.com/o/r/pull/42"
+
+    def questions(runs, done, progress):
+        done(ActionOutcome([RunResult(status=0, declined=True)], f"PR #42 created: {url}\nNothing published. Comments stay pending.\n"))
+
+    publish(
+        ["pr", "push", "alpha-x"], route=lambda argv: ActionRun(list(argv), tmp_path),
+        target="alpha-x", queue=queue, run_questions=questions,
+        changed=lambda: None, done=completed.append,
+    )
+    assert next(iter(queue)).state == "done"
+    assert completed == [JobResult(0, "", f"PR #42 created: {url}")]
+
+
 @pytest.mark.parametrize("cancelled, declined", [(True, False), (False, True)])
-def test_cancelled_creation_does_not_report_success(tmp_path, cancelled, declined):
+def test_cancelled_apply_does_not_report_success(tmp_path, cancelled, declined):
     from jailbee.dashboard.outbox_publish import publish
 
     queue = NotificationQueue()
@@ -234,7 +276,7 @@ def test_cancelled_creation_does_not_report_success(tmp_path, cancelled, decline
         )
 
     publish(
-        ["pr", "push", "alpha-x"],
+        ["outbox", "apply", "alpha-x", "pr/a.json"],
         route=lambda argv: ActionRun(list(argv), tmp_path),
         target="alpha-x",
         queue=queue,
