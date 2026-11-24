@@ -151,8 +151,14 @@ def _hook_process(home: Path, proc: Path) -> tuple[str, str, list[str], str | No
     for _ in range(32):
         start = _start(proc, pid)
         args = _argv(proc / pid / "cmdline")
-        if (len(args) > 1 and Path(args[0]).name in {"node", "nodejs", "bun"}
-                and (Path(args[1]).name == "claude" or args[1].endswith("/@anthropic-ai/claude-code/cli.js"))):
+        if (
+            len(args) > 1
+            and Path(args[0]).name in {"node", "nodejs", "bun"}
+            and (
+                Path(args[1]).name == "claude"
+                or args[1].endswith("/@anthropic-ai/claude-code/cli.js")
+            )
+        ):
             args = ["claude", *args[2:]]
         if start is None:
             break
@@ -263,8 +269,11 @@ def capture(home: Path, *, proc: Path = Path("/proc"), windows: Mapping[str, str
         pid, start = str(data["pid"]), str(data["procStart"])
         if _start(proc, pid) != start:
             continue
-        if any(row.get("session_id") == data["sessionId"]
-               or (row.get("pid"), row.get("procStart")) == (pid, start) for row in registered):
+        if any(
+            row.get("session_id") == data["sessionId"]
+            or (row.get("pid"), row.get("procStart")) == (pid, start)
+            for row in registered
+        ):
             continue
         tmux = data.get("tmux")
         # An attached client runs in a session grouped with autostart, which
@@ -307,7 +316,9 @@ def boot(home: Path, *, proc: Path = Path("/proc")) -> dict[str, object]:
             if _read(frozen) is not None:
                 result = _boot(home, proc=proc, path=frozen)
                 remaining = _read(frozen)
-                _write_snapshot(registry, remaining or b'{"version":1,"source":"capture","sessions":[]}')
+                _write_snapshot(
+                    registry, remaining or b'{"version":1,"source":"capture","sessions":[]}'
+                )
                 return result
             return _boot(home, proc=proc, path=registry, registry=True)
         finally:
@@ -387,8 +398,11 @@ def _boot(home: Path, *, proc: Path, path: Path, registry: bool = False) -> dict
             and isinstance(item.get("session_id"), str)
             and item["session_id"] in unconsumed
         ]
-        emitted = [item for item in entries if item not in blocked
-                   and not (isinstance(item, dict) and item.get("ended"))]
+        emitted = [
+            item
+            for item in entries
+            if item not in blocked and not (isinstance(item, dict) and item.get("ended"))
+        ]
         while (
             len(json.dumps({**result, "sessions": emitted}, separators=(",", ":")).encode()) + 1
             > _LIMIT

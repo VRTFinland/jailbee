@@ -331,7 +331,9 @@ def test_clean_stop_freezes_registry_before_shutdown_end_hook(tmp_path, monkeypa
     assert snapshot.boot(tmp_path)["sessions"] == []
 
 
-def test_capture_merges_pre_plugin_sessions_without_reviving_ended_ones(tmp_path, monkeypatch, set_role):
+def test_capture_merges_pre_plugin_sessions_without_reviving_ended_ones(
+    tmp_path, monkeypatch, set_role
+):
     import pwd
     from types import SimpleNamespace
 
@@ -357,7 +359,9 @@ def test_capture_merges_pre_plugin_sessions_without_reviving_ended_ones(tmp_path
     assert snapshot.boot(tmp_path)["sessions"] == []
 
 
-def test_concurrent_hook_retries_brief_lock_contention_without_losing_session(tmp_path, monkeypatch):
+def test_concurrent_hook_retries_brief_lock_contention_without_losing_session(
+    tmp_path, monkeypatch
+):
     import fcntl
     import os
     import threading
@@ -371,9 +375,11 @@ def test_concurrent_hook_retries_brief_lock_contention_without_losing_session(tm
     path.parent.mkdir(parents=True)
     fd = os.open(path.with_suffix(".lock"), os.O_CREAT | os.O_RDWR, 0o600)
     fcntl.flock(fd, fcntl.LOCK_EX)
+
     def release():
         time.sleep(0.02)
         fcntl.flock(fd, fcntl.LOCK_UN)
+
     thread = threading.Thread(target=release)
     thread.start()
     try:
@@ -390,14 +396,23 @@ def test_node_launcher_clear_replaces_session_before_claude_pid_file_exists(tmp_
 
     proc = tmp_path / "proc"
     live(proc, 7)
-    (proc / "7" / "cmdline").write_bytes(b"node\0/usr/lib/node_modules/@anthropic-ai/claude-code/cli.js\0--model\0opus\0")
+    (proc / "7" / "cmdline").write_bytes(
+        b"node\0/usr/lib/node_modules/@anthropic-ai/claude-code/cli.js\0--model\0opus\0"
+    )
     monkeypatch.setattr(snapshot, "PROC", proc)
     monkeypatch.setattr(snapshot.os, "getppid", lambda: 7)
     snapshot.register_session(tmp_path, {"session_id": ID, "cwd": "/work"})
     other_id = "aaaaaaaa-1234-1234-1234-123456789abc"
     snapshot.register_session(tmp_path, {"session_id": other_id, "cwd": "/work", "source": "clear"})
-    assert snapshot.boot(tmp_path)["sessions"] == [{"agent": "claude", "session_id": other_id,
-        "cwd": "/work", "launcher": ["claude", "--model", "opus"], "window": None}]
+    assert snapshot.boot(tmp_path)["sessions"] == [
+        {
+            "agent": "claude",
+            "session_id": other_id,
+            "cwd": "/work",
+            "launcher": ["claude", "--model", "opus"],
+            "window": None,
+        }
+    ]
 
 
 def test_new_start_invalidates_snapshot_from_cancelled_shutdown(tmp_path, monkeypatch):
