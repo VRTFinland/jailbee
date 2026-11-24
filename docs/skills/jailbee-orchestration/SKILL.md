@@ -165,6 +165,15 @@ Claude sessions need the ordinary inbox waiter.
 
 ## Publishing your own staged manifests
 
+**Default: stage your own branch's PR with `jailbee pr description --new`.**
+`jailbee pr source` is the exception, only for other refs such as an imported
+child branch that you will publish separately rather than merge. It refuses
+your HEAD commit (even under another ref name) or your HEAD branch; use
+`--allow-same-commit` only to deliberately publish a separate pinned head.
+Legacy own-branch source proposals are consumed by the host's ordinary PR
+flow, pushing the tip with the staged description, not offered as a duplicate
+of "container branch". The PR menu and outbox publish use the same path.
+
 If the grant's `publish` rights cover every pending action, stage normally,
 then ask the host broker to publish your own outbox file:
 

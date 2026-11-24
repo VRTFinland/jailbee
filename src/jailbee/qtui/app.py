@@ -443,6 +443,8 @@ class AppController(QObject):
         if verb == "pr push":
             target = RepoTarget.of(group)
             pending = pending_pr_sources(target, name, self._window) if target is not None else []
+            if len(pending) == 1 and pending[0].own_branch:
+                return ["--source-manifest", pending[0].manifest]
             if pending:
                 source_dlg = PrSourceDialog(name, pending, parent=self._window)
                 if source_dlg.exec() != QDialog.DialogCode.Accepted:

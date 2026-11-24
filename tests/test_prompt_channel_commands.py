@@ -166,6 +166,23 @@ def _both(
     return terminal_asked, dashboard_asked, terminal_result, dashboard_result
 
 
+def test_own_source_picker_has_identical_terminal_and_dashboard_rows(at_terminal, at_dashboard):
+    from jailbee.branch_pr import PendingSource, choose_pr_source
+
+    pending = [
+        PendingSource("own.json", "Own", "refs/heads/topic", "main", "topic", 3),
+        PendingSource("child.json", "Child", "refs/jailbee/from/child/topic", "main"),
+    ]
+    terminal, dashboard, first, second = _both(
+        at_terminal, at_dashboard, lambda asked: asked.options[0],
+        lambda: choose_pr_source(pending, own_label="container branch"),
+    )
+    assert terminal == dashboard
+    assert len(terminal) == 1 and len(terminal[0].options) == 2
+    assert "3 newer commits" in terminal[0].options[0]
+    assert first == second == "own.json"
+
+
 # ---- PR images: approval before uploading ------------------------------------------
 
 

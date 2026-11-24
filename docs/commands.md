@@ -418,9 +418,24 @@ SSH; Qt opens PR flows in a terminal for the same question.
 then pending source PR proposals from its outbox, labelled with title, source
 head, base and manifest file. Picking one runs the same confirmation, validation
 and receipt handling as `--source-manifest <file>`. Cancel publishes nothing.
-An own-branch description is not a separate source. Source proposals are read
-from the host outbox store, keyed by the container's uuid, without entering the
-container; only the source commits come over the git bridge. The PR
+An own-branch description is not a separate source. Stage it with
+`jailbee pr description --new` (the default); `jailbee pr source` is only for
+other refs. Staging refuses the current HEAD SHA or HEAD branch ref unless
+`--allow-same-commit` deliberately keeps a separate pinned head.
+
+A legacy source proposal matches the own branch when its SHA equals HEAD,
+or when its ref names the HEAD branch and its SHA is an ancestor. It replaces
+the "container branch" row with "Open/Update PR for <branch> using the staged
+description"; a single matching proposal is used without a source question.
+Publication pushes the tip, preserves the normal container PR binding and
+submodule/adoption/stacked flow, and uses the staged description. An ancestor
+pin warns about the N newer commits included. Imported child refs never match
+by ancestry alone. An explicit separate-head override keeps its own row.
+The PR menu and outbox publish share this publication path.
+
+Source proposals are read from the host outbox store, keyed by the container's
+uuid; read-only git probes in the container classify own-branch matches.
+Source commits come over the git bridge. The PR
 create/update is journaled in the store: when a run is interrupted during it,
 the proposal reads `uncertain` and the next push asks before publishing again
 (an orchestrator request is refused). Without pending sources there is no extra
@@ -429,7 +444,9 @@ The dashboards' **Create/update PR** offers the same choice: the terminal
 frontend uses the CLI picker; Qt shows a native choice and opens a terminal for
 source publication confirmation.
 
-Off a terminal, the command keeps publishing the own branch and prints a pending
+A single matching own-branch proposal is also used off a terminal (unless
+`--no-outbox` is set). For other sources, off a terminal the command keeps
+publishing the own branch and prints a pending
 source count on stderr, with `--source-manifest <file>` and `jailbee outbox <name>`
 hints. Explicit `--source-manifest` skips the picker. So does any own-branch option
 (`--title`, `--body`, `--base`, `--branch`, `--as`, `--pr`, `--stacked`,

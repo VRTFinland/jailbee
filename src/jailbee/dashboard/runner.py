@@ -277,8 +277,11 @@ def run_actions(
 
             try:
                 result = runner_fn(item.argv, cwd=item.cwd, on_output=sink, **run_common)
-            finally:
-                outputs.append(own.text())
+            except Exception as exc:
+                result = RunResult(error=str(exc))
+            if result.error is not None:
+                sink(f"\n{result.error}\n")
+            outputs.append(own.text())
             results.append(result)
             if result.error is not None or result.refused is not None:
                 break

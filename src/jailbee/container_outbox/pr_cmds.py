@@ -484,6 +484,9 @@ def source(
     body_file: Annotated[Path | None, typer.Option(help="Read the PR body from a file.")] = None,
     branch: Annotated[str | None, typer.Option(help="Branch the description applies to.")] = None,
     repo: RepoOpt = None,
+    allow_same_commit: Annotated[
+        bool, typer.Option(help="Keep a separate PR head even when the source is your own branch.")
+    ] = False,
 ) -> None:
     """Stage a PR source manifest; the host pushes the ref and opens or updates the PR."""
 
@@ -493,6 +496,18 @@ def source(
             raise OutboxCommandError("missing --ref (--head)", 2)
         if not sha:
             raise OutboxCommandError("missing --sha", 2)
+        from jailbee import git
+
+        cwd = Path.cwd()
+        if not allow_same_commit and (
+            sha == git.get_head_sha(cwd)
+            or ref == f"refs/heads/{git.get_current_branch(cwd)}"
+        ):
+            raise OutboxCommandError(
+                "source is your own branch; use `jailbee pr description --new` instead "
+                "(or --allow-same-commit for a deliberately separate head)",
+                2,
+            )
         number = _number(pr)
         text = _body(body, body_file, False)
         if text is None and (title is not None or branch is not None or number is None):
@@ -500,6 +515,8 @@ def source(
         resolved_repo = repo if repo else (_view(pr).repo if pr is not None else gh.repo_view())
         manifest = _envelope(None, resolved_repo)
         manifest.update(pr=number, source=ref, source_sha=sha)
+        if allow_same_commit:
+            manifest["allow_same_commit"] = True
         if base is not None:
             manifest["base"] = base
         bodies: dict[str, str] = {}

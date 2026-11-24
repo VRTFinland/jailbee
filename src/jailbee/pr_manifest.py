@@ -119,6 +119,7 @@ class Manifest:
     source: str | None = None
     source_sha: str | None = None
     base: str | None = None
+    allow_same_commit: bool = False
     attachments: Mapping[str, Attachment] = field(default_factory=lambda: MappingProxyType({}))
 
 
@@ -484,6 +485,9 @@ def parse_manifest(
             raise ManifestError(f"{name}: base is not a valid branch name")
         base = base_val
 
+    allow_same_commit = raw.get("allow_same_commit", False)
+    if not isinstance(allow_same_commit, bool) or (allow_same_commit and source is None):
+        raise ManifestError(f"{name}: allow_same_commit must be a boolean on a source manifest")
     actions = _parse_actions(name, raw, bodies, pr, source=source)
     try:
         attachments = parse_attachments(raw.get("attachments", {}))
@@ -507,5 +511,6 @@ def parse_manifest(
         source=source,
         source_sha=source_sha,
         base=base,
+        allow_same_commit=allow_same_commit,
         attachments=attachments,
     )

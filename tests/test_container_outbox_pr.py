@@ -272,6 +272,30 @@ def test_source_schema_examples_without_existing_pr(monkeypatch, tmp_path, broke
     assert raw == expected
 
 
+@pytest.mark.parametrize(
+    ("ref", "sha", "override", "allowed"),
+    [
+        ("refs/heads/alias", "a" * 40, False, False),
+        ("refs/heads/topic", "b" * 40, False, False),
+        ("refs/jailbee/from/child/topic", "b" * 40, False, True),
+        ("refs/heads/alias", "a" * 40, True, True),
+    ],
+)
+def test_source_own_branch_requires_explicit_override(mocker, broker, ref, sha, override, allowed):
+    mocker.patch("jailbee.git.get_head_sha", return_value="a" * 40)
+    mocker.patch("jailbee.git.get_current_branch", return_value="topic")
+    args = ["source", "--ref", ref, "--sha", sha, "--repo", "acme/widgets", "--body", "Body"]
+    if override:
+        args.append("--allow-same-commit")
+    result = invoke(*args)
+    assert result.exit_code == (0 if allowed else 2), result.output
+    if not allowed:
+        assert "pr description --new" in result.output
+        assert broker.proposals("pr") == []
+    elif override:
+        assert json.loads(broker.proposals("pr")[0].manifest)["allow_same_commit"] is True
+
+
 @pytest.mark.parametrize("start", [10, 11])
 def test_invalid_span_before_draft_write(tmp_path, start):
     result = invoke(

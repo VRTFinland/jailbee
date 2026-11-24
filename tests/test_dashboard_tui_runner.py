@@ -212,6 +212,35 @@ def test_refused_action_shows_the_refusal_and_starts_nothing(mocker, tmp_path):
     assert "not allowed" in seen["notice"]
 
 
+def test_source_update_exception_remains_in_queue_detail_and_log(mocker, tmp_path):
+    from jailbee.dashboard.model import RepoTarget
+
+    session, terminal = bare_session(mocker, [_group(tmp_path)])
+
+    def run(runs, done, progress=None):
+        def failing(argv, *, on_output, **kwargs):
+            on_output("manifest own.json\n")
+            raise RuntimeError("source update rejected: permission denied [remote]")
+
+        done(drunner.run_actions(runs, run=failing))
+
+    terminal.run_actions = run
+    session.run_action(
+        RepoTarget(tmp_path, None),
+        ["pr", "push", "alpha-x", "--source-manifest", "own.json"],
+        style="output", label="pr push alpha-x",
+    )
+    (entry,) = session.queue
+    assert entry.state == "failed"
+    assert "permission denied [remote]" in entry.output
+    assert "permission denied [remote]" in " ".join(session.queue_entry_picker(entry.id).detail)
+    assert "permission denied [remote]" in session.notice
+    from jailbee.dashboard.tui.session import PickerEntry
+
+    session._queue_chosen(session.queue_entry_picker(entry.id), PickerEntry("Show output", "output", "o"))
+    assert "permission denied [remote]" in terminal.shown[-1][1]
+
+
 def test_attach_verbs_still_hand_over_the_terminal(mocker, tmp_path):
     mocker.patch.object(tsession.subprocess, "run").return_value.returncode = 0
     session, terminal = bare_session(mocker, [_group(tmp_path)])

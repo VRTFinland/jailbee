@@ -195,7 +195,22 @@ def run_pr_push(
 
     from jailbee import branch_pr, prompting
 
-    def publish_source(manifest: str) -> None:
+    selected_own: str | None = None
+
+    def publish_source(manifest: str) -> bool:
+        nonlocal selected_own, branch, pr_number
+        from jailbee.outbox.service import instance_identity
+        from jailbee.tui import warn_plain
+
+        _, uuid = instance_identity(incus, full)
+        source = branch_pr.stored_source(uuid, manifest)
+        own = branch_pr.own_source_branch(cfg, incus, full, source.manifest) if source else None
+        if own is not None:
+            selected_own, branch = manifest, own[0]
+            pr_number = source.manifest.pr if source else None
+            if own[1]:
+                warn_plain(f"{manifest}: {own[1]} newer commits; pushing the tip of {branch}")
+            return False
         result = branch_pr.publish_source_manifest(
             cfg,
             incus,
@@ -208,13 +223,16 @@ def run_pr_push(
         )
         if result:
             raise typer.Exit(result)
+        return True
 
-    if source_manifest is not None:
-        publish_source(source_manifest)
+    if source_manifest is not None and publish_source(source_manifest):
         return
 
     short = short_name(cfg, full)
-    pending = branch_pr.pending_source_manifests(cfg, incus, full)
+    pending = [] if source_manifest is not None else branch_pr.pending_source_manifests(cfg, incus, full)
+    if len(pending) == 1 and pending[0].own_branch and not no_outbox:
+        publish_source(pending[0].manifest)
+        pending = []
     if pending:
         own_options = any(
             (
@@ -237,8 +255,7 @@ def run_pr_push(
         )
         if not own_options and prompting.is_interactive():
             picked = branch_pr.choose_pr_source(pending, own_label="container branch")
-            if picked is not None:
-                publish_source(picked)
+            if picked is not None and publish_source(picked):
                 return
         else:
             from rich.text import Text
@@ -415,6 +432,20 @@ def run_pr_push(
         with pr_flow.outbox_publication_guard(
             cfg, incus, full, enabled=not no_outbox, management=management
         ):
+            own_text = None
+            if selected_own is not None:
+                from jailbee import pr_outbox
+                from jailbee.outbox.models import OutboxChanged
+
+                own_text = pr_outbox.pending_pr_text(
+                    cfg, incus, full, scope=scope, source_branch=container_branch,
+                    uid=cfg.container_user.uid,
+                    for_pr=record.number,
+                    numbered_only=is_foreign_pr_head,
+                    source_manifest=selected_own,
+                )
+                if own_text is None:
+                    raise OutboxChanged(f"{selected_own}: staged description unavailable for this PR")
             plan = pr_flow.resolve_pr_text_and_head(
                 cfg,
                 incus,
@@ -431,6 +462,7 @@ def run_pr_push(
                 consent=consent,
                 status_label=f"Generating PR title/description with Claude in '{short}'…",
                 use_outbox=not no_outbox,
+                **({"outbox_hint": own_text} if own_text is not None else {}),
             )
             pr_flow.bind_outbox_source(management, plan.outbox_source)
             publish_name, ai_text = plan.publish_name, plan.ai_text
