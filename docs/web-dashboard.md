@@ -13,8 +13,8 @@ the recorder) is attributed from its own transcript instead: the directory and
 git branch it started in, and when. It belongs to a container whose branch
 label (the branch the container was created on) is that branch, whose
 repository directory holds that directory, and which already existed when the
-session started; of several, the most recently created one wins (equal times:
-the first name). So a container recreated under the same name does not inherit
+session started; when several qualify (two containers on one branch) the
+session stays unattributed rather than guessed. So a container recreated under the same name does not inherit
 the older one's sessions. A recorded attribution always wins over this one. A
 mount-mode container has no branch label and lists only recorded sessions, and
 a session started after the branch was renamed inside its container names the

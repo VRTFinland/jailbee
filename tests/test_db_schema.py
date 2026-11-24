@@ -1431,7 +1431,7 @@ def test_v26_database_migrates_to_v27_with_the_fido2_key_table() -> None:
 
 
 def test_v27_database_migrates_to_v28_with_the_session_info_cache_table() -> None:
-    from jailbee.db import _ensure_schema
+    from jailbee.db import _ensure_schema, _migrate_to_v29
     from jailbee.db.models import SchemaMeta, SessionInfoRow
 
     engine = create_engine("sqlite:///:memory:")
@@ -1462,7 +1462,7 @@ def test_v27_database_migrates_to_v28_with_the_session_info_cache_table() -> Non
 
 
 def test_v28_database_migrates_to_v29_with_where_each_session_started() -> None:
-    from jailbee.db import _ensure_schema
+    from jailbee.db import _ensure_schema, _migrate_to_v29
     from jailbee.db.models import SchemaMeta, SessionInfoRow
 
     engine = create_engine("sqlite:///:memory:")
@@ -1475,7 +1475,9 @@ def test_v28_database_migrates_to_v29_with_where_each_session_started() -> None:
         conn.exec_driver_sql("ALTER TABLE session_info_cache DROP COLUMN git_branch")
 
     _ensure_schema(engine)
-    _ensure_schema(engine)  # replaying the chain is a no-op
+    with engine.begin() as conn:
+        _migrate_to_v29(conn)  # the step itself is idempotent
+        _migrate_to_v29(conn)
 
     with Session(engine) as session:
         session.add(

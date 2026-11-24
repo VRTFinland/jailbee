@@ -203,22 +203,42 @@ def test_a_renamed_branch_keeps_only_the_sessions_on_the_labelled_branch(home: P
     assert history(home, [box("alpha-main")], "alpha-main") == [sid(1)]
 
 
-def test_two_containers_on_one_branch_and_path_split_by_creation_time(home: Path) -> None:
-    write_session(home, 1, started="2026-11-05T10:00:00Z")
-    write_session(home, 2, started="2026-11-12T10:00:00Z")
+def test_two_containers_on_one_branch_and_path_leave_the_session_unattributed(
+    home: Path,
+) -> None:
+    write_session(home, 1, started="2026-11-12T10:00:00Z")
     boxes = [box("alpha-old"), box("alpha-new", created=datetime(2026, 11, 10, tzinfo=UTC))]
 
-    # The newest container that already existed when the session started.
-    assert history(home, boxes, "alpha-old") == [sid(1)]
-    assert history(home, boxes, "alpha-new") == [sid(2)]
+    assert history(home, boxes, "alpha-old") == []
+    assert history(home, boxes, "alpha-new") == []
 
 
-def test_two_containers_created_at_the_same_instant_go_by_name(home: Path) -> None:
+def test_two_containers_created_at_the_same_instant_are_ambiguous(home: Path) -> None:
     write_session(home, 1, started="2026-11-05T10:00:00Z")
     boxes = [box("alpha-b"), box("alpha-a")]
 
-    assert history(home, boxes, "alpha-a") == [sid(1)]
+    assert history(home, boxes, "alpha-a") == []
     assert history(home, boxes, "alpha-b") == []
+
+
+def test_a_later_container_on_the_same_branch_is_not_a_candidate(home: Path) -> None:
+    write_session(home, 1, started="2026-11-05T10:00:00Z")
+    boxes = [box("alpha-old"), box("alpha-new", created=datetime(2026, 11, 10, tzinfo=UTC))]
+
+    assert history(home, boxes, "alpha-old") == [sid(1)]
+    assert history(home, boxes, "alpha-new") == []
+
+
+def test_a_container_without_a_repo_dir_label_is_not_a_candidate(home: Path) -> None:
+    write_session(home, 1, started="2026-11-05T10:00:00Z")
+
+    assert history(home, [box("alpha-main", repo_dir=None)], "alpha-main") == []
+
+
+def test_a_container_created_at_the_sessions_start_already_existed(home: Path) -> None:
+    write_session(home, 1, started=CREATED.strftime("%Y-%m-%dT%H:%M:%SZ"))
+
+    assert history(home, [box("alpha-main")], "alpha-main") == [sid(1)]
 
 
 def test_recorder_rows_win_over_the_transcripts_metadata(home: Path) -> None:

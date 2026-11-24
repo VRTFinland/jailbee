@@ -18,9 +18,9 @@ transcripts:
 - A candidate container has a branch label (`ContainerInfo.branch`, the
   branch it was created on) equal to the session's starting `gitBranch`, a
   known creation time at or before the session's start, and the session's
-  `cwd` at or below its `repo_dir` (any `cwd` when the label is missing).
-  A mount-mode container (no branch label), a container of unknown age, and
-  a session naming no branch or no start get no backfill.
+  `cwd` at or below its `repo_dir`. A mount-mode container (no branch label),
+  a container without a `repo_dir` label, a container of unknown age, and a
+  session naming no branch or no start get no backfill.
 - A container recreated under the same name is a new instance with a later
   creation time: sessions older than it stay out of its history.
 - A branch renamed inside the container: sessions started after the rename
@@ -29,9 +29,10 @@ transcripts:
   after checking out another container's labelled branch goes to that
   container: the transcript cannot tell them apart, since every container of
   a repository has the same `repo_dir`.
-- Several candidates (two containers on one branch and path): the most
-  recently created one that already existed when the session started wins;
-  equal creation times go to the first name in sort order.
+- Several candidates (two containers of one repository on one branch): the
+  transcript cannot tell them apart, so the session stays unattributed
+  rather than guessed. A container created after the session started is not
+  a candidate, so an older-only single candidate still wins.
 """
 
 from __future__ import annotations
@@ -139,9 +140,7 @@ def _aware(moment: datetime) -> datetime:
     return moment if moment.tzinfo is not None else moment.replace(tzinfo=UTC)
 
 
-def _under(cwd: str, repo_dir: str | None) -> bool:
-    if repo_dir is None:
-        return True
+def _under(cwd: str, repo_dir: str) -> bool:
     root = repo_dir.rstrip("/") or "/"
     return cwd == root or cwd.startswith(root.rstrip("/") + "/")
 
@@ -157,7 +156,7 @@ def backfill(
     eligible = [
         (c.branch, _aware(c.created_at), c)
         for c in containers
-        if c.branch is not None and c.created_at is not None
+        if c.branch is not None and c.created_at is not None and c.repo_dir is not None
     ]
     found: dict[tuple[str, str], str] = {}
     for row in rows:
@@ -166,13 +165,15 @@ def backfill(
             continue
         started = _aware(row.started)
         candidates = [
-            (created, c)
+            c
             for branch, created, c in eligible
-            if branch == row.git_branch and created <= started and _under(row.cwd, c.repo_dir)
+            if branch == row.git_branch
+            and created <= started
+            and c.repo_dir is not None
+            and _under(row.cwd, c.repo_dir)
         ]
-        if candidates:
-            _created, best = min(candidates, key=lambda pair: (-pair[0].timestamp(), pair[1].name))
-            found[key] = best.name
+        if len(candidates) == 1:
+            found[key] = candidates[0].name
     return found
 
 
