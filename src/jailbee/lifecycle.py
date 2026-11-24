@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from rich.markup import escape
+from rich.style import Style
 from rich.text import Text
 
 from jailbee import agent_status, table_format
@@ -3827,54 +3828,21 @@ _AGENT_ERROR_GLYPH: tuple[str, str] = ("✖", "red")
 """The mark of any `error:<kind>` state, followed by the kind."""
 
 
-def _agent_marks(
-    statuses: Sequence[AgentSummary], *, activity_age: bool
-) -> list[tuple[str, datetime | None]]:
-    from jailbee.agent_status import rank_key
-
-    marks: list[tuple[str, datetime | None]] = []
-    for s in statuses:
-        entries = [(m.state, m.since) for m in s.sessions] or [(s.state, None)] * max(s.count, 1)
-        for i, (state, own) in enumerate(entries):
-            stamp = own
-            if i == 0:
-                event = s.activity.last_event_at if s.activity is not None else None
-                event_state = s.activity.state if s.activity is not None else None
-                if activity_age and event is not None and event_state in (None, state):
-                    stamp = event
-                elif stamp is None and not activity_age:
-                    stamp = s.since
-            marks.append((state, stamp))
-    marks.sort(key=lambda m: rank_key(m[0], m[1]))
-    return marks
-
-
-def _agent_mark_colour(
-    state: str,
-    age: timedelta | None,
-    recent_idle: timedelta | None,
-    recent_idle_style: str,
-) -> str | None:
-    from jailbee.agent_status import ERROR_PREFIX
-
-    if state.startswith(ERROR_PREFIX):
-        return _AGENT_ERROR_GLYPH[1]
-    if state == "idle" and age is not None and recent_idle is not None and age < recent_idle:
-        return recent_idle_style
-    return _AGENT_GLYPHS.get(state, ("?", None))[1]
-
-
 def agent_compact_is_active(
     statuses: Sequence[AgentSummary], now: datetime, *, recent_idle: timedelta
 ) -> bool:
     """Whether any dashboard agent mark is coloured rather than dim/unclassified."""
-    seen: set[str] = set()
-    for state, stamp in _agent_marks(statuses, activity_age=True):
-        age = now - stamp if state not in seen and stamp is not None and stamp <= now else None
-        seen.add(state)
-        if _agent_mark_colour(state, age, recent_idle, "bold bright_white") not in (None, "dim"):
-            return True
-    return False
+    cell = Text.from_markup(agent_compact_cell(
+        statuses, now, recent_idle=recent_idle, activity_age=True,
+        max_cells=AGENT_COMPACT_MAX_CELLS,
+    ))
+    # Inspect the final cell so abbreviation and per-state age suppression cannot
+    # leave Active disagreeing with the dashboard's visible marks.
+    return any(
+        style.color is not None and not style.dim
+        for span in cell.spans
+        for style in [Style.parse(span.style) if isinstance(span.style, str) else span.style]
+    )
 
 
 def agent_compact_cell(
@@ -3904,15 +3872,13 @@ def agent_compact_cell(
     if not statuses:
         return "[dim]—[/dim]"
 
-    from jailbee.agent_status import ERROR_PREFIX
+    from jailbee.agent_status import ERROR_PREFIX, rank_key
 
     def glyph_of(state: str, *, age_from: datetime | None = None, with_age: bool = False) -> str:
-        glyph = _AGENT_GLYPHS.get(state, ("?", None))[0]
-        age = now - age_from if with_age and age_from is not None and age_from <= now else None
-        colour = _agent_mark_colour(state, age, recent_idle, recent_idle_style)
+        glyph, colour = _AGENT_GLYPHS.get(state, ("?", None))
         text = glyph
         if state.startswith(ERROR_PREFIX):
-            glyph = _AGENT_ERROR_GLYPH[0]
+            glyph, colour = _AGENT_ERROR_GLYPH
             text = f"{glyph} {escape(state.removeprefix(ERROR_PREFIX))}"
         elif state not in _AGENT_GLYPHS:
             # The state is raw text from a file the container wrote.
@@ -3920,11 +3886,29 @@ def agent_compact_cell(
         if with_age and age_from is not None and age_from <= now:
             age = now - age_from
             text += f" {format_duration_coarse(age)}"
+            if recent_idle is not None and state == "idle" and age < recent_idle:
+                colour = recent_idle_style
         return f"[{colour}]{text}[/{colour}]" if colour else text
 
     # One urgency-ordered list over every agent's sessions, so truncation drops
     # the least urgent session whichever agent owns it.
-    marks = _agent_marks(statuses, activity_age=activity_age)
+    marks: list[tuple[str, datetime | None]] = []
+    for s in statuses:
+        # Old snapshots carry no per-session marks: `count` stands in for them.
+        entries = [(m.state, m.since) for m in s.sessions] or [(s.state, None)] * max(s.count, 1)
+        for i, (state, own) in enumerate(entries):
+            stamp = own
+            if i == 0:
+                # The agent-wide stamps describe the most urgent session; the
+                # event time only when that session produced the latest event.
+                event = s.activity.last_event_at if s.activity is not None else None
+                event_state = s.activity.state if s.activity is not None else None
+                if activity_age and event is not None and event_state in (None, state):
+                    stamp = event
+                elif stamp is None and not activity_age:
+                    stamp = s.since
+            marks.append((state, stamp))
+    marks.sort(key=lambda m: rank_key(m[0], m[1]))
 
     glyphs = [glyph_of(state) for state, _ in marks]
     full: list[str] = []
