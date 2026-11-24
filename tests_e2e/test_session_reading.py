@@ -10,7 +10,7 @@ import pytest
 from playwright.sync_api import Page, WebSocketRoute, expect
 
 from tests.web_fakes import wait_until
-from tests_e2e.flows import log_in_with_pin
+from tests_e2e.flows import log_in_with_pin, open_settings
 from tests_e2e.server import E2EServer
 
 SESSION = "33333333-3333-4333-8333-333333333333"
@@ -139,7 +139,7 @@ def test_end_follow_and_new_messages_restore_follow(
     page.set_viewport_size({"width": width, "height": 800})
     server, transcript = open_transcript(page, make_server, tmp_path)
     if profile == "eink":
-        page.get_by_role("link", name="Settings", exact=True).click()
+        open_settings(page)
         page.get_by_role("radio", name="E-ink (page turns").check()
         page.get_by_role("checkbox", name="Follow new messages on e-ink").check()
         page.go_back()
@@ -280,7 +280,7 @@ def test_eink_default_holds_new_entries_even_at_the_end(
     page: Page, make_server: Callable[..., E2EServer], tmp_path: Path
 ) -> None:
     server, transcript = open_transcript(page, make_server, tmp_path)
-    page.get_by_role("link", name="Settings", exact=True).click()
+    open_settings(page)
     page.get_by_role("radio", name="E-ink (page turns").check()
     expect(page.get_by_role("checkbox", name="Follow new messages on e-ink")).not_to_be_checked()
     page.go_back()

@@ -14,7 +14,7 @@ from jailbee.web.auth_admin import add_totp_key, list_sessions, revoke_session
 from jailbee.web.login_link import mint
 from tests.web_fakes import FakeClock, snapshot_of
 from tests_e2e.browser_errors import BrowserErrors
-from tests_e2e.flows import DERIVED_DEVICE, log_in_with_pin
+from tests_e2e.flows import DERIVED_DEVICE, log_in_with_pin, open_settings
 from tests_e2e.server import E2EServer
 
 
@@ -151,7 +151,7 @@ def test_renaming_the_session_in_settings_updates_the_header_and_the_listing(
 ) -> None:
     log_in_with_pin(page, server.url, server.pin.current)
 
-    page.get_by_role("link", name="Settings").click()
+    open_settings(page)
     name = page.get_by_label("Name shown in the header")
     expect(name).to_have_value(re.compile(r"^Chrome on "))
     name.fill("reading room tablet")

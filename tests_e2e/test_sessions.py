@@ -13,7 +13,7 @@ from playwright.sync_api import Page, Route, expect
 from jailbee.agent_status import AgentSummary
 from tests.web_fakes import container, repo_group, snapshot_of
 from tests_e2e.browser_errors import BrowserErrors
-from tests_e2e.flows import log_in_with_pin
+from tests_e2e.flows import log_in_with_pin, open_settings
 from tests_e2e.server import E2EServer
 from tests_e2e.sessions import (
     OTHER_TITLE,
@@ -166,7 +166,7 @@ def test_thinking_is_hidden_until_enabled_in_settings(session_page: Page) -> Non
     page.get_by_role("link", name="work", exact=True).click()
     open_session(page)
     expect(page.get_by_text("Read auth.py first.", exact=True)).to_have_count(0)
-    page.get_by_role("link", name="Settings", exact=True).click()
+    open_settings(page)
     page.get_by_role("checkbox", name="Show thinking").check()
     page.go_back()
     expect(page.get_by_text("Read auth.py first.", exact=True)).to_be_visible()

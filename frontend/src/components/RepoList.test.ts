@@ -1,4 +1,6 @@
 import {mount} from "@vue/test-utils"
+import {defineComponent} from "vue"
+import QuickSettings from "./QuickSettings.vue"
 import {beforeEach, describe, expect, it} from "vitest"
 import {reloadSettings} from "../settings"
 import {createMemoryHistory} from "vue-router"
@@ -28,7 +30,10 @@ const view: FrontPageView = {
 }
 
 function mountList() {
-    return mount(RepoList, {props: {view}, global: {plugins: [createAppRouter(createMemoryHistory())]}})
+    return mount(defineComponent({
+        components: {QuickSettings, RepoList}, props: ["view", "listedContainers"],
+        template: '<QuickSettings context="containers" /><RepoList :view="view" :listed-containers="listedContainers" />',
+    }), {props: {view}, global: {plugins: [createAppRouter(createMemoryHistory())]}})
 }
 
 describe("RepoList", () => {
@@ -42,6 +47,7 @@ describe("RepoList", () => {
             filters: {running: {visible: [child.name, parent.name], context: [parent.name]},
                 active: {visible: [child.name, parent.name], context: [parent.name]}}}
         await wrapper.setProps({view: filteredView})
+        await wrapper.get('button[aria-label="Quick settings"]').trigger("click")
         await wrapper.get('button[aria-label="Active"]').trigger("click")
         expect(wrapper.get('button[aria-label="Active"]').attributes("aria-pressed")).toBe("true")
         expect(wrapper.findAll("section.repo")).toHaveLength(1)
@@ -51,12 +57,16 @@ describe("RepoList", () => {
         await wrapper.setProps({view: {...filteredView, filters: {...filteredView.filters,
             active: {visible: [], context: []}}}})
         expect(wrapper.findAll("li.row")).toHaveLength(0)
-        expect(wrapper.text()).toContain("2 hidden by filter")
+        expect(wrapper.get('.filter-notice').text()).toBe("Showing: Active · show all")
+        expect(wrapper.find('.filters').exists()).toBe(false)
+        expect(wrapper.find('.filter-marker').exists()).toBe(true)
         await wrapper.get('button[aria-label="Running"]').trigger("click")
         expect(wrapper.findAll("li.row")).toHaveLength(2)
         await wrapper.get('button[aria-label="All"]').trigger("click")
         expect(wrapper.findAll("section.repo")).toHaveLength(2)
         expect(wrapper.find(".filter-context").exists()).toBe(false)
+        expect(wrapper.find(".filter-notice").exists()).toBe(false)
+        expect(wrapper.find(".filter-marker").exists()).toBe(false)
     })
 
     it("uses the filtered tree layout for the only visible sibling", async () => {
@@ -68,6 +78,7 @@ describe("RepoList", () => {
         await wrapper.setProps({view: {...view, repos: [{prefix: "alpha", containers: [parent, ...children]}],
             filters: {active: {visible: [parent.name, "alpha-b"], context: [parent.name],
                 indents: {[parent.name]: "", "alpha-b": "└ "}}}}})
+        await wrapper.get('button[aria-label="Quick settings"]').trigger("click")
         await wrapper.get('button[aria-label="Active"]').trigger("click")
         expect(wrapper.get('[data-container="alpha-b"] .indent').element.textContent).toBe("└ ")
         await wrapper.get('button[aria-label="All"]').trigger("click")

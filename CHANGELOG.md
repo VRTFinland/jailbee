@@ -238,10 +238,15 @@ before editing `## Unreleased`.
   host-side, read-only browser dashboard, included in every install
   ([#109](https://github.com/VRTFinland/jailbee/issues/109)). The front page
   shows repositories and containers with the terminal dashboard's core columns
-  and agent state. Compact All / Running / Active icon filters are remembered
-  per browser, follow live snapshots and keep nonmatching parents dimmed above
-  matching children, with tree prefixes recomputed for the visible rows and a
-  hidden-container count. Active includes recently idle sessions independently
+  and agent state. A top-right quick settings popover on every page offers live
+  body/code font-size steppers, an Auto / Light / Dark / E-ink theme cycler and
+  the full settings page, sharing one per-device store. Session menus add follow,
+  thinking and agent-context controls; container pages have no contextual section.
+  Short-screen menus paginate whole rows instead of scrolling, with large e-ink
+  touch targets and no shadow. All / Running / Active filters live in the menu,
+  with an icon marker and a slim reset notice for non-All selections. They are
+  remembered per browser, follow live snapshots and keep nonmatching parents
+  dimmed above matching children, with tree prefixes recomputed for the visible rows. Active includes recently idle sessions independently
   of cell width or session count, with a bold idle-age label in the browser;
   both the label and filter membership update as time passes
   ([#152](https://github.com/VRTFinland/jailbee/issues/152)).

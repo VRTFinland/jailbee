@@ -9,8 +9,9 @@ import {reactive, watch} from "vue"
 import type {ContainerFilter, MetaMode} from "./protocol"
 import {readItem, writeItem} from "./storage"
 
-export type Theme = "light" | "dark" | "eink"
-export const THEMES: readonly Theme[] = ["light", "dark", "eink"]
+export type Theme = "auto" | "light" | "dark" | "eink"
+export const THEMES: readonly Theme[] = ["auto", "light", "dark", "eink"]
+export const THEME_LABELS: Record<Theme, string> = {auto: "Auto", light: "Light", dark: "Dark", eink: "E-ink"}
 /** How the UI behaves: "eink" pages instead of scrolling and never animates. */
 export type DisplayProfile = "normal" | "eink"
 export const DISPLAY_PROFILES: readonly DisplayProfile[] = ["normal", "eink"]
@@ -25,6 +26,7 @@ export interface Settings {
     codeFontSize: number
     showThinking: boolean
     einkFollow: boolean
+    followNewMessages: boolean
     agentContext: MetaMode
     containerFilter: ContainerFilter
 }
@@ -72,7 +74,7 @@ const FIELDS: {[K in keyof Settings]: Field<K>} = {
         key: "jailbee.theme",
         parse: (raw) => THEMES.find((t) => t === raw),
         serialize: String,
-        fallback: () => (prefersDark() ? "dark" : "light"),
+        fallback: () => "auto",
     },
     displayProfile: {
         key: "jailbee.displayProfile",
@@ -87,6 +89,12 @@ const FIELDS: {[K in keyof Settings]: Field<K>} = {
         parse: (raw) => (raw === "1" ? true : raw === "0" ? false : undefined),
         serialize: (v) => (v ? "1" : "0"),
         fallback: () => false,
+    },
+    followNewMessages: {
+        key: "jailbee.followNewMessages",
+        parse: (raw) => (raw === "1" ? true : raw === "0" ? false : undefined),
+        serialize: (v) => (v ? "1" : "0"),
+        fallback: () => true,
     },
     einkFollow: {
         key: "jailbee.einkFollow",
@@ -115,6 +123,7 @@ function loadAll(): Settings {
         codeFontSize: load("codeFontSize"),
         showThinking: load("showThinking"),
         einkFollow: load("einkFollow"),
+        followNewMessages: load("followNewMessages"),
         agentContext: load("agentContext"),
         containerFilter: load("containerFilter"),
     }
@@ -142,10 +151,16 @@ export function updateSettings(patch: Partial<Settings>): void {
 
 /** Mirror `settings` onto `root` (theme and profile attributes, font-size variables). */
 export function startSettings(root: HTMLElement = document.documentElement): void {
+    const applyTheme = () => {
+        root.dataset.theme = settings.theme === "auto" ? (prefersDark() ? "dark" : "light") : settings.theme
+    }
+    try {
+        window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", applyTheme)
+    } catch { /* Some readers do not expose media query listeners. */ }
     watch(
         () => ({...settings}),
         (s) => {
-            root.dataset.theme = s.theme
+            applyTheme()
             root.dataset.profile = s.displayProfile
             root.style.setProperty("--font-size-body", `${s.bodyFontSize}px`)
             root.style.setProperty("--font-size-code", `${s.codeFontSize}px`)
