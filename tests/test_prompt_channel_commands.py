@@ -21,6 +21,8 @@ from jailbee import prompt_channel as pc
 from jailbee import prompting
 from jailbee.cli import app
 from tests.test_branch_pr import source_publisher as source_publisher
+from tests.test_cli_outbox import env as env
+from tests.test_cli_outbox import publication_env as publication_env
 from tests.test_prompt_channel import Peer
 
 
@@ -164,6 +166,51 @@ def _both(
     dashboard_asked = at_dashboard(answer)
     dashboard_result = run()
     return terminal_asked, dashboard_asked, terminal_result, dashboard_result
+
+
+@pytest.mark.parametrize("kind", ["pr", "issue"])
+def test_outbox_publish_questions_match_terminal(publication_env, at_terminal, at_dashboard, kind):
+    terminal, dashboard, tr, dr = _both(
+        at_terminal,
+        at_dashboard,
+        lambda q: False,
+        lambda: CliRunner().invoke(
+            app,
+            [
+                "outbox",
+                "apply",
+                "feature",
+                f"{kind}/001.json",
+                *(["--draft"] if kind == "pr" else []),
+            ],
+        ),
+    )
+    assert tr.exit_code == dr.exit_code == 0, (tr.output, dr.output)
+    assert terminal == dashboard and terminal
+    assert terminal[-1].kind in ("confirm", "choose_one")
+    _, create, comment, review = publication_env
+    create.assert_not_called()
+    comment.assert_not_called()
+    review.assert_not_called()
+
+
+def test_own_source_picker_has_identical_terminal_and_dashboard_rows(at_terminal, at_dashboard):
+    from jailbee.branch_pr import PendingSource, choose_pr_source
+
+    pending = [
+        PendingSource("own.json", "Own", "refs/heads/topic", "main", "topic", 3),
+        PendingSource("child.json", "Child", "refs/jailbee/from/child/topic", "main"),
+    ]
+    terminal, dashboard, first, second = _both(
+        at_terminal,
+        at_dashboard,
+        lambda asked: asked.options[0],
+        lambda: choose_pr_source(pending, own_label="container branch"),
+    )
+    assert terminal == dashboard
+    assert len(terminal) == 1 and len(terminal[0].options) == 2
+    assert "3 newer commits" in terminal[0].options[0]
+    assert first == second == "own.json"
 
 
 # ---- PR images: approval before uploading ------------------------------------------

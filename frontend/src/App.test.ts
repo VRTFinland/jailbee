@@ -6,6 +6,7 @@ import App from "./App.vue"
 import {DASHBOARD, Dashboard, type SocketLike} from "./dashboard"
 import {createAppRouter, takeResumePath} from "./router"
 import type {SocketHandlers} from "./socket"
+import {reloadSettings, settings} from "./settings"
 
 function harness() {
     const sockets: {handlers: SocketHandlers; started: boolean}[] = []
@@ -50,6 +51,34 @@ afterEach(() => {
 })
 
 describe("App", () => {
+    it("has quick settings on every route, shares full-page settings and resets context on navigation", async () => {
+        reloadSettings()
+        setToken("tok")
+        const {wrapper, router} = await mountAt("/")
+        const icon = () => wrapper.get('[aria-label="Quick settings"][aria-haspopup]')
+        await icon().trigger("click")
+        await wrapper.get('[aria-label="Increase body font size"]').trigger("click")
+        await wrapper.get('[aria-label="Active"]').trigger("click")
+        await wrapper.get('.quick-panel a').trigger("click")
+        await flushPromises()
+        expect(router.currentRoute.value.name).toBe("settings")
+        expect(wrapper.find(".quick-panel").exists()).toBe(false)
+        expect(wrapper.get("input.body-size").element).toHaveProperty("value", "17")
+        await wrapper.get("input.body-size").setValue("20")
+        await icon().trigger("click")
+        expect(wrapper.get(".quick-panel").text()).toContain("Body: 20px")
+        expect(settings.bodyFontSize).toBe(20)
+        await router.push("/containers/alpha-1")
+        await flushPromises()
+        expect(wrapper.find(".quick-panel").exists()).toBe(false)
+        await icon().trigger("click")
+        expect(wrapper.find(".view-heading").exists()).toBe(false)
+        await router.push("/repos/alpha/sessions/claude/session-1")
+        await flushPromises()
+        await icon().trigger("click")
+        expect(wrapper.find('[aria-label="Show thinking"]').exists()).toBe(true)
+    })
+
     it("opens the dashboard socket on a deep link to a signed-in page", async () => {
         setToken("tok")
         const {sockets} = await mountAt("/repos/alpha")
@@ -159,6 +188,42 @@ describe("App", () => {
             await flushPromises()
 
             expect(router.currentRoute.value.fullPath).toBe("/repos/alpha")
+            wrapper.unmount()
+        })
+
+        it("does not reopen a device link that was open during setup", async () => {
+            setToken("tok")
+            const {router, wrapper} = await setupTab(["setup", "setup"], "/login?link=x")
+            expect(router.currentRoute.value.name).toBe("setup")
+
+            await vi.advanceTimersByTimeAsync(2_000)
+            await flushPromises()
+
+            expect(router.currentRoute.value.fullPath).toBe("/")
+            wrapper.unmount()
+        })
+
+        it("does not resume an old route after setup was left by hand", async () => {
+            setToken("tok")
+            const {router, wrapper, sockets} = await setupTab(["dashboard", "setup"], "/repos/alpha")
+            sockets[0].handlers.onSetupMode?.()
+            await flushPromises()
+            expect(router.currentRoute.value.name).toBe("setup")
+            // Left by hand (Back / typed URL) while the server is in dashboard mode.
+            await router.push("/login")
+            await flushPromises()
+            expect(router.currentRoute.value.name).toBe("login")
+
+            // A later setup episode, entered from the login poll.
+            vi.stubGlobal("fetch", vi.fn(async () => Response.json({mode: "setup"})))
+            await vi.advanceTimersByTimeAsync(2_000)
+            await flushPromises()
+            expect(router.currentRoute.value.name).toBe("setup")
+            vi.stubGlobal("fetch", vi.fn(async () => Response.json({mode: "dashboard"})))
+            await vi.advanceTimersByTimeAsync(2_000)
+            await flushPromises()
+
+            expect(router.currentRoute.value.fullPath).toBe("/")
             wrapper.unmount()
         })
 

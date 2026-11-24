@@ -363,7 +363,7 @@ def test_confirm_delete_returns_busy_before_running_any_command():
     ctl.intent("answer", None, "yes")
 
     assert runner.calls == before
-    assert ctl.state.busy == "Deleting 1 from the outbox…"
+    assert ctl.state.busy == "Deleting 1/1… · Esc leaves; deletion continues"
     assert ctl.state.question is None
     assert runner.held
 
@@ -376,23 +376,30 @@ def test_delete_stays_busy_across_async_steps_and_refuses_concurrent_mutations()
     runner.hold_loads = True
     ctl.intent("answer", None, "yes")
     busy = ctl.state.busy
-    assert busy == "Deleting 1 from the outbox…"
+    assert busy == "Deleting 1/1…"
     before = list(runner.calls)
     ctl.intent("refresh", None)
-    for intent in ("publish", "delete", "clear", "scope"):
+    for intent in ("publish", "clear"):
         ctl.intent(intent, None)
-        assert ctl.state.status == (f"busy: {busy}",)
+        expected = (
+            "pr/a.json: already in the delete queue"
+            if intent == "publish"
+            else "clear must wait for the delete queue to finish"
+        )
+        assert ctl.state.status == (expected,)
+    ctl.intent("delete", None)
+    assert ctl.state.status == ("pr/a.json: already in the delete queue",)
+    ctl.intent("scope", None)
+    assert ctl.state.status == (f"busy: {busy}",)
     assert runner.calls == before
     assert not ctl.state.all_repos
-    runner.finish_loads()  # verification -> drop
-    assert ctl.state.busy == busy
     runner.finish_loads()  # drop -> reload
     assert ctl.state.busy == busy
     runner.finish_loads()
     assert ctl.state.busy is None
     assert ctl.state.status == ("Deleted 1 from the outbox.",)
     assert runner.changes == 1
-    assert [a[1] for _, a in runner.calls] == ["ls", "ls", "drop", "ls"]
+    assert [a[1] for _, a in runner.calls] == ["ls", "drop", "ls"]
 
 
 def test_marks_added_during_delete_are_kept_for_next_action():
@@ -410,6 +417,78 @@ def test_marks_added_during_delete_are_kept_for_next_action():
     assert _key() not in ctl.state.marks
 
 
+def test_cursor_follows_surviving_action_after_delete():
+    before = _proposal(actions=[_action(0), _action(1), _action(2)])
+    after = _proposal(revision="r2", actions=[_action(0, body="body 1"), _action(1, body="body 2")])
+    runner = FakeRunner(_listing(before), _listing(after))
+    ctl = _controller(runner)
+    ctl.load()
+    ctl.intent("delete", _key(action=0))
+    runner.hold_loads = True
+    ctl.intent("answer", None, "yes")
+    ctl.intent("expand", _key(action=1))
+    while runner.held:
+        runner.finish_loads()
+    assert ctl.state.cursor == _key(action=0)
+    ctl.intent("delete", None)
+    assert ctl.state.question is not None
+    assert ctl.state.question.lines == dob.delete_scope_lines(ctl.state, [_key(action=0)])
+
+
+def test_comment_mark_does_not_move_to_another_action():
+    comment = _comment(0)
+    before = _proposal(actions=[_action(0, comments=[comment]), _action(1, comments=[comment])])
+    after = _proposal(revision="r2", actions=[_action(0, body="body 1", comments=[comment])])
+    runner = FakeRunner(_listing(before), _listing(after))
+    ctl = _controller(runner)
+    ctl.load()
+    ctl.intent("delete", _key(action=1))
+    runner.hold_loads = True
+    ctl.intent("answer", None, "yes")
+    ctl.intent("mark", _key(action=0, comment=0))
+    while runner.held:
+        runner.finish_loads()
+    assert not ctl.state.marks
+
+
+def test_comment_mark_survives_sibling_comment_deletion():
+    before = _proposal(actions=[_action(0, comments=[_comment(0), _comment(1), _comment(2)])])
+    after = _proposal(revision="r2", actions=[_action(0, comments=[{**_comment(1), "index": 0}])])
+    runner = FakeRunner(_listing(before), _listing(after))
+    ctl = _controller(runner)
+    ctl.load()
+    ctl.intent("delete", _key(action=0, comment=0))
+    runner.hold_loads = True
+    ctl.intent("answer", None, "yes")
+    ctl.intent("mark", _key(action=0, comment=1))
+    while runner.held:
+        runner.finish_loads()
+    assert ctl.state.marks == {_key(action=0, comment=0)}
+
+
+def test_delete_exception_releases_reservations_and_reports_failure(mocker):
+    runner = FakeRunner(_listing(_proposal(), _proposal("issue/b.json"), _proposal("pr/c.json")))
+    ctl = _controller(runner)
+    ctl.load()
+    ctl.intent("delete", _key(action=0))
+    runner.hold_loads = True
+    ctl.intent("answer", None, "yes")
+    ctl.intent("delete", _key("issue/b.json"))
+    ctl.intent("answer", None, "yes")
+    ctl.intent("delete", _key("pr/c.json"))
+    ctl.intent("answer", None, "yes")
+    mocker.patch.object(ctl, "_deleted_row", side_effect=RuntimeError("unexpected failure"))
+    while runner.held:
+        runner.finish_loads()
+    assert ctl.state.busy is None
+    assert not ctl.mutation_running
+    assert "unexpected failure" in ctl.state.status[0]
+    assert "issue/b.json" in ctl.state.status[0]
+    assert "pr/c.json" in ctl.state.status[0]
+    ctl.intent("delete", _key(action=1))
+    assert ctl.state.question is not None
+
+
 def test_delete_worker_start_failure_is_reported_and_clears_busy():
     runner = FakeRunner(_listing(_proposal()))
     ctl = _controller(runner)
@@ -420,8 +499,8 @@ def test_delete_worker_start_failure_is_reported_and_clears_busy():
     assert ctl.state.busy is None
     assert ctl.state.question is None
     assert ctl.state.status == (
-        "pr/a.json: could not list the outbox: worker unavailable",
-        "could not list the outbox: worker unavailable",
+        "1 not deleted (pr/a.json: worker unavailable; "
+        "could not list the outbox: worker unavailable); deleted 0",
     )
     assert runner.argvs("drop") == []
     assert runner.changes == 1
@@ -485,29 +564,53 @@ def _tree() -> dict[str, object]:
 
 
 def test_delete_marked_items_highest_index_first():
-    first = _tree()
-    # initial load, the check before the first drop, then one listing per drop
-    revisions = ["r1", "r1", "r2", "r3", "r4"]
-    runner = FakeRunner(*(_listing({**first, "revision": rev}) for rev in revisions))
+    proposal = _tree()
+
+    class ShiftingRunner(FakeRunner):
+        """Apply real list edits: every drop shifts indices and changes the revision."""
+
+        def run_quiet(self, argv: Sequence[str]) -> CliResult:
+            if argv[1] == "drop":
+                actions = proposal["actions"]
+                action = int(argv[argv.index("--action") + 1])
+                if "--comment" in argv:
+                    comment = int(argv[argv.index("--comment") + 1])
+                    actions[action]["comments"].pop(comment)
+                else:
+                    actions.pop(action)
+                for index, item in enumerate(actions):
+                    item["index"] = index
+                    item["delete_scope"] = [index]
+                    for comment_index, item_comment in enumerate(item["comments"]):
+                        item_comment["index"] = comment_index
+                proposal["revision"] = f"r{int(proposal['revision'][1:]) + 1}"
+            self.listings = [_listing(proposal)]
+            return super().run_quiet(argv)
+
+    runner = ShiftingRunner()
     ctl = _controller(runner)
     ctl.load()
     ctl.intent("expand", _key())
     ctl.intent("expand", _key(action=0))
-    for key in (_key(action=0, comment=1), _key(action=0, comment=3), _key(action=2)):
+    for key in (_key(action=0, comment=1), _key(action=0, comment=3), _key(action=1)):
         ctl.intent("mark", key)
     ctl.intent("delete", None)
     ctl.intent("answer", None, "yes")
     drops = runner.argvs("drop")
     assert drops == [
-        dob.outbox_drop_argv(C, "pr/a.json", "r1", action=2),
+        dob.outbox_drop_argv(C, "pr/a.json", "r1", action=1),
         dob.outbox_drop_argv(C, "pr/a.json", "r2", action=0, comment=3),
         dob.outbox_drop_argv(C, "pr/a.json", "r3", action=0, comment=1),
     ]
-    # Each drop is pinned to the listing loaded just before it.
+    # The first drop uses the shown revision; subsequent child drops need fresh ones.
     order = [argv[1] for _, argv in runner.calls]
-    assert order == ["ls", "ls", "drop", "ls", "drop", "ls", "drop", "ls"]
+    assert order == ["ls", "drop", "ls", "drop", "ls", "drop", "ls", "ls"]
     assert ctl.state.marks == frozenset()
     assert runner.changes == 1
+    remaining = ctl.state.containers[0].proposals[0].actions
+    assert [a.body for a in remaining] == ["body 0", "body 2"]
+    assert [c.text for c in remaining[0].comments] == ["comment 0", "comment 2"]
+    assert [c.index for c in remaining[0].comments] == [0, 1]
 
 
 def test_delete_mismatch_stops_that_proposal():
@@ -518,7 +621,6 @@ def test_delete_mismatch_stops_that_proposal():
     )
     runner = FakeRunner(
         _listing(a, b),  # initial load
-        _listing(a, b),  # fresh check before the first drop
         _listing(changed, b),  # after dropping x action 2: action 0 changed
         _listing(changed, b),  # final reload
     )
@@ -535,18 +637,21 @@ def test_delete_mismatch_stops_that_proposal():
         dob.outbox_drop_argv(C, "pr/x.json", "r1", action=2),
         dob.outbox_drop_argv(C, "pr/y.json", "r1"),
     ]
-    assert "pr/x.json: changed; refreshed" in ctl.state.status
+    assert ctl.state.status == ("1 not deleted (pr/x.json: changed; refreshed); deleted 2",)
 
 
 def test_delete_proposal_changed_before_first_drop_does_nothing_to_it():
     a = _proposal()
     runner = FakeRunner(_listing(a), _listing({**a, "revision": "r9"}))
+    runner.drop_results = [CliResult(False, "proposal changed; refresh required")]
     ctl = _controller(runner)
     ctl.load()
     ctl.intent("delete", _key())
     ctl.intent("answer", None, "yes")
-    assert runner.argvs("drop") == []
-    assert ctl.state.status == ("pr/a.json: changed; refreshed",)
+    assert runner.argvs("drop") == [dob.outbox_drop_argv(C, "pr/a.json", "r1")]
+    assert ctl.state.status == (
+        "1 not deleted (pr/a.json: proposal changed; refresh required); deleted 0",
+    )
     assert ctl.state.containers[0].proposals[0].revision == "r9"
 
 
@@ -557,7 +662,9 @@ def test_delete_failure_reports_message():
     ctl.load()
     ctl.intent("delete", _key())
     ctl.intent("answer", None, "yes")
-    assert ctl.state.status == ("pr/a.json: proposal changed; refresh required",)
+    assert ctl.state.status == (
+        "1 not deleted (pr/a.json: proposal changed; refresh required); deleted 0",
+    )
 
 
 def test_delete_issue_create_passes_with_dependents():
@@ -931,19 +1038,23 @@ def test_delete_checks_against_the_listing_the_question_showed():
     ctl.load()
     ctl.state = replace(ctl.state, question=question)
     ctl._pending_delete = (frozenset({_key(action=0)}), dob.parse_outbox_listing(_listing(a)))
+    runner.drop_results = [CliResult(False, "proposal changed; refresh required")]
     ctl.intent("answer", None, "yes")
-    assert runner.argvs("drop") == []
-    assert ctl.state.status == ("pr/a.json: changed; refreshed",)
+    assert runner.argvs("drop") == [dob.outbox_drop_argv(C, "pr/a.json", "r1", action=0)]
+    assert ctl.state.status == (
+        "1 not deleted (pr/a.json: proposal changed; refresh required); deleted 0",
+    )
 
 
-def test_delete_vanished_proposal_says_changed():
+def test_delete_surfaces_cli_disappearance_refusal():
     runner = FakeRunner(_listing(_proposal(), _proposal("pr/b.json")), _listing(_proposal()))
     ctl = _controller(runner)
     ctl.load()
     ctl.intent("delete", _key("pr/b.json"))
+    runner.drop_results = [CliResult(False, "proposal disappeared")]
     ctl.intent("answer", None, "yes")
-    assert runner.argvs("drop") == []
-    assert ctl.state.status == ("pr/b.json: changed; refreshed",)
+    assert runner.argvs("drop") == [dob.outbox_drop_argv(C, "pr/b.json", "r1")]
+    assert ctl.state.status == ("1 not deleted (pr/b.json: proposal disappeared); deleted 0",)
 
 
 def test_delete_stops_when_a_dependent_appears_between_drops():
@@ -963,7 +1074,7 @@ def test_delete_stops_when_a_dependent_appears_between_drops():
             _action(2, kind="comment", target="", body="new dependent", delete_scope=[2]),
         ],
     )
-    runner = FakeRunner(_listing(shown), _listing(shown), _listing(grown))
+    runner = FakeRunner(_listing(shown), _listing(grown))
     ctl = _controller(runner)
     ctl.load()
     ctl.intent("mark", _key("issue/i.json", 0))
@@ -973,7 +1084,7 @@ def test_delete_stops_when_a_dependent_appears_between_drops():
     drops = runner.argvs("drop")
     assert drops == [dob.outbox_drop_argv(C, "issue/i.json", "r1", action=1)]
     assert all("--with-dependents" not in argv for argv in drops)
-    assert ctl.state.status == ("issue/i.json: changed; refreshed",)
+    assert ctl.state.status == ("1 not deleted (issue/i.json: changed; refreshed); deleted 1",)
 
 
 def test_delete_with_a_dependent_dropped_first_still_runs():
@@ -989,7 +1100,7 @@ def test_delete_with_a_dependent_dropped_first_still_runs():
         revision="r2",
         actions=[_action(0, kind="create", title="T", delete_scope=[0])],
     )
-    runner = FakeRunner(_listing(shown), _listing(shown), _listing(after))
+    runner = FakeRunner(_listing(shown), _listing(after))
     ctl = _controller(runner)
     ctl.load()
     ctl.intent("mark", _key("issue/i.json", 0))
@@ -1015,7 +1126,7 @@ def test_delete_failure_in_one_proposal_still_deletes_the_other():
         dob.outbox_drop_argv(C, "pr/a.json", "r1"),
         dob.outbox_drop_argv(C, "pr/b.json", "r1"),
     ]
-    assert ctl.state.status == ("pr/a.json: locked",)
+    assert ctl.state.status == ("1 not deleted (pr/a.json: locked); deleted 1",)
 
 
 def _planned_status(plan: str) -> dob.OutboxState:

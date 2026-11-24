@@ -266,9 +266,9 @@ def test_new_container_that_wants_an_answer_is_rerun_through_the_runner(mocker, 
         mocker.call(argv, check=False, cwd=tmp_path),
         mocker.call(argv, check=False, cwd=tmp_path),
     ]
-    # The second run is the one whose questions are modals; its output is a queue entry.
-    assert len(run.entries) == 1
-    assert len(run.app.outputs) == 1
+    # A successful retry hands off to the worker without retaining a parent entry.
+    assert not run.entries
+    assert not run.app.outputs  # Only questions are modals.
 
 
 def test_new_container_real_failure_is_noticed_not_rerun(mocker, tmp_path):
@@ -288,12 +288,21 @@ def test_new_container_real_failure_is_noticed_not_rerun(mocker, tmp_path):
     assert any(
         "jailbee new failed: error: git fetch failed" in str(notice) for notice in run.notices()
     )
+    assert run.entries == [("jailbee new", "warning\nerror: git fetch failed\n", True)]
+
+    # A refresh and an expired notice cannot clear the failed notification.
+    run.app.session.notice_until = 0
+    run.app.session.tick()
+    assert len(run.entries) == 1
+    (entry,) = run.app.session.queue
+    assert run.app.session.queue.dismiss(entry.id)
+    assert not run.entries
 
 
 class _PendingJobs(JobRunner):
     """A runner whose job never finishes, to look at the in-flight state."""
 
-    def start(self, key, label, argv, cwd, on_done):  # type: ignore[no-untyped-def]  # test double
+    def start(self, key, label, argv, cwd, on_done, **kwargs):  # type: ignore[no-untyped-def]  # test double
         if key in self._labels:
             raise ValueError(key)
         self._labels[key] = label

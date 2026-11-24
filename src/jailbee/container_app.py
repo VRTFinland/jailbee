@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import fcntl
 import hashlib
+import json
 import os
 import shutil
 import tempfile
@@ -14,7 +15,7 @@ from functools import cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from jailbee import __version__
+from jailbee import __version__, version_info
 from jailbee.cli_context import EXIT_NOT_MOUNTED, EXIT_SKEW
 from jailbee.paths import xdg_data_home
 
@@ -47,11 +48,31 @@ def code_hash() -> str:
     digest = hashlib.sha256()
     digest.update(__version__.encode() + b"\0")
     for path in sorted(package.rglob("*")):
-        if path.is_file() and "__pycache__" not in path.parts and path.suffix != ".pyc":
+        if (
+            path.is_file()
+            and "__pycache__" not in path.parts
+            and path.suffix != ".pyc"
+            and path.name != version_info.BUILD_INFO
+        ):
             digest.update(str(path.relative_to(package)).encode())
             digest.update(b"\0")
             digest.update(path.read_bytes())
     return digest.hexdigest()[:16]
+
+
+def _stamp_identity(target: Path, info: version_info.BuildIdentity | None) -> None:
+    """Atomically refresh provenance without changing the code/handshake identity."""
+    path = target / "jailbee" / version_info.BUILD_INFO
+    content = json.dumps(info) + "\n"
+    if path.exists() and path.read_text() == content:
+        return
+    temporary = path.with_name(".build-info-" + uuid.uuid4().hex)
+    try:
+        temporary.write_text(content)
+        temporary.chmod(0o644)
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def stage(*, force: bool = False, root: Path | None = None) -> StageResult:
@@ -64,9 +85,13 @@ def stage(*, force: bool = False, root: Path | None = None) -> StageResult:
         current = root / "current"
         previous = root / os.readlink(current) if current.is_symlink() else None
         already = previous == target and target.is_dir()
+        info = version_info.identity()
         if already and not force:
+            if info is not None:
+                _stamp_identity(target, info)
             return StageResult(target, False)
-        if not target.exists():
+        is_new = not target.exists()
+        if is_new:
             temporary = Path(tempfile.mkdtemp(prefix=name + ".tmp-", dir=root))
             try:
                 shutil.copytree(
@@ -82,6 +107,8 @@ def stage(*, force: bool = False, root: Path | None = None) -> StageResult:
             finally:
                 if temporary.exists():
                     shutil.rmtree(temporary)
+        if is_new or info is not None:
+            _stamp_identity(target, info)
         link = root / (".current-" + uuid.uuid4().hex)
         try:
             link.symlink_to(name)

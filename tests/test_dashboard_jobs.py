@@ -8,12 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from jailbee.dashboard.jobs import (
-    NEEDS_TERMINAL_MARKERS,
-    JobResult,
-    JobRunner,
-    needs_terminal,
-)
+from jailbee.dashboard.jobs import JobResult, JobRunner, needs_terminal
 
 
 def _py(code: str) -> list[str]:
@@ -201,15 +196,6 @@ def test_child_has_no_stdin(tmp_path: Path) -> None:
 
 def test_needs_terminal_matches_the_questions_jb_new_asks() -> None:
     assert needs_terminal(JobResult(2, "error: ... there is no terminal to ask on. Re-run"))
-    assert needs_terminal(JobResult(1, "Branch 'x' already exists in source repo.\nAborted!"))
+    assert needs_terminal(JobResult(1, "confirmation needed"))
     assert not needs_terminal(JobResult(1, "git fetch failed"))
-    assert not needs_terminal(JobResult(0, "already exists in source repo"))
-
-
-def test_markers_still_exist_in_the_cli_source() -> None:
-    """The fallback leans on `jb new`'s wording; renaming it must fail here."""
-    src = Path(__file__).parent.parent / "src" / "jailbee"
-    # The privilege-widening gate's wording moved to `create_flow.py`.
-    cli = (src / "cli.py").read_text() + (src / "create_flow.py").read_text()
-    for marker in NEEDS_TERMINAL_MARKERS:
-        assert marker in cli, marker
+    assert not needs_terminal(JobResult(0, "confirmation needed"))

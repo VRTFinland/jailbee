@@ -122,6 +122,17 @@ describe("page turns", () => {
         expect(wrapper.get("button.next").attributes("disabled")).toBeDefined()
     })
 
+    it("jumps to the last content page without the trailing answer spacer", async () => {
+        const scrollTo = fakeLayout(2250)
+        updateSettings({displayProfile: "eink"})
+        const wrapper = mount(SpacerHarness, {attachTo: document.body})
+        const pager = (wrapper.vm as unknown as {pager: Pager}).pager
+        pager.end()
+        await wrapper.vm.$nextTick()
+        expect(scrollTo).toHaveBeenLastCalledWith(0, 1250)
+        expect(wrapper.get("button.next").attributes("disabled")).toBeDefined()
+    })
+
     it("turns pages from the edge tap zones", async () => {
         fakeLayout(1750)
         updateSettings({displayProfile: "eink"})

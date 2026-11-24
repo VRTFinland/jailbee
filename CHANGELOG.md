@@ -10,6 +10,16 @@ before editing `## Unreleased`.
 
 ### Added
 
+- `jailbee --version` and `jailbee version` include the source commit when
+  known, with `-dirty` for uncommitted source changes. Editable installs read
+  their own checkout; wheels preserve build-time provenance, and containers
+  report the staged host code without running Git. A commit-only change
+  refreshes metadata without changing the code handshake or restarting services
+  ([#149](https://github.com/VRTFinland/jailbee/issues/149)).
+- Dashboard container creation asks for missing confirmations and retains pre-worker
+  failures in the notification queue, with readable, unboxed failure notices; successful
+  handoffs and cancelled questions leave no redundant parent entry
+  ([#146](https://github.com/VRTFinland/jailbee/issues/146)).
 - A child agent stuck on an API error (quota or usage limit exhausted, rate limit,
   authentication, provider overloaded) is no longer shown as `alive:busy`: once the
   agent gives up retrying, `jailbee inbox status` shows `alive:error:<kind>` with the
@@ -46,7 +56,10 @@ before editing `## Unreleased`.
   ([#144](https://github.com/VRTFinland/jailbee/issues/144)).
 - Publishing from the outbox reports each created issue or PR as `#N <title>`
   with its URL, in `jb outbox apply`, `jb pr push --source-manifest` and in the
-  dashboard result notice
+  dashboard result notice. Dashboard publications use modal CLI questions and
+  keep the full output in the notification queue, with only the outcome in the
+  status notice. Declining or cancelling never reports success; closing the box
+  with Esc leaves confirmed work running, including remaining PR creations
   ([#144](https://github.com/VRTFinland/jailbee/issues/144)).
 - The terminal dashboard's PR number (column and details panel) is a terminal
   hyperlink (OSC 8) to the pull request, built from the repository `gh pr view` resolves (`upstream`, else the
@@ -182,7 +195,11 @@ before editing `## Unreleased`.
   already listed does not reopen the queue after a hand-off). A bulk verb run in
   parallel (stop, outbox clear, …) is one entry per container, with its
   exit status and output; start, restart and destroy run as background jobs, so
-  their progress and failure are the job row, not an entry.
+  their progress and failure are the job row, not an entry. Creation retries
+  an existing-branch confirmation through a dashboard modal; declining shows
+  "Pick a different name", not a failure. Failures before the create worker
+  starts (including spawn errors) stay as failed entries until dismissed
+  ([#146](https://github.com/VRTFinland/jailbee/issues/146)).
   The critical actions (`merge` or `git merge`, `git push --merge`, `git pull`, `pr push`) open
   directly in their entry's live screen as a modal and refuse every terminal
   hand-off while they run in the foreground; `b` (continue in the background)
@@ -221,7 +238,19 @@ before editing `## Unreleased`.
   host-side, read-only browser dashboard, included in every install
   ([#109](https://github.com/VRTFinland/jailbee/issues/109)). The front page
   shows repositories and containers with the terminal dashboard's core columns
-  and agent state. Stopped rows include a readable state label alongside their
+  and agent state. A top-right quick settings popover on every page offers live
+  body/code font-size steppers, an Auto / Light / Dark / E-ink theme cycler and
+  the full settings page, sharing one per-device store. Session menus add follow,
+  thinking and agent-context controls; container pages have no contextual section.
+  Short-screen menus paginate whole rows instead of scrolling, with large e-ink
+  touch targets and no shadow. All / Running / Active filters live in the menu,
+  with an accessible icon marker and a slim reset notice for non-All selections. They are
+  remembered per browser, follow live snapshots and keep nonmatching parents
+  dimmed above matching children, with tree prefixes recomputed for the visible rows. Active includes recently idle sessions independently
+  of cell width or session count, with a bold idle-age label in the browser;
+  both the label and filter membership update as time passes
+  ([#152](https://github.com/VRTFinland/jailbee/issues/152)).
+  Stopped rows include a readable state label alongside their
   distinct e-ink outline. Front-page and repository container lists nest children under
   their orchestrator, showing child counts across all visible repositories,
   states and runners; container pages link between children and their
@@ -240,12 +269,21 @@ before editing `## Unreleased`.
   read in the state database across server restarts (filled in the background
   at start-up), list only the sessions started in the repository's own
   containers, and a container page shows its live sessions before its history
-  has loaded. A container's history also lists sessions run while no dashboard
+  has loaded, keeps live sessions on top, and fetches earlier sessions in pages
+  of 20 with Previous/Next controls and debounced server-side title/session-ID
+  search, including in the e-ink profile; shrinking history returns to the last
+  valid page. A container's history also lists sessions run while no dashboard
   was open, attributed by the branch, directory and time each started
   ([#152](https://github.com/VRTFinland/jailbee/issues/152)). Session
-  titles and connection notices stay visible while reading; **Latest answer**
-  appears only when the newest reply is out of view and aligns its start below
-  the header, including short final replies. E-ink page turns never skip unread
+  titles and connection notices stay visible while reading. One jump button
+  offers **Latest answer**, **Scroll to bottom** or **New messages** as needed,
+  stays hidden at the transcript's end and aligns answer starts below the header.
+  Normal displays follow new entries at the end and stop when scrolled up,
+  including multi-frame keyboard and touch gestures; manual end scrolling
+  restores follow, while jumps to a long answer's start leave the reader there.
+  E-ink counts visible held entries and a tap reveals them at the first new
+  answer or the end. Optional per-device follow uses the pager's last content
+  page. E-ink page turns never skip unread
   text after partial keyboard scrolling. The agent's own wrapper records (task
   notifications, system reminders, also those appended to tool results, command
   output) are hidden by default; the
@@ -289,7 +327,7 @@ before editing `## Unreleased`.
   (revoked, or a field such as `max_running_children`) once, naming
   what changed, including a change made while the monitor was reconnecting, so an orchestrator agent can adapt
   ([#147](https://github.com/VRTFinland/jailbee/issues/147)).
-- The outbox manager (dashboard overlay and `jailbee outbox browse`) reads the selected item full screen: `f` shows the preview alone at any width, scrollable, and `f` or Esc returns to the list with the cursor kept ([#144](https://github.com/VRTFinland/jailbee/issues/144)).
+- The outbox manager (dashboard overlay and `jailbee outbox browse`) reads the selected item full screen: `f` shows the preview alone at any width, scrollable, and `f` or Esc returns to the list with the cursor kept ([#144](https://github.com/VRTFinland/jailbee/issues/144)). Multi-item deletion shows per-item progress and removes successful rows immediately; navigation, marking and opening items stay usable, a second confirmed delete queues behind it, and refresh requests coalesce into the final listing. Whole-proposal batches no longer re-list before each drop; the shown revision guards staleness. The dashboard busy line explains that Esc leaves deletion running, while the standalone manager still refuses quit until completion. Queued batches share one final summary that leads with any failures, including in the closed box's notice; a finished proposal is released for another delete while other proposals are still running.
 - Agents can correct their own issue and pull-request conversation comments:
   `jailbee issue comment-edit ID --body …` stages a `comment_edit` issue-outbox
   action, and the read-only `jailbee issue comments N` lists comment ids
@@ -323,6 +361,9 @@ before editing `## Unreleased`.
   last fetched (`refs/jailbee/pr/<N>/head`), so ↑ reads "push needed" and ↓
   "someone else pushed"; SYNC shows dim `pr`, or yellow `pr?` when the host
   branch stands in ([#145](https://github.com/VRTFinland/jailbee/issues/145)).
+  A successful push to the PR's own head branch refreshes that comparison
+  immediately, without waiting for the next automatic fetch
+  ([#144](https://github.com/VRTFinland/jailbee/issues/144)).
   Orchestration children (including PR children) and forks compare with their
   parent ahead of a PR binding: ↑ counts commits not yet imported, ↓ the
   parent's commits they lack (the parent's HEAD as the dashboard's previous
@@ -361,9 +402,13 @@ before editing `## Unreleased`.
   issue proposals, and asks a PR's mode and URL on a terminal like an issue's.
   Over remote SSH it is classified like its aliases.
 - Publishing in the outbox manager covers PR creations too: `p` on a
-  description awaiting its PR, or on a pinned source awaiting its push, hands
-  the terminal to `jailbee pr push` (or `submodule pr push`, `pr push
-  --source-manifest`), and the separate `c` key is gone. Marked rows of both
+  description awaiting its PR, or on a pinned source awaiting its push, runs
+  `jailbee pr push` (or `submodule pr push`, `pr push
+  --source-manifest`), and the separate `c` key is gone. The terminal dashboard
+  publishes PR and issue proposals through its shared action runner, including
+  over SSH: questions are modals, output stays in the dashboard and the
+  notification queue retains success URLs or failure reasons. The standalone
+  manager still hands over its terminal for PR creations. Marked rows of both
   kinds share one question; manifests publish first, then each PR creation in
   turn, and the first that fails or is cancelled stops the rest. `jailbee
   outbox apply` likewise hands such a proposal to `pr push` instead of exiting
@@ -383,6 +428,22 @@ before editing `## Unreleased`.
 
 ### Fixed
 
+- A newly spawned child's creating row appears beneath its orchestrator from the
+  first dashboard refresh, rather than moving there after the instance appears
+  ([#146](https://github.com/VRTFinland/jailbee/issues/146)).
+- An own-branch PR source proposal no longer competes with "container branch"
+  in the PR picker or fails an update by colliding with the container's own
+  PR label. The PR menu and outbox publish use the same normal PR flow, push
+  the tip with the staged description and preserve its binding; an older
+  own-branch pin warns about newer commits. A matching source without a description
+  remains retryable after a rejected push or reported PR lookup error; interruptions
+  still require outbox resolution. Unselected own proposals and differing
+  bases are reported; explicit source publication rejects conflicting branch and
+  outbox flags. `pr source` now directs own-branch
+  descriptions to `pr description --new`, with `--allow-same-commit` for a
+  deliberately separate pinned head. Dashboard action exceptions remain in
+  the notification and output log instead of leaving only the manifest text
+  ([#144](https://github.com/VRTFinland/jailbee/issues/144)).
 - **Successful background jobs no longer flash as dead.** A snapshot now keeps
   its gathered job liveness instead of rechecking an exited worker against an
   older phase. Autostart, create, start/restart and destroy stay consistent in

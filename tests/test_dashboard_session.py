@@ -432,13 +432,10 @@ def test_outbox_runner_checks_policy_before_spawn(mocker, tmp_path):
     assert session.jobs.started == []
 
 
-def test_outbox_publish_over_ssh_hands_off_without_yes(mocker, tmp_path):
+def test_outbox_publish_over_ssh_uses_questions_without_yes(mocker, tmp_path):
     from jailbee.config.models_remote import RemoteSSHConfig
 
     _quiet(mocker)
-    child = mocker.patch.object(tsession.subprocess, "run")
-    child.return_value.returncode = 0
-    mocker.patch("jailbee.dashboard.dispatch._wait_for_return")
     session, terminal = bare_session(
         mocker,
         [_outbox_group(tmp_path)],
@@ -446,71 +443,65 @@ def test_outbox_publish_over_ssh_hands_off_without_yes(mocker, tmp_path):
         remote=True,
         ssh_policy=RemoteSSHConfig(),
     )
-    session.jobs = _HeldJobs()  # type: ignore[assignment]  # test double
+    pending = mocker.patch.object(terminal, "run_actions")
     _open_box(session)
-    state = session.overlay
-    assert isinstance(state, tsession.OutboxState)
-    assert state.abilities.publish is False and state.abilities.publish_hand_off is True
-
     session.outbox_intent("publish", ("alpha-x", "pr/a.json", None, None))
+    runs = pending.call_args.args[0]
+    assert runs[0].argv[:6] == ["outbox", "apply", "alpha-x", "pr/a.json", "--revision", "r1"]
+    assert "-y" not in runs[0].argv
+    assert terminal.handed == []
 
-    assert len(terminal.handed) == 1
-    child.assert_called_once()
-    argv = child.call_args.args[0]
-    assert argv == ["jailbee", "outbox", "apply", "alpha-x", "pr/a.json", "--revision", "r1"]
-    assert session.jobs.started == []
-    assert isinstance(session.overlay, tsession.OutboxState)  # back in the box
+
+def test_outbox_pre_spawn_refusal_stays_in_notification_queue(mocker, tmp_path):
+    from jailbee.dashboard.tui.outbox_wiring import SessionOutboxRunner
+
+    _quiet(mocker)
+    session, terminal = bare_session(mocker, [_outbox_group(tmp_path)])
+    pending = mocker.patch.object(terminal, "run_actions")
+    completed = []
+    SessionOutboxRunner(session, "gone").publish(["pr", "push", "gone"], completed.append)
+    (entry,) = session.queue
+    assert entry.state == "failed" and "gone" in entry.output
+    assert completed[0].returncode != 0
+    pending.assert_not_called()
 
 
 def test_late_job_result_after_close_is_a_notice(mocker, tmp_path):
-    from jailbee.dashboard.jobs import JobResult
+    from jailbee.dashboard.runner import ActionOutcome, RunResult
 
     _quiet(mocker)
-    session, _ = bare_session(mocker, [_outbox_group(tmp_path)])
+    session, terminal = bare_session(mocker, [_outbox_group(tmp_path)])
+    pending = mocker.patch.object(terminal, "run_actions")
     jobs = _HeldJobs()
-    session.jobs = jobs  # type: ignore[assignment]  # test double
+    session.jobs = jobs
     _open_box(session)
-    key = ("alpha-x", "pr/a.json", None, None)
-
-    session.outbox_intent("publish", key)
-    _, plan_argv, planned = jobs.started[-1]
-    assert "--dry-run" in plan_argv
-    planned(JobResult(0, "", _PLAN))  # type: ignore[operator]  # the held callback
-    state = session.overlay
-    assert isinstance(state, tsession.OutboxState) and state.question is not None
-    session.outbox_intent("answer", None, "publish")
-    _, apply_argv, published = jobs.started[-1]
-    assert "-y" in apply_argv
-
+    session.outbox_intent("publish", ("alpha-x", "pr/a.json", None, None))
     session.overlay_cancel()
     menu = session.overlay
-    assert isinstance(menu, MenuState)
-    published(JobResult(0, "", "Published 1 action\n"))  # type: ignore[operator]  # the held callback
-    jobs.poll()  # post-publication listing
-
-    assert session.overlay is menu  # not reopened
-    assert session.notice == "Published 1 action"
+    pending.call_args.args[1](ActionOutcome([RunResult(status=0)], "Published 1 action\n"))
+    jobs.poll()
+    assert session.overlay is menu
+    assert session.notice == "published"
+    (entry,) = session.queue
+    assert entry.state == "done" and "Published 1 action" in entry.output
 
 
 def test_late_job_result_does_not_overwrite_a_reopened_box(mocker, tmp_path):
-    from jailbee.dashboard.jobs import JobResult
+    from jailbee.dashboard.runner import ActionOutcome, RunResult
 
     _quiet(mocker)
-    session, _ = bare_session(mocker, [_outbox_group(tmp_path)])
-    jobs = _HeldJobs()
-    session.jobs = jobs  # type: ignore[assignment]  # test double
+    session, terminal = bare_session(mocker, [_outbox_group(tmp_path)])
+    pending = mocker.patch.object(terminal, "run_actions")
     _open_box(session)
     session.outbox_intent("publish", ("alpha-x", "pr/a.json", None, None))
-    _, _, planned = jobs.started[-1]
-
     session.overlay_cancel()
     session.menu_chosen("outbox browse", None, 0)
     reopened = session.overlay
-    assert isinstance(reopened, tsession.OutboxState)
-    planned(JobResult(0, "", _PLAN))  # type: ignore[operator]  # the held callback
-
-    assert session.overlay is reopened
+    pending.call_args.args[1](ActionOutcome([RunResult(status=0)], "Published 1 action\n"))
+    assert isinstance(session.overlay, tsession.OutboxState)
+    assert session.overlay.question is None
     assert reopened.question is None
+    assert terminal.handed == []
 
 
 def test_reopening_outbox_cannot_start_a_concurrent_delete(mocker, tmp_path):
@@ -525,7 +516,7 @@ def test_reopening_outbox_cannot_start_a_concurrent_delete(mocker, tmp_path):
     controller = session.outbox
     session.overlay_cancel()
     session.menu_chosen("outbox browse", None, 0)
-    assert session.overlay.busy == "Deleting 1 from the outbox…"
+    assert session.overlay.busy == "Deleting 1/1… · Esc leaves; deletion continues"
     session.outbox_intent("delete", key)
     assert session.overlay.question is None
     while jobs.calls:

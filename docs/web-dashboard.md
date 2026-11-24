@@ -45,8 +45,18 @@ every visible repository's sessions in the background when it starts, after
 dropping the stored rows of deleted transcripts; no request waits for it.
 
 A container page shows its live sessions as soon as they are known (they come
-from the state service's snapshot) and appends the sessions it ran before,
-recorded and attributed, newest first, when that separate request answers. A repository lists only the sessions started in
+from the state service's snapshot) and keeps them at the top, independently of
+history paging or search. Earlier sessions are recorded and attributed, newest
+first, and fetched separately in pages of 20. **Previous** and **Next** buttons
+work in both normal and e-ink display profiles; there is no infinite scroll.
+If history shrinks while browsing, the list returns to and fetches the last valid page.
+**Search earlier sessions** searches titles (the first prompt) and session IDs
+on the server after a short typing pause, resets to the first page, and shows
+**No matches** for an empty result. Clearing it restores the history. The history
+endpoint `/api/containers/{name}/sessions/history` accepts `limit` (1–100,
+default 20), `offset` (default 0) and `q` (case-insensitive substring); the response
+includes the matching `total`, `limit` and `offset` alongside the sessions.
+A repository lists only the sessions started in
 its own containers' checkout (each container's repository directory, or below
 it): repositories that share one agent config home by mistake do not list each
 other's sessions. Claude names a session's project directory after its working
@@ -60,6 +70,22 @@ booting, in autostart, running another background job or in a failed job gets a
 coloured edge and a phase label, and a Stopped container is dimmed. The e-ink
 theme has no colour, so phases differ by edge style (dashed, dotted, double,
 heavy) and the label, and a Stopped row is drawn without top, right and bottom edges instead of a fade.
+
+The top-right **Quick settings** menu filters front-page and repository container lists
+by **All**, **Running** (Incus state Running), or **Active** (a non-grey
+agent marker in the terminal dashboard: busy, waiting, shell, API errors, or
+idle with a real event less than 30 minutes old). Recent-idle membership is
+independent of session count or cell width; a bold `idle 5m` label explains its
+freshness in both normal and e-ink profiles. The server refreshes ages and filter
+membership as time passes, even without a new state snapshot. Tooltips and accessible labels
+name each button; the selected button stays pressed. The choice is remembered
+in this browser and follows live snapshot updates (the e-ink display profile
+keeps its normal slow/on-demand refresh). Repositories with no retained rows
+are hidden while filtering. A dot on the menu icon and a slim **Showing: Active · show all**
+notice keep a non-All filter visible; **show all** resets it. All has no notice.
+Nonmatching listed ancestors remain dimmed as context above matching children,
+so the tree stays intact. Tree prefixes are recomputed for the retained rows.
+This does not change the terminal dashboard's list.
 
 Children in the same repository appear indented under their orchestrator on
 the front page and in repository container lists. Child counts and container
@@ -403,9 +429,26 @@ allowed, so the current dashboard only reads.
 
 ## Themes and display profile
 
-Open the settings page (the Settings link on the front page) to choose
-a theme (light, dark, e-ink), body and code font sizes, and whether thinking
-blocks are shown. These choices are stored in the browser on that device only.
+Open **Quick settings** from the menu icon in the top-right corner of any page.
+Body and code font-size steppers apply immediately; the theme button cycles
+**Auto / Light / Dark / E-ink**. Auto follows the device's colour scheme, including
+changes while the page is open. Theme colours and display profile remain independent.
+The front-page and repository menus offer container filters; session and subagent
+menus offer **Follow new messages**, **Show thinking**, and **Agent context**.
+Container pages have no contextual section. Follow edits the preference for the
+current display profile: on by default for normal displays, opt-in for e-ink.
+
+**Settings** at the end of the menu opens the full `/settings` page for less
+frequent choices, including display profile and the login session's name.
+Both surfaces edit one live settings store; display choices need no Save and are
+stored in per-device localStorage (in memory when storage is blocked). Existing
+container filter preferences are preserved. Escape, the icon, or a click outside
+the popover closes it and returns focus to the icon. Escape on the Agent context
+select is left to the native control; move focus elsewhere to dismiss the menu.
+Navigation closes the menu without returning focus to the icon. Tab stays inside the open
+popover. Short screens split the menu into whole-row pages with up/down buttons
+and PageUp/PageDown; e-ink also supports **n** (previous) and **m** (next). There is
+no scrolling popover. E-ink uses large touch targets and no shadow.
 
 **Agent context** controls the agent's own wrapper records in a transcript:
 task notifications, system reminders (including the ones Claude Code appends to
@@ -428,27 +471,38 @@ the new offset.
 
 The display profile **E-ink** is for e-paper readers and slow-refresh
 screens: no animation, content moves in page turns instead of scrolling, live
-transcript entries are held behind the **N new messages** button until you tap
-it, without moving the text you are reading. The front page refreshes every
+visible transcript entries are held behind a counted **2 new messages ↓** button until
+you tap it, revealing them and moving to the first new answer or the end. **Follow new messages on e-ink** in Settings opts into automatic follow at
+the transcript's end, using the pager's last content page rather than continuous
+scrolling. It is off by default and remembered on this device. The front page refreshes every
 minute, or immediately when you tap **Refresh**. The front-page header wraps
 its controls on narrow screens, including with the e-ink profile's side margins.
 
 Session transcripts keep their title, agent/model context and connection notice
-in a compact header while you read. **Latest answer** appears only when the
-newest assistant reply is outside the readable area (below the header and above
-the bottom controls, including the device's safe-area inset). A truncated title
-keeps its full text as a tooltip and accessible heading name. Page turns use the
-actual readable height even on short landscape screens, with a stable page grid
-as the header becomes sticky and a last page bounded by the browser's scroll
-limit; a partial keyboard or system scroll stays on its current page so Next
-never skips unread text, and Next stays enabled until the real bottom.
-Jumping aligns the newest reply's start just below the measured header, even
-for a short final reply, with trailing room to scroll it there. Jumping or
-scrolling to the reply hides the button; moving
-away or receiving a newer reply out of view shows it again. In the e-ink display
-profile the same rule applies: the button starts a page at the reply, with
-subsequent page turns continuing from there, and live entries remain behind
-the new-messages notice until tapped.
+in a compact header while you read. One context-aware button handles navigation:
+
+- At the transcript's end, the button is hidden. In the normal display profile,
+  arriving entries keep that end in view unless **Follow new messages** is off;
+  scrolling up stops follow, and reaching
+  the end by hand or by a jump restores it. This includes keyboard scrolling
+  and multi-frame touch or trackpad gestures. Blank room after the transcript
+  is not counted as unread content.
+- **Latest answer ↓** jumps to the newest assistant reply's start when it is out
+  of view and you are not already reading inside that reply. Its start aligns
+  below the header, including any out-of-date banner. A long reply then offers
+  **Scroll to bottom ↓**, which jumps to the end and resumes follow.
+- **New messages ↓** takes priority when entries arrive while follow is off. It
+  jumps to the first unseen entry's start if that entry is an answer; otherwise
+  it jumps to the end. Follow resumes only if the jump reaches the transcript's
+  end: jumping to a long answer's start leaves you there to read. E-ink keeps
+  the new entries held until this tap.
+
+A truncated title keeps its full text as a tooltip and accessible heading name.
+Page turns reserve the header, bottom controls and device safe-area inset, even
+on short landscape screens. A partial keyboard or system scroll stays on its
+current page so Next never skips unread text. Answer jumps start a new page at
+the reply, with subsequent page turns continuing from there; end jumps stop on
+the last content page, not in the blank space reserved for short answer jumps.
 
 ## Install as an app
 

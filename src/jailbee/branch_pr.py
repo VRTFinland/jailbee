@@ -28,6 +28,17 @@ class PendingSource:
     title: str
     head: str
     base: str | None
+    own_branch: str | None = None
+    newer_commits: int = 0
+
+    @property
+    def label(self) -> str:
+        if self.own_branch is not None:
+            label = f"Open/Update PR for {self.own_branch} using the staged description"
+            if self.newer_commits:
+                label += f" (warning: {self.newer_commits} newer commits; pushing the tip)"
+            return f"{label} ({self.manifest})"
+        return f"{self.title} — {self.head} → {self.base or 'default base'} ({self.manifest})"
 
 
 @dataclass(frozen=True)
@@ -101,8 +112,45 @@ def source_journal(uuid: str, name: str) -> Journal | None:
     return journals.get(("pr", name))
 
 
-def pending_source_manifests(cfg: Config, incus: Incus, full: str) -> list[PendingSource]:
-    """Source proposals from the host store, never letting an unreadable store block a push."""
+def own_source_branch(
+    cfg: Config, incus: Incus, full: str, manifest: Manifest
+) -> tuple[str, int] | None:
+    """Match HEAD exactly, or an ancestor pinned through HEAD's own branch ref.
+
+    Imported child refs must never match merely because their commits were merged.
+    Explicit separate-head proposals retain their pinned publication semantics.
+    """
+    from jailbee.incus import IncusError
+    from jailbee.lifecycle import container_repo_dir
+
+    if manifest.allow_same_commit or manifest.source_sha is None:
+        return None
+    repo_dir = container_repo_dir(cfg, incus, full)
+
+    def probe(*args: str) -> str:
+        value = incus.exec(full, ["git", "-C", repo_dir, *args], uid=cfg.container_user.uid)
+        return value.strip() if isinstance(value, str) else ""
+
+    try:
+        branch = probe("symbolic-ref", "--short", "HEAD")
+        head = probe("rev-parse", "HEAD")
+        if not branch or not head:
+            return None
+        if manifest.source_sha == head:
+            return branch, 0
+        if manifest.source != f"refs/heads/{branch}":
+            return None
+        probe("merge-base", "--is-ancestor", manifest.source_sha, head)
+        newer = probe("rev-list", "--count", f"{manifest.source_sha}..{head}")
+        return branch, int(newer)
+    except (IncusError, ValueError):
+        return None
+
+
+def pending_source_manifests(
+    cfg: Config, incus: Incus, full: str, *, classify_own: bool = False
+) -> list[PendingSource]:
+    """Read the host store; publication pickers may opt into read-only container git probes."""
     from jailbee import pr_outbox
     from jailbee.incus import IncusError
     from jailbee.orchestration.store import StoreError
@@ -126,12 +174,15 @@ def pending_source_manifests(cfg: Config, incus: Incus, full: str) -> list[Pendi
             if len(source) == 40 and all(c in "0123456789abcdefABCDEF" for c in source)
             else source
         )
+        own = own_source_branch(cfg, incus, full, manifest) if classify_own else None
         pending.append(
             PendingSource(
                 item.name,
                 action.title if action and action.title else item.name,
                 head,
                 manifest.base,
+                own[0] if own else None,
+                own[1] if own else 0,
             )
         )
     return pending
@@ -142,15 +193,10 @@ def choose_pr_source(pending: list[PendingSource], *, own_label: str) -> str | N
     from jailbee import prompting
 
     # None is reserved for cancellation by choose_one and questionary.
-    options = [prompting.Option("", own_label, own_label)]
-    options.extend(
-        prompting.Option(
-            p.manifest,
-            f"{p.title} — {p.head} → {p.base or 'default base'} ({p.manifest})",
-            p.manifest,
-        )
-        for p in pending
+    options = (
+        [] if any(p.own_branch for p in pending) else [prompting.Option("", own_label, own_label)]
     )
+    options.extend(prompting.Option(p.manifest, p.label, p.manifest) for p in pending)
     return prompting.choose_one("PR source", options, destructive=True) or None
 
 

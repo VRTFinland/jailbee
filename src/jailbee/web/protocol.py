@@ -25,7 +25,7 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 
-PROTOCOL_VERSION = 5
+PROTOCOL_VERSION = 7
 
 CLOSE_UNAUTHORIZED = 4001
 """No valid session token: the browser goes back to the login page."""
@@ -139,6 +139,8 @@ class ContainerRow(BaseModel):
     name: str
     indent: str
     agent: str | None
+    agent_recent_idle: str | None = None
+    """Age of an emphasized idle session, even if another session is more urgent."""
     state: str
     phase: str | None
     cells: list[str]
@@ -285,6 +287,15 @@ class TranscriptView(BaseModel):
     """Byte offset the entries were read to: where a live `Subscribe` resumes."""
 
 
+class ContainerFilterRows(BaseModel):
+    """Scoped filter membership and recomputed tree prefixes, without duplicate cells."""
+
+    model_config = ConfigDict(frozen=True)
+    visible: list[str]
+    context: list[str]
+    indents: dict[str, str] = Field(default_factory=dict)
+
+
 class FrontPageView(BaseModel):
     """The whole front page, sent in full on every snapshot."""
 
@@ -293,6 +304,7 @@ class FrontPageView(BaseModel):
     gathered_at: datetime
     columns: list[ColumnHead]
     repos: list[RepoRow]
+    filters: dict[Literal["running", "active"], ContainerFilterRows] = Field(default_factory=dict)
 
 
 class ServerHello(_Message):

@@ -14,6 +14,7 @@ from playwright.sync_api import Page, expect
 
 from jailbee.agent_status import AgentSummary
 from tests.web_fakes import container, repo_group, snapshot_of
+from tests_e2e.flows import open_settings
 from tests_e2e.server import E2EServer
 from tests_e2e.sessions import SESSION_ID, append_entry, open_session, session_path
 
@@ -38,7 +39,7 @@ def server(make_server: Callable[..., E2EServer], agent_home: Path) -> E2EServer
 
 def test_themes_and_font_sizes_apply_and_survive_reload(logged_in: Page) -> None:
     page = logged_in
-    page.get_by_role("link", name="Settings", exact=True).click()
+    open_settings(page)
     theme = page.get_by_role("group", name="Theme", exact=True)
     sample = page.get_by_text("The quick brown fox", exact=False)
     code = sample.locator("code")
@@ -76,7 +77,7 @@ def test_eink_page_turns_hold_new_messages_and_refresh_snapshot(
 ) -> None:
     page = logged_in
     page.set_viewport_size({"width": 800, "height": 600})
-    page.get_by_role("link", name="Settings", exact=True).click()
+    open_settings(page)
     page.get_by_role("group", name="Display profile", exact=True).get_by_role(
         "radio", name=re.compile("E-ink")
     ).check()
@@ -129,10 +130,10 @@ def test_eink_page_turns_hold_new_messages_and_refresh_snapshot(
     assert page.evaluate("window.scrollY") == start
 
     append_entry(server, path, "Held reply one.")
-    expect(page.get_by_role("button", name="1 new message", exact=False)).to_be_visible()
+    expect(page.get_by_role("button", name="1 new message ↓", exact=True)).to_be_visible()
     expect(page.get_by_text("Held reply one.", exact=True)).to_have_count(0)
     append_entry(server, path, "Held reply two.")
-    held = page.get_by_role("button", name="2 new messages", exact=False)
+    held = page.get_by_role("button", name="2 new messages ↓", exact=True)
     expect(held).to_be_visible()
     expect(page.get_by_text("Held reply two.", exact=True)).to_have_count(0)
     assert page.evaluate("window.scrollY") == start
@@ -140,9 +141,11 @@ def test_eink_page_turns_hold_new_messages_and_refresh_snapshot(
     expect(held).to_have_count(0)
     expect(page.get_by_text("Held reply one.", exact=True)).to_have_count(1)
     expect(page.get_by_text("Held reply two.", exact=True)).to_have_count(1)
-    assert page.evaluate("window.scrollY") == start
-    page.get_by_role("button", name="Latest answer", exact=False).click()
-    expect(page.get_by_text("Held reply two.", exact=True)).to_be_in_viewport()
+    first = page.get_by_text("Held reply one.", exact=True).locator("xpath=ancestor::section")
+    header_bottom = page.locator(".session-header").evaluate(
+        "el => el.getBoundingClientRect().bottom"
+    )
+    assert abs(first.evaluate("el => el.getBoundingClientRect().top") - header_bottom) <= 1
 
 
 @pytest.mark.parametrize("profile", ["Normal", "E-ink"], ids=["normal", "eink"])
@@ -151,7 +154,7 @@ def test_phone_pages_have_no_horizontal_scroll(
 ) -> None:
     page = logged_in
     page.set_viewport_size({"width": 390, "height": 844})
-    page.get_by_role("link", name="Settings", exact=True).click()
+    open_settings(page)
     page.get_by_role("group", name="Display profile", exact=True).get_by_role(
         "radio", name=re.compile(profile)
     ).check()

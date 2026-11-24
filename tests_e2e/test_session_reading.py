@@ -10,7 +10,7 @@ import pytest
 from playwright.sync_api import Page, WebSocketRoute, expect
 
 from tests.web_fakes import wait_until
-from tests_e2e.flows import log_in_with_pin
+from tests_e2e.flows import log_in_with_pin, open_settings
 from tests_e2e.server import E2EServer
 
 SESSION = "33333333-3333-4333-8333-333333333333"
@@ -59,6 +59,18 @@ def open_transcript(
     return server, transcript
 
 
+def wait_for_scroll_settled(page: Page) -> None:
+    page.evaluate("""async () => {
+        let previous = window.scrollY;
+        let stable = 0;
+        while (stable < 4) {
+            await new Promise(resolve => requestAnimationFrame(resolve));
+            stable = previous === window.scrollY ? stable + 1 : 0;
+            previous = window.scrollY;
+        }
+    }""")
+
+
 def assert_latest_starts_below_header(page: Page) -> None:
     page.wait_for_function("""() => {
         const replies = document.querySelectorAll('.entry.assistant');
@@ -85,7 +97,7 @@ def test_latest_answer_and_sticky_title_follow_the_readable_area(
     expect(latest).to_be_visible()
 
     latest.click()
-    expect(latest).to_be_hidden()
+    expect(page.get_by_role("button", name="Scroll to bottom")).to_be_visible()
     expect(page.get_by_text("Reply 24", exact=True)).to_be_in_viewport()
     assert_latest_starts_below_header(page)
     expect(title).to_be_in_viewport()
@@ -95,28 +107,195 @@ def test_latest_answer_and_sticky_title_follow_the_readable_area(
     expect(latest).to_be_visible()
     expect(title).to_be_in_viewport()
     latest.click()
-    expect(latest).to_be_hidden()
+    expect(page.get_by_role("button", name="Scroll to bottom")).to_be_visible()
 
     # Stay on a visible answer, but not at the end: appended answers must not
     # scroll the reader away, and must bring the jump button back.
-    page.locator(".entry.assistant").last.evaluate(
-        "el => window.scrollTo(0, window.scrollY + el.getBoundingClientRect().top - 300)"
+    page.mouse.wheel(0, -180)
+    page.wait_for_function(
+        "() => document.querySelector('.entry.assistant:last-child')"
+        ".getBoundingClientRect().top > 150"
     )
     expect(latest).to_be_hidden()
     position = page.evaluate("window.scrollY")
     with transcript.open("a") as stream:
         stream.write(record(25, "assistant", "The live answer below the fold."))
     server.watches.open[0].fire()
-    if profile == "eink":
-        page.get_by_role("button", name="1 new message — tap to show").click()
-    expect(page.get_by_text("The live answer below the fold.", exact=True)).to_be_attached()
-    expect(latest).to_be_visible()
+    new_messages = page.locator("button.new-messages")
+    expect(new_messages).to_be_visible()
     assert page.evaluate("window.scrollY") == position
     expect(title).to_be_in_viewport()
-    latest.click()
-    expect(latest).to_be_hidden()
+    new_messages.click()
+    expect(new_messages).to_be_hidden()
     expect(page.get_by_text("The live answer below the fold.", exact=True)).to_be_in_viewport()
     assert_latest_starts_below_header(page)
+
+
+@pytest.mark.parametrize("width", [1280, 390], ids=["desktop", "phone"])
+@pytest.mark.parametrize("profile", ["normal", "eink"])
+def test_end_follow_and_new_messages_restore_follow(
+    page: Page, make_server: Callable[..., E2EServer], tmp_path: Path, width: int, profile: str
+) -> None:
+    page.set_viewport_size({"width": width, "height": 800})
+    server, transcript = open_transcript(page, make_server, tmp_path)
+    if profile == "eink":
+        open_settings(page)
+        page.get_by_role("radio", name="E-ink (page turns").check()
+        page.get_by_role("checkbox", name="Follow new messages on e-ink").check()
+        page.go_back()
+        expect(page.get_by_role("heading", name=TITLE, exact=True)).to_be_visible()
+    page.get_by_role("button", name="Latest answer").click()
+    page.get_by_role("button", name="Scroll to bottom").click()
+    expect(page.locator(".jump-latest")).to_have_count(0)
+    if profile == "eink":
+        expect(page.get_by_role("button", name="Next", exact=False).last).to_be_disabled()
+
+    with transcript.open("a") as stream:
+        stream.write(record(25, "assistant", "Automatically followed answer."))
+    server.watches.open[-1].fire()
+    reply = page.get_by_text("Automatically followed answer.", exact=True)
+    expect(reply).to_be_in_viewport()
+    expect(page.locator(".jump-latest")).to_have_count(0)
+    if profile == "eink":
+        expect(page.get_by_role("button", name="Next", exact=False).last).to_be_disabled()
+
+    page.mouse.wheel(0, -100000)
+    expect(page.get_by_role("button", name="Latest answer")).to_be_visible()
+    position = page.evaluate("window.scrollY")
+    # A non-answer first unseen entry makes this jump go straight to the end.
+    with transcript.open("a") as stream:
+        stream.write(record(26, "user", "New prompt while reading earlier replies."))
+        stream.write(record(27, "assistant", "Follow is restored."))
+    server.watches.open[-1].fire()
+    page.locator("button.new-messages").wait_for()
+    assert page.evaluate("window.scrollY") == position
+    page.locator("button.new-messages").click()
+    expect(page.get_by_text("Follow is restored.", exact=True)).to_be_in_viewport()
+    expect(page.locator(".jump-latest")).to_have_count(0)
+    with transcript.open("a") as stream:
+        stream.write(record(28, "assistant", "Still following."))
+    server.watches.open[-1].fire()
+    expect(page.get_by_text("Still following.", exact=True)).to_be_in_viewport()
+    expect(page.locator(".jump-latest")).to_have_count(0)
+
+
+@pytest.mark.parametrize("width", [1280, 390], ids=["desktop", "phone"])
+def test_manual_wheel_to_transcript_end_arms_follow_without_a_jump(
+    page: Page, make_server: Callable[..., E2EServer], tmp_path: Path, width: int
+) -> None:
+    page.set_viewport_size({"width": width, "height": 800})
+    server, transcript = open_transcript(page, make_server, tmp_path)
+    distance = page.locator(".transcript").evaluate(
+        "el => Math.ceil(el.getBoundingClientRect().bottom - "
+        "document.querySelector('.bottom-guard').getBoundingClientRect().top)"
+    )
+    page.mouse.wheel(0, distance)
+    page.wait_for_function("""() =>
+        document.querySelector('.transcript').getBoundingClientRect().bottom <=
+        document.querySelector('.bottom-guard').getBoundingClientRect().top + 1
+    """)
+    wait_for_scroll_settled(page)
+    # The trailing answer spacer is not part of the transcript end.
+    assert page.evaluate(
+        "window.scrollY + window.innerHeight < document.documentElement.scrollHeight - 100"
+    )
+    with transcript.open("a") as stream:
+        stream.write(record(25, "assistant", "Followed from the content end.\n\n" * 16))
+    server.watches.open[-1].fire()
+    page.wait_for_function("""() => {
+        const entries = document.querySelectorAll('.entry.assistant');
+        return entries.length === 25 && entries[24].getBoundingClientRect().bottom <=
+            document.querySelector('.bottom-guard').getBoundingClientRect().top + 1;
+    }""")
+
+
+@pytest.mark.parametrize("width", [1280, 390], ids=["desktop", "phone"])
+def test_keyboard_momentum_leaves_follow_off_after_end(
+    page: Page, make_server: Callable[..., E2EServer], tmp_path: Path, width: int
+) -> None:
+    page.set_viewport_size({"width": width, "height": 800})
+    server, transcript = open_transcript(page, make_server, tmp_path)
+    # No jump button: manually reaching an old session's end arms live follow.
+    page.keyboard.press("End")
+    expect(page.locator(".jump-latest")).to_have_count(0)
+    with transcript.open("a") as stream:
+        stream.write(record(25, "assistant", "Followed after manual End."))
+    server.watches.open[-1].fire()
+    expect(page.get_by_text("Followed after manual End.", exact=True)).to_be_in_viewport()
+    expect(page.locator(".jump-latest")).to_have_count(0)
+
+    # Move into the answer-jump spacer. One animated PageUp starts with the
+    # transcript end still visible, then leaves it without another key event.
+    wait_for_scroll_settled(page)
+    before = page.evaluate("window.scrollY")
+    page.mouse.wheel(0, 200)
+    page.wait_for_function("previous => window.scrollY > previous + 150", arg=before)
+    wait_for_scroll_settled(page)
+    page.evaluate("""() => {
+        window.scrollFrames = [];
+        window.addEventListener('scroll', () => window.scrollFrames.push({
+            y: window.scrollY,
+            end: document.querySelector('.transcript').getBoundingClientRect().bottom <=
+                document.querySelector('.bottom-guard').getBoundingClientRect().top + 1,
+        }));
+    }""")
+    page.keyboard.press("PageUp")
+    expect(page.locator(".jump-latest")).to_be_visible()
+    page.wait_for_function("""() => {
+        const frames = window.scrollFrames;
+        return frames.some(frame => frame.end) && frames.some(frame => !frame.end);
+    }""")
+    wait_for_scroll_settled(page)
+    position = page.evaluate("window.scrollY")
+    with transcript.open("a") as stream:
+        stream.write(record(26, "assistant", "Do not pull the reader back."))
+    server.watches.open[-1].fire()
+    expect(page.locator("button.new-messages")).to_be_visible()
+    assert page.evaluate("window.scrollY") == position
+
+
+@pytest.mark.parametrize("profile", ["normal", "eink"])
+def test_long_answer_jump_does_not_follow_away_from_its_start(
+    page: Page, make_server: Callable[..., E2EServer], tmp_path: Path, profile: str
+) -> None:
+    server, transcript = open_transcript(page, make_server, tmp_path)
+    if profile == "eink":
+        page.evaluate(
+            "localStorage.setItem('jailbee.displayProfile', 'eink'); "
+            "localStorage.setItem('jailbee.einkFollow', 'true')"
+        )
+        page.reload()
+        expect(page.get_by_role("heading", name=TITLE, exact=True)).to_be_visible()
+    page.get_by_role("button", name="Latest answer").click()
+    assert_latest_starts_below_header(page)
+    position = page.evaluate("window.scrollY")
+    with transcript.open("a") as stream:
+        stream.write(record(25, "assistant", "Arrived while reading the long answer."))
+    server.watches.open[-1].fire()
+    expect(page.locator("button.new-messages")).to_be_visible()
+    assert page.evaluate("window.scrollY") == position
+
+
+def test_eink_default_holds_new_entries_even_at_the_end(
+    page: Page, make_server: Callable[..., E2EServer], tmp_path: Path
+) -> None:
+    server, transcript = open_transcript(page, make_server, tmp_path)
+    open_settings(page)
+    page.get_by_role("radio", name="E-ink (page turns").check()
+    expect(page.get_by_role("checkbox", name="Follow new messages on e-ink")).not_to_be_checked()
+    page.go_back()
+    page.get_by_role("button", name="Latest answer").click()
+    page.get_by_role("button", name="Scroll to bottom").click()
+    expect(page.locator(".jump-latest")).to_have_count(0)
+    position = page.evaluate("window.scrollY")
+    with transcript.open("a") as stream:
+        stream.write(record(25, "assistant", "Held even at the end."))
+    server.watches.open[-1].fire()
+    expect(page.locator("button.new-messages")).to_be_visible()
+    expect(page.get_by_text("Held even at the end.", exact=True)).to_have_count(0)
+    assert page.evaluate("window.scrollY") == position
+    page.locator("button.new-messages").click()
+    expect(page.get_by_text("Held even at the end.", exact=True)).to_be_in_viewport()
 
 
 def test_partial_keyboard_scroll_keeps_the_current_eink_page(

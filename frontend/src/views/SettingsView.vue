@@ -10,12 +10,10 @@ import {
     FONT_SIZE_RANGE,
     settings,
     THEMES,
+    THEME_LABELS,
     updateSettings,
     type DisplayProfile,
-    type Theme,
 } from "../settings"
-
-const THEME_LABELS: Record<Theme, string> = {light: "Light", dark: "Dark", eink: "E-ink"}
 
 const PROFILE_LABELS: Record<DisplayProfile, string> = {
     normal: "Normal (scrolling)",
@@ -111,6 +109,14 @@ function number(event: Event): number {
                 />
                 {{ PROFILE_LABELS[p] }}
             </label>
+            <label class="choice">
+                <input
+                    type="checkbox"
+                    :checked="settings.einkFollow"
+                    @change="updateSettings({einkFollow: ($event.target as HTMLInputElement).checked})"
+                />
+                Follow new messages on e-ink
+            </label>
         </fieldset>
 
         <fieldset>
@@ -142,6 +148,11 @@ function number(event: Event): number {
 
         <fieldset>
             <legend>Sessions</legend>
+            <label class="choice">
+                <input type="checkbox" :checked="settings.followNewMessages"
+                    @change="updateSettings({followNewMessages: ($event.target as HTMLInputElement).checked})" />
+                Follow new messages (normal display)
+            </label>
             <label class="choice">
                 <input
                     class="show-thinking"
@@ -180,6 +191,7 @@ function number(event: Event): number {
 }
 .bar {
     display: flex;
+    flex-wrap: wrap;
     align-items: baseline;
     gap: var(--space-3);
     padding-bottom: var(--space-2);
@@ -198,6 +210,8 @@ function number(event: Event): number {
     color: var(--muted);
 }
 fieldset {
+    min-width: 0;
+    overflow-wrap: anywhere;
     margin: var(--space-3) 0;
     padding: var(--space-2) var(--space-3);
     border: 1px solid var(--border);
@@ -210,6 +224,7 @@ legend {
 }
 .choice {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: var(--space-2);
     min-height: 2.75rem;
@@ -226,6 +241,8 @@ legend {
 }
 .rename input,
 .save-device {
+    min-width: 0;
+    max-width: 100%;
     font: inherit;
     min-height: 2.75rem;
 }

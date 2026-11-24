@@ -13,6 +13,7 @@ from jailbee.container_outbox.outbox_cmds import outbox_app
 from jailbee.container_outbox.pr_cmds import pr_app
 from jailbee.inbox.container_cmd import inbox_app
 from jailbee.services.container_cmd import service_app
+from jailbee.version_info import display_version
 
 VERSION_FILE = Path(__file__).resolve().parent.parent / "VERSION"
 
@@ -111,7 +112,7 @@ container_app.add_typer(
 
 def _version(value: bool) -> None:
     if value:
-        typer.echo(__version__)
+        typer.echo(display_version(__version__))
         raise typer.Exit()
 
 
@@ -133,7 +134,7 @@ def root(
 @container_app.command()
 def version() -> None:
     """Print the JailBee version."""
-    typer.echo(__version__)
+    typer.echo(display_version(__version__))
 
 
 @config_app.command()

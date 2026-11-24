@@ -21,12 +21,14 @@ import {settings} from "../settings"
 const header = ref<HTMLElement | null>(null)
 // The sticky header's bottom edge: below an app banner, not just its height.
 const readableTop = ref(0)
-const pageEl = ref<HTMLElement | null>(null)
+const transcriptEl = ref<HTMLElement | null>(null)
 const pager = usePager(
     () => readableTop.value,
     // The bottom spacer lets a short final reply start below the header; page
     // turns end where the transcript does, not inside that blank room.
-    () => (pageEl.value ? parseFloat(getComputedStyle(pageEl.value).paddingBottom) || 0 : 0),
+    () => transcriptEl.value
+        ? document.documentElement.scrollHeight - (transcriptEl.value.getBoundingClientRect().bottom + window.scrollY)
+        : 0,
 )
 const eink = computed(() => settings.displayProfile === "eink")
 /** E-ink: live entries wait here until the reader taps the notice. */
@@ -67,16 +69,21 @@ const byCall = computed(() => {
     return {results, subagents, calls}
 })
 
-/** The entries shown in the flow: results and subagents fold into their call. */
-const shown = computed<RenderedEntry[]>(() =>
-    (transcript.value?.entries ?? []).filter((e) => {
+function visibleEntries(entries: RenderedEntry[], calls: Set<string>): RenderedEntry[] {
+    return entries.filter((e) => {
         if (e.kind === "thinking") return thinking.value
-        if (e.kind === "tool_result" || e.kind === "subagent") {
-            return !byCall.value.calls.has(e.call_id)
-        }
+        if (e.kind === "tool_result" || e.kind === "subagent") return !calls.has(e.call_id)
         return true
-    }),
-)
+    })
+}
+
+/** The entries shown in the flow: results and subagents fold into their call. */
+const shown = computed(() => visibleEntries(transcript.value?.entries ?? [], byCall.value.calls))
+const pendingVisible = computed(() => {
+    const calls = new Set([...transcript.value?.entries ?? [], ...pending.value]
+        .filter((e) => e.kind === "tool_call").map((e) => e.call_id))
+    return visibleEntries(pending.value, calls)
+})
 
 const latestAnswer = computed(() => {
     const entries = transcript.value?.entries ?? []
@@ -86,21 +93,89 @@ const latestAnswer = computed(() => {
     return null
 })
 
-const latestVisible = ref(false)
+const atTranscriptEnd = ref(false)
+const following = ref(false)
+let lastScrollY = window.scrollY
+let programmaticScroll = false
+let scrollFrame: number | undefined
+const answerAhead = ref(false)
+const unseen = ref<RenderedEntry | null>(null)
+const autoFollow = computed(() => eink.value ? settings.einkFollow : settings.followNewMessages)
+// Allow deferred scroll events to arrive before declaring a jump settled;
+// bound the guard even if layout keeps moving indefinitely.
+const SCROLL_STABLE_FRAMES = 3
+const SCROLL_MAX_FRAMES = 120
+const jumpAction = computed<"new" | "answer" | "bottom" | null>(() => {
+    if (pending.value.length || unseen.value) return "new"
+    if (atTranscriptEnd.value) return null
+    return answerAhead.value ? "answer" : "bottom"
+})
+const jumpLabel = computed(() => jumpAction.value === null ? null : {
+    new: pendingVisible.value.length ? `${pendingVisible.value.length} new ${pendingVisible.value.length === 1 ? "message" : "messages"} ↓` : "New messages ↓",
+    answer: "Latest answer ↓",
+    bottom: "Scroll to bottom ↓",
+}[jumpAction.value])
 
 function measureVisibility() {
     const headerRect = header.value?.getBoundingClientRect()
     readableTop.value = headerRect ? Math.max(0, headerRect.bottom) : 0
+    const content = transcriptEl.value?.getBoundingClientRect()
+    atTranscriptEnd.value = !!content && content.bottom <= readableBottom() + 1
+    if (atTranscriptEnd.value && pending.value.length === 0) unseen.value = null
     const el = latestAnswer.value === null ? null : document.getElementById(entryDomId(latestAnswer.value))
     if (el === null) {
-        latestVisible.value = false
+        answerAhead.value = false
         return
     }
     const rect = el.getBoundingClientRect()
-    const top = Math.max(0, headerRect?.bottom ?? 0)
-    const bottom = readableBottom()
-    // Any visible part counts, including a reply taller than the viewport.
-    latestVisible.value = rect.bottom > top && rect.top < bottom && rect.bottom > rect.top
+    // Once the answer's start is visible or passed, offer the end, not a jump
+    // backwards to an answer the reader has already reached.
+    answerAhead.value = rect.top >= readableBottom()
+}
+
+function onScroll() {
+    measureVisibility()
+    if (!programmaticScroll) {
+        if (atTranscriptEnd.value) following.value = true
+        else if (window.scrollY < lastScrollY) following.value = false
+    }
+    lastScrollY = window.scrollY
+}
+
+function finishProgrammaticScroll() {
+    if (scrollFrame !== undefined) cancelAnimationFrame(scrollFrame)
+    scrollFrame = undefined
+    programmaticScroll = false
+}
+
+/** Scroll events are asynchronous, and smooth scrolling can span many frames. */
+function scrollProgrammatically(scroll: () => void, followAtDestination = false) {
+    finishProgrammaticScroll()
+    programmaticScroll = true
+    let previousY = window.scrollY
+    let stableFrames = 0
+    let frames = 0
+    const settle = () => {
+        stableFrames = window.scrollY === previousY ? stableFrames + 1 : 0
+        previousY = window.scrollY
+        if (stableFrames >= SCROLL_STABLE_FRAMES || ++frames >= SCROLL_MAX_FRAMES) {
+            finishProgrammaticScroll()
+            measureVisibility()
+            if (followAtDestination) following.value = atTranscriptEnd.value
+        } else scrollFrame = requestAnimationFrame(settle)
+    }
+    scroll()
+    scrollFrame = requestAnimationFrame(settle)
+    measureVisibility()
+}
+
+function markScrollIntent() {
+    // Real input interrupts a pending jump; every later momentum frame remains
+    // a user scroll too, without needing another wheel/touch/key event.
+    finishProgrammaticScroll()
+}
+function markScrollKey(event: KeyboardEvent) {
+    if (["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key)) markScrollIntent()
 }
 
 watch(shown, () => void nextTick(measureVisibility))
@@ -108,7 +183,12 @@ watch(eink, () => void nextTick(measureVisibility))
 
 let layoutObserver: ResizeObserver | null = null
 onMounted(() => {
-    window.addEventListener("scroll", measureVisibility, {passive: true})
+    window.addEventListener("scroll", onScroll, {passive: true})
+    window.addEventListener("wheel", markScrollIntent, {passive: true})
+    window.addEventListener("touchmove", markScrollIntent, {passive: true})
+    window.addEventListener("pointerdown", markScrollIntent, {passive: true})
+    window.addEventListener("click", markScrollIntent, {capture: true})
+    window.addEventListener("keydown", markScrollKey)
     window.addEventListener("resize", measureVisibility)
     if (typeof ResizeObserver !== "undefined") {
         layoutObserver = new ResizeObserver(measureVisibility)
@@ -117,7 +197,13 @@ onMounted(() => {
     }
 })
 onBeforeUnmount(() => {
-    window.removeEventListener("scroll", measureVisibility)
+    window.removeEventListener("scroll", onScroll)
+    window.removeEventListener("wheel", markScrollIntent)
+    window.removeEventListener("touchmove", markScrollIntent)
+    window.removeEventListener("pointerdown", markScrollIntent)
+    window.removeEventListener("click", markScrollIntent, {capture: true})
+    finishProgrammaticScroll()
+    window.removeEventListener("keydown", markScrollKey)
     window.removeEventListener("resize", measureVisibility)
     layoutObserver?.disconnect()
 })
@@ -130,34 +216,40 @@ function entryDomId(id: string): string {
 const dashboard = useDashboard()
 let unfollow: (() => void) | null = null
 let unmounted = false
+// Finish each DOM update and its follow jump before measuring the next frame.
+let appendQueue = Promise.resolve()
 
-/** Within this many pixels of the bottom counts as "at the end". */
-const AT_END_SLACK_PX = 48
-
-function atEnd(): boolean {
-    const page = document.documentElement
-    return window.scrollY + window.innerHeight >= page.scrollHeight - AT_END_SLACK_PX
+/** Scroll to the transcript, not the blank space reserved for answer jumps. */
+function scrollToEnd() {
+    scrollProgrammatically(() => {
+        if (eink.value) pager.end()
+        else if (transcriptEl.value) {
+            const bottom = transcriptEl.value.getBoundingClientRect().bottom + window.scrollY
+            window.scrollTo(0, Math.max(0, Math.ceil(bottom - readableBottom())))
+        }
+    })
 }
 
-/**
- * New entries from the live subscription. Normal profile: append in place,
- * and scroll along only if the reader was already at the end. E-ink: hold
- * them back and raise a notice, so the screen does not repaint under the
- * reader; `applyPending` shows them.
- */
 async function onLiveAppend(entries: RenderedEntry[]) {
-    if (transcript.value === null) return
-    if (eink.value) {
+    if (transcript.value === null || entries.length === 0) return
+    // Read before the DOM grows: document padding and the bottom guard are not
+    // transcript content, so browser scrollHeight cannot determine follow mode.
+    measureVisibility()
+    const follow = autoFollow.value && following.value
+    const calls = new Set([...transcript.value.entries, ...pending.value, ...entries]
+        .filter((e) => e.kind === "tool_call").map((e) => e.call_id))
+    const visible = visibleEntries(entries, calls)
+    if (!follow && unseen.value === null) unseen.value = visible[0] ?? null
+    if (eink.value && !follow && (pending.value.length > 0 || visible.length > 0)) {
         pending.value.push(...entries)
         return
     }
-    const follow = atEnd()
     transcript.value.entries.push(...entries)
     await nextTick()
-    if (follow) window.scrollTo({top: document.documentElement.scrollHeight})
+    if (follow) scrollToEnd()
+    else measureVisibility()
 }
 
-/** Show the held entries (no scrolling: the reader stays on their page). */
 async function applyPending() {
     if (transcript.value === null || pending.value.length === 0) return
     transcript.value.entries.push(...pending.value)
@@ -166,12 +258,16 @@ async function applyPending() {
     pager.measure()
 }
 
-watch(eink, (on) => {
-    if (!on) void applyPending()
+watch(autoFollow, async () => {
+    const follow = autoFollow.value && atTranscriptEnd.value
+    await applyPending()
+    if (follow) scrollToEnd()
+    else measureVisibility()
 })
 
 function startFollowing(view: TranscriptView) {
     if (unmounted) return // left before the transcript arrived
+    const activeTranscript = transcript.value
     unfollow = dashboard?.follow(
         {
             prefix: prefix.value,
@@ -181,7 +277,11 @@ function startFollowing(view: TranscriptView) {
         },
         view.offset,
         settings.agentContext,
-        {onAppend: (entries) => void onLiveAppend(entries)},
+        {onAppend: (entries) => {
+            appendQueue = appendQueue.then(async () => {
+                if (!unmounted && transcript.value === activeTranscript) await onLiveAppend(entries)
+            })
+        }},
     ) ?? null
 }
 
@@ -191,13 +291,29 @@ onBeforeUnmount(() => {
     unfollow = null
 })
 
-function jumpToLatest() {
-    if (latestAnswer.value === null) return
-    const el = document.getElementById(entryDomId(latestAnswer.value))
-    if (el === null) return
-    if (eink.value) pager.goToElement(el)
-    else el.scrollIntoView({block: "start"})
-    measureVisibility()
+async function jump() {
+    following.value = false
+    const firstUnseen = unseen.value
+    const target = firstUnseen
+        ? (firstUnseen.kind === "assistant" ? firstUnseen.id : null)
+        : (jumpAction.value === "answer" ? latestAnswer.value : null)
+    await applyPending()
+    unseen.value = null
+    const el = target === null ? null : document.getElementById(entryDomId(target))
+    if (el) {
+        // A short answer's start already exposes the transcript end. Arm follow
+        // from the destination geometry, never an intermediate animation frame.
+        const destinationY = Math.max(0, el.getBoundingClientRect().top + window.scrollY - readableTop.value)
+        const transcriptBottom = transcriptEl.value!.getBoundingClientRect().bottom + window.scrollY
+        following.value = transcriptBottom - destinationY <= readableBottom() + 1
+        scrollProgrammatically(() => {
+            if (eink.value) pager.goToElement(el)
+            else el.scrollIntoView({block: "start"})
+        }, true)
+    } else {
+        following.value = true
+        scrollToEnd()
+    }
 }
 
 /** The REST path of this transcript, without the leading `/api/repos/`. */
@@ -246,10 +362,14 @@ async function load() {
         loadedContent.value = {}
         contentFailed.value = {}
         pending.value = []
+        unseen.value = null
         transcript.value = view
         startFollowing(view)
         await nextTick()
         pager.measure()
+        measureVisibility()
+        following.value = atTranscriptEnd.value
+        lastScrollY = window.scrollY
     } catch (e) {
         if (e instanceof Unauthorized) {
             await router.push({name: "login"})
@@ -275,7 +395,7 @@ watch(
 </script>
 
 <template>
-    <div ref="pageEl" class="page" :style="{'--session-readable-top': `${readableTop}px`}">
+    <div class="page" :style="{'--session-readable-top': `${readableTop}px`}">
         <header ref="header" class="session-header">
             <div class="bar">
             <router-link
@@ -288,7 +408,6 @@ watch(
             <router-link v-else class="back" :to="{name: 'repo', params: {prefix}}">
                 &larr; {{ prefix }}
             </router-link>
-            <router-link class="toggle" :to="{name: 'settings'}">Settings</router-link>
             </div>
             <template v-if="transcript">
                 <h1 :title="title">{{ title }}</h1>
@@ -305,7 +424,7 @@ watch(
         <p v-else-if="transcript === null" class="muted">Loading…</p>
         <template v-else>
             <p v-if="transcript.entries.length === 0" class="muted">This session is empty.</p>
-            <article class="transcript">
+            <article ref="transcriptEl" class="transcript">
                 <template v-for="e in shown" :key="e.id">
                     <section
                         v-if="e.kind === 'user'"
@@ -380,20 +499,13 @@ watch(
                 </template>
             </article>
             <button
-                v-if="pending.length > 0"
-                type="button"
-                class="new-messages"
-                @click="applyPending"
-            >
-                {{ pending.length }} new {{ pending.length === 1 ? "message" : "messages" }} &mdash; tap to show
-            </button>
-            <button
-                v-if="latestAnswer && !latestVisible"
+                v-if="jumpLabel"
                 type="button"
                 class="jump-latest"
-                @click="jumpToLatest"
+                :class="{'new-messages': pending.length > 0 || unseen !== null}"
+                @click="jump"
             >
-                Latest answer &darr;
+                {{ jumpLabel }}
             </button>
         </template>
         <PageNav :pager="pager" />
@@ -417,6 +529,7 @@ watch(
     border-bottom: 1px solid var(--border);
 }
 .bar {
+    min-height: 2.75rem;
     display: flex;
     align-items: baseline;
     justify-content: space-between;
@@ -613,18 +726,9 @@ h1 {
     cursor: pointer;
 }
 .new-messages {
-    position: fixed;
-    left: var(--space-3);
-    bottom: calc(var(--guard-bottom) + var(--space-3));
-    z-index: 11;
-    min-height: 2.75rem;
-    padding: var(--space-2) var(--space-3);
-    font: inherit;
     color: var(--text);
     background: var(--notice-bg);
     border: 2px solid var(--border-strong);
-    border-radius: var(--radius);
-    cursor: pointer;
 }
 /* In e-ink the bar owns the bottom edge: the buttons sit above it. */
 :root[data-profile="eink"] .jump-latest,

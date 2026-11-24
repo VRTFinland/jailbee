@@ -231,6 +231,8 @@ def test_already_exists_without_outbox_hint_uses_scoped_number(
         edits.append((repo, cmd[3], cmd[cmd.index("--title") + 1], cmd[cmd.index("--body") + 1]))
         return CompletedProcess(cmd, 0, "", "")
 
+    mocker.patch("jailbee.git.rev_parse", return_value=None)
+    mocker.patch("jailbee.git.update_ref", return_value=True)
     mocker.patch("subprocess.run", side_effect=run)
     result = CliRunner().invoke(app, args + (["--as", "feat/foo"] if as_name else []))
 
@@ -308,6 +310,8 @@ def test_update_mutations_keep_lookup_repository(
         mutations.append((repo, cmd[3], cmd))
         return CompletedProcess(cmd, 0, "", "")
 
+    mocker.patch("jailbee.git.rev_parse", return_value=None)
+    mocker.patch("jailbee.git.update_ref", return_value=True)
     mocker.patch("subprocess.run", side_effect=run)
     result = CliRunner().invoke(app, args + flags + (["--no-outbox"] if no_outbox else []))
 

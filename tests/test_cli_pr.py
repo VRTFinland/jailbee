@@ -151,6 +151,351 @@ def test_pr_push_picker_publishes_picked_manifest(source_choice):
     p["own"].assert_not_called()
 
 
+@pytest.mark.parametrize("entry", ["menu", "explicit", "outbox"])
+@pytest.mark.parametrize("updating", [False, True])
+@pytest.mark.parametrize("numbered", [False, True])
+@pytest.mark.parametrize("fail_edit", [False, True])
+def test_matching_source_updates_via_own_branch_flow(
+    mocker, tmp_path, entry, updating, numbered, fail_edit
+):
+    import json
+
+    from tests.test_branch_pr import StoreFiles
+
+    pending_text = pr_outbox.pending_pr_text
+    cfg, incus = (_update_setup if updating else _setup)(mocker, tmp_path)
+    cfg.pr.ai_description = False
+    incus.config_get_checked.return_value = None
+    files = StoreFiles("uuid-full")
+    files["own.json"] = json.dumps(
+        {
+            "version": 1,
+            "repo": "acme/widgets",
+            "pr": 123 if numbered and updating else None,
+            "head_sha": None,
+            "source": "refs/heads/feat/foo",
+            "source_sha": "a" * 40,
+            "actions": [{"type": "description", "title": "Staged title", "body": "Staged body"}],
+        }
+    )
+    incus.list_containers.return_value[0]["config"] = {"volatile.uuid": "uuid-full"}
+
+    def probe(full, argv, **kwargs):
+        if "symbolic-ref" in argv:
+            return "feat/foo\n"
+        if "rev-parse" in argv:
+            return "b" * 40 + "\n"
+        if "rev-list" in argv:
+            return "3\n"
+        return ""
+
+    incus.exec.side_effect = probe
+    mocker.patch("jailbee.pr_outbox.pending_pr_text", wraps=pending_text)
+    publish = mocker.patch(
+        "jailbee.sync.publish_branch_from_container", return_value=_publish_result()
+    )
+    pinned = mocker.patch("jailbee.sync.fetch_ref_from_container")
+    create = mocker.patch("jailbee.pr.create_pr", return_value=_pr_created())
+    edit = mocker.patch("jailbee.pr.edit_pr")
+    if fail_edit and updating:
+        from jailbee.pr import PrError
+
+        edit.side_effect = PrError("update rejected: permission denied [remote]")
+    select = mocker.patch("jailbee.prompting._select")
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting._confirm", return_value=True)
+    args = ["pr", "push", "feat-foo", "--yes"]
+    if entry == "explicit":
+        args += ["--source-manifest", "own.json"]
+    elif entry == "outbox":
+        mocker.patch("jailbee.config.load_repo_config", return_value=cfg)
+        mocker.patch("jailbee.incus.Incus", return_value=incus)
+        mocker.patch(
+            "jailbee.lifecycle.resolve_container_for_interactive", return_value="sampleapp-feat-foo"
+        )
+        mocker.patch(
+            "jailbee.outbox.commands.pr_creation",
+            return_value={"kind": "source", "manifest": "own.json"},
+        )
+        args = ["outbox", "apply", "feat-foo", "pr/own.json", "--yes"]
+    result = CliRunner().invoke(app, args)
+    if fail_edit and updating:
+        assert result.exit_code == 1, result.output
+        assert "permission denied [remote]" in result.output
+        assert "own.json" in files
+        from jailbee.dashboard import runner
+        from jailbee.dashboard.model import RepoTarget
+        from tests.dashboard_pilot import bare_session
+
+        session, terminal = bare_session(mocker, [])
+
+        def run(runs, done, progress=None):
+            def command(argv, *, on_output, **kwargs):
+                on_output(result.output)
+                return runner.RunResult(status=result.exit_code)
+
+            done(runner.run_actions(runs, run=command))
+
+        terminal.run_actions = run
+        session.run_action(RepoTarget(tmp_path, None), args, style="output", label="pr push")
+        (entry,) = session.queue
+        assert entry.state == "failed"
+        assert "permission denied [remote]" in entry.output
+        assert "permission denied [remote]" in " ".join(session.queue_entry_picker(entry.id).detail)
+        return
+    assert result.exit_code == 0, result.output
+    assert "3 newer commits" in result.output
+    select.assert_not_called()
+    publish.assert_called_once()
+    assert publish.call_args.kwargs["branch"] == "feat/foo"
+    pinned.assert_not_called()
+    if updating:
+        create.assert_not_called()
+        edit.assert_called_once_with(
+            tmp_path, 123, title="Staged title", body="Staged body", repo="acme/widgets"
+        )
+    else:
+        assert create.call_args.kwargs["title"] == "Staged title"
+        assert create.call_args.kwargs["body"] == "Staged body"
+        assert any(
+            c.args == ("sampleapp-feat-foo", "user.jailbee.pr", "123")
+            for c in incus.config_set.call_args_list
+        )
+    assert "own.json" not in files
+
+
+def test_own_source_warns_when_base_differs(mocker, tmp_path):
+    import json
+
+    from tests.test_branch_pr import StoreFiles
+
+    pending_text = pr_outbox.pending_pr_text
+    cfg, incus = _setup(mocker, tmp_path)
+    cfg.pr.ai_description = False
+    incus.config_get_checked.return_value = None
+    incus.list_containers.return_value[0]["config"] = {"volatile.uuid": "uuid-full"}
+    files = StoreFiles("uuid-full")
+    files["own.json"] = json.dumps(
+        {
+            "version": 1,
+            "repo": "acme/widgets",
+            "pr": None,
+            "head_sha": None,
+            "base": "other",
+            "source": "refs/heads/feat/foo",
+            "source_sha": "a" * 40,
+            "actions": [{"type": "description", "title": "Title", "body": "Body"}],
+        }
+    )
+    mocker.patch("jailbee.branch_pr.own_source_branch", return_value=("feat/foo", 0))
+    mocker.patch("jailbee.pr_outbox.pending_pr_text", wraps=pending_text)
+    mocker.patch("jailbee.sync.publish_branch_from_container", return_value=_publish_result())
+    mocker.patch("jailbee.pr.create_pr", return_value=_pr_created())
+    result = CliRunner().invoke(
+        app, ["pr", "push", "feat-foo", "--source-manifest", "own.json", "--yes"]
+    )
+    assert result.exit_code == 0, result.output
+    assert (
+        "own.json: proposed base 'other' differs from resolved base 'main'; using 'main'"
+        in result.output
+    )
+
+
+@pytest.fixture
+def actionless_own_source(mocker, tmp_path):
+    import json
+
+    from tests.test_branch_pr import StoreFiles
+
+    _cfg, incus = _update_setup(mocker, tmp_path)
+    incus.config_get_checked.return_value = None
+    incus.list_containers.return_value[0]["config"] = {"volatile.uuid": "uuid-full"}
+    files = StoreFiles("uuid-full")
+    files["own.json"] = json.dumps(
+        {
+            "version": 1,
+            "repo": "acme/widgets",
+            "pr": 123,
+            "head_sha": None,
+            "source": "refs/heads/feat/foo",
+            "source_sha": "a" * 40,
+            "actions": [],
+        }
+    )
+    mocker.patch("jailbee.branch_pr.own_source_branch", return_value=("feat/foo", 0))
+    publish = mocker.patch(
+        "jailbee.sync.publish_branch_from_container", return_value=_publish_result()
+    )
+    pinned = mocker.patch("jailbee.branch_pr.publish_source_manifest", return_value=0)
+    args = ["pr", "push", "feat-foo", "--source-manifest", "own.json", "--yes", "--no-ai"]
+    return files, publish, pinned, args
+
+
+def test_actionless_own_source_uses_own_branch(actionless_own_source):
+    files, publish, pinned, args = actionless_own_source
+    result = CliRunner().invoke(app, args)
+    assert result.exit_code == 0, result.output
+    publish.assert_called_once()
+    pinned.assert_not_called()
+    assert "own.json" not in files
+
+
+def test_actionless_own_source_retries_rejected_push(actionless_own_source):
+    from jailbee.sync import SyncError
+
+    files, publish, _, args = actionless_own_source
+    publish.side_effect = [SyncError("push rejected"), _publish_result()]
+    failed = CliRunner().invoke(app, args)
+    assert failed.exit_code == 1, failed.output
+    assert "push rejected" in failed.output
+    assert "own.json" in files
+
+    retried = CliRunner().invoke(app, args)
+    assert retried.exit_code == 0, retried.output
+    assert publish.call_count == 2
+    assert "own.json" not in files
+
+
+def test_actionless_own_source_retries_definite_pr_error(mocker, actionless_own_source):
+    from jailbee.pr import PrCreateError
+
+    files, publish, _, args = actionless_own_source
+    lookup = mocker.patch(
+        "jailbee.pr.view_existing_pr",
+        side_effect=[PrCreateError("gh failed: permission denied"), _pr_created(already=True)],
+    )
+    failed = CliRunner().invoke(app, args)
+    assert failed.exit_code == 1, failed.output
+    assert "permission denied" in failed.output
+    assert "own.json" in files
+
+    retried = CliRunner().invoke(app, args)
+    assert retried.exit_code == 0, retried.output
+    assert lookup.call_count == 2
+    assert publish.call_count == 2
+    assert "own.json" not in files
+
+
+@pytest.mark.parametrize("interruption", [KeyboardInterrupt(), TimeoutError("gh interrupted")])
+def test_actionless_own_source_interrupted_pr_operation_stays_uncertain(
+    mocker, actionless_own_source, interruption
+):
+    from jailbee.outbox.publication_db import open_publications
+
+    files, publish, _, args = actionless_own_source
+    lookup = mocker.patch("jailbee.pr.view_existing_pr", side_effect=interruption)
+    failed = CliRunner().invoke(app, args)
+    assert failed.exit_code != 0
+    assert "own.json" in files
+    journal = open_publications().load("uuid-full", "pr", "own.json")
+    assert journal is not None
+    assert journal.actions[0].state == "uncertain"
+
+    lookup.side_effect = None
+    lookup.return_value = _pr_created(already=True)
+    retried = CliRunner().invoke(app, args)
+    assert retried.exit_code == 1, retried.output
+    assert "publication already recorded or uncertain" in retried.output
+    assert lookup.call_count == 1
+    assert publish.call_count == 1
+    assert "own.json" in files
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("repo", "other/widgets", "proposal targets other/widgets, not acme/widgets"),
+        ("pr", 456, "source targets PR #456, not the container's PR; bind that PR first"),
+    ],
+)
+def test_actionless_own_source_rejects_mismatched_target(
+    actionless_own_source, field, value, message
+):
+    import json
+
+    files, publish, pinned, args = actionless_own_source
+    manifest = json.loads(files["own.json"])
+    manifest[field] = value
+    files["own.json"] = json.dumps(manifest)
+
+    result = CliRunner().invoke(app, args)
+    assert result.exit_code == 2, result.output
+    assert message in result.output
+    publish.assert_not_called()
+    pinned.assert_not_called()
+    assert "own.json" in files
+
+
+def test_numbered_own_source_cannot_supply_a_new_stacked_pr(mocker, tmp_path):
+    import json
+
+    from jailbee.pr_flow import ReviewTarget
+    from tests.test_branch_pr import StoreFiles
+
+    pending_text = pr_outbox.pending_pr_text
+    _cfg, incus = _setup(
+        mocker,
+        tmp_path,
+        labels={
+            "user.jailbee.pr": "123",
+            "user.jailbee.branch": "feat/foo",
+            "user.jailbee.base_branch": "main",
+        },
+    )
+    incus.config_get_checked.return_value = None
+    incus.list_containers.return_value[0]["config"] = {"volatile.uuid": "uuid-full"}
+    files = StoreFiles("uuid-full")
+    files["own.json"] = json.dumps(
+        {
+            "version": 1,
+            "repo": "acme/widgets",
+            "pr": 123,
+            "head_sha": None,
+            "source": "refs/heads/feat/foo",
+            "source_sha": "a" * 40,
+            "actions": [{"type": "description", "title": "Old PR", "body": "Old description"}],
+        }
+    )
+    mocker.patch("jailbee.branch_pr.own_source_branch", return_value=("feat/foo", 0))
+    mocker.patch("jailbee.pr_outbox.pending_pr_text", wraps=pending_text)
+    mocker.patch(
+        "jailbee.pr_flow.resolve_review_target",
+        return_value=ReviewTarget(
+            stacked=True,
+            parent_number=123,
+            parent_head="feat/foo",
+            parent_head_ref="refs/pr/123",
+        ),
+    )
+    publish = mocker.patch("jailbee.sync.publish_branch_from_container")
+    create = mocker.patch("jailbee.pr.create_pr")
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo", "--source-manifest", "own.json"])
+    assert result.exit_code == 1, result.output
+    assert "staged description unavailable" in result.output
+    publish.assert_not_called()
+    create.assert_not_called()
+    assert "own.json" in files
+
+
+@pytest.mark.parametrize("options", [["--branch", "other"], ["--pr", "789"], ["--stacked"]])
+def test_matching_source_never_overrides_explicit_target(source_choice, options):
+    from jailbee.branch_pr import PendingSource
+
+    p = source_choice
+    p["pending"].return_value = [PendingSource("own.json", "Own", "topic", "main", "topic")]
+    # Stop at the normal flow's preflight: source selection must not publish or
+    # replace explicit arguments before normal PR targeting starts.
+    from jailbee.sync import SyncError
+
+    p["mocker"].patch(
+        "jailbee.sync.assert_container_publishable", side_effect=SyncError("preflight")
+    )
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo", *options])
+    assert result.exit_code == 1 and "preflight" in result.output
+    p["source"].assert_not_called()
+    p["select"].assert_not_called()
+
+
 def test_pr_push_picker_own_branch_runs_current_flow(source_choice):
     p = source_choice
     result = CliRunner().invoke(app, ["pr", "push", "feat-foo"])
@@ -168,6 +513,20 @@ def test_pr_push_no_pending_no_picker(source_choice):
     assert result.exit_code == 0, result.output
     p["select"].assert_not_called()
     p["own"].assert_called_once()
+
+
+def test_unselected_own_proposal_is_named(source_choice, mocker):
+    from jailbee.branch_pr import PendingSource
+
+    p = source_choice
+    p["pending"].return_value = [
+        PendingSource("own.json", "Own", "topic", "main", "topic"),
+        PendingSource("child.json", "Child", "child", "main"),
+    ]
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo", "--yes"])
+    assert result.exit_code == 0, result.output
+    assert "own.json" in result.stderr and "not used" in result.stderr
 
 
 def test_pr_push_noninteractive_pending_prints_note(source_choice, mocker):
@@ -247,6 +606,8 @@ def test_source_manifest_cli_delegates(mocker, tmp_path):
         ["--as", "x"],
         ["--pr", "42"],
         ["--stacked"],
+        ["--branch", "other"],
+        ["--no-outbox"],
     ],
 )
 def test_source_manifest_cli_rejects_conflicting_options(options):
@@ -349,6 +710,8 @@ def test_pr_outbox_pins_creation_and_update_lookup(mocker, tmp_path, is_update):
             }
         )
     _setup(mocker, tmp_path, labels=labels)
+    mocker.patch("jailbee.git.rev_parse", return_value=None)
+    mocker.patch("jailbee.git.update_ref", return_value=True)
     mocker.patch("jailbee.sync.publish_branch_from_container", return_value=_publish_result())
     mocker.patch(
         "jailbee.pr_outbox.pending_pr_text", return_value=_outbox_source(branch="feat/foo")
@@ -376,6 +739,193 @@ def test_pr_outbox_pins_creation_and_update_lookup(mocker, tmp_path, is_update):
     assert commands[0][:3] == ["gh", "pr", "view" if is_update else "create"]
     assert all("--repo" in cmd for cmd in commands)
     assert all(cmd[cmd.index("--repo") + 1] == "acme/widgets" for cmd in commands)
+
+
+@pytest.mark.parametrize("updating", [False, True])
+def test_pr_push_updates_the_pr_head_ref_to_the_pushed_commit(mocker, tmp_path, updating):
+    import subprocess
+
+    from jailbee.host_target import SyncInputs, TargetSnapshot, resolve_sync_target
+
+    labels = None
+    if updating:
+        labels = {
+            "user.jailbee.pr": "123",
+            "user.jailbee.pr_branch": "feat/foo",
+            "user.jailbee.pr_author": "1",
+            "user.jailbee.base_branch": "main",
+        }
+    _setup(mocker, tmp_path, labels=labels)
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(tmp_path),
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.com",
+            "commit",
+            "--allow-empty",
+            "-qm",
+            "pushed",
+        ],
+        check=True,
+    )
+    pushed_sha = subprocess.run(
+        ["git", "-C", str(tmp_path), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    result = _publish_result()
+    from dataclasses import replace
+
+    result = replace(result, fetch=replace(result.fetch, new_oid=pushed_sha))
+    if updating:
+        # The cache may predate a successful force-push with rewritten history.
+        subprocess.run(
+            [
+                "git",
+                "-C",
+                str(tmp_path),
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.com",
+                "commit",
+                "--allow-empty",
+                "-qm",
+                "old cached head",
+            ],
+            check=True,
+        )
+        old_cached_sha = subprocess.run(
+            ["git", "-C", str(tmp_path), "rev-parse", "HEAD"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        subprocess.run(
+            ["git", "-C", str(tmp_path), "update-ref", "refs/jailbee/pr/123/head", old_cached_sha],
+            check=True,
+        )
+    mocker.patch("jailbee.sync.publish_branch_from_container", return_value=result)
+    mocker.patch("jailbee.pr.create_pr", return_value=_pr_created())
+    mocker.patch("jailbee.pr.view_existing_pr", return_value=_pr_created(already=True))
+
+    command = CliRunner().invoke(app, ["pr", "push", "feat-foo"])
+
+    assert command.exit_code == 0, command.output
+    if updating:
+        assert old_cached_sha != pushed_sha
+    host = TargetSnapshot("main", None, "local", "refs/heads/main", "equal")
+    target = resolve_sync_target(tmp_path, SyncInputs(pr_number=123), host)
+    assert target.sha == pushed_sha
+    divergence = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(tmp_path),
+            "rev-list",
+            "--left-right",
+            "--count",
+            f"{pushed_sha}...{target.ref}",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.split()
+    assert divergence == ["0", "0"]
+
+
+@pytest.mark.parametrize("failure", ["push", "pr"])
+def test_pr_push_does_not_update_head_ref_after_failure(mocker, tmp_path, failure):
+    from jailbee.pr import PrCreateError
+    from jailbee.sync import SyncError
+
+    _setup(mocker, tmp_path)
+    update_ref = mocker.patch("jailbee.git.update_ref")
+    if failure == "push":
+        mocker.patch(
+            "jailbee.sync.publish_branch_from_container", side_effect=SyncError("push failed")
+        )
+    else:
+        mocker.patch("jailbee.sync.publish_branch_from_container", return_value=_publish_result())
+        mocker.patch("jailbee.pr.create_pr", side_effect=PrCreateError("PR failed"))
+
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo"])
+
+    assert result.exit_code == 1
+    update_ref.assert_not_called()
+
+
+def test_pr_push_is_silent_when_racing_fetch_already_updated_head(mocker, tmp_path):
+    _setup(mocker, tmp_path)
+    published = _publish_result()
+    mocker.patch("jailbee.sync.publish_branch_from_container", return_value=published)
+    mocker.patch("jailbee.pr.create_pr", return_value=_pr_created())
+    mocker.patch("jailbee.git.rev_parse", side_effect=[None, published.fetch.new_oid])
+    mocker.patch("jailbee.git.update_ref", return_value=False)
+
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo"])
+
+    assert result.exit_code == 0, result.output
+    assert "could not refresh the cached PR head" not in result.output
+
+
+def test_pr_push_warns_when_cached_head_ref_cannot_be_updated(mocker, tmp_path):
+    _setup(mocker, tmp_path)
+    mocker.patch("jailbee.sync.publish_branch_from_container", return_value=_publish_result())
+    mocker.patch("jailbee.pr.create_pr", return_value=_pr_created())
+    mocker.patch("jailbee.git.rev_parse", side_effect=["old-sha", "other-sha"])
+    update_ref = mocker.patch("jailbee.git.update_ref", return_value=False)
+
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo"])
+
+    assert result.exit_code == 0, result.output
+    update_ref.assert_called_once()
+    assert "could not refresh the cached PR head" in result.output
+
+
+def test_pr_push_does_not_refresh_head_for_a_different_published_branch(mocker, tmp_path):
+    labels = {
+        "user.jailbee.pr": "123",
+        "user.jailbee.pr_branch": "feat/foo",
+        "user.jailbee.pr_author": "1",
+        "user.jailbee.base_branch": "main",
+    }
+    _setup(mocker, tmp_path, labels=labels)
+    mocker.patch(
+        "jailbee.sync.publish_branch_from_container",
+        return_value=_publish_result(publish_name="other"),
+    )
+    mocker.patch("jailbee.pr.view_existing_pr", return_value=_pr_created(already=True))
+    update_ref = mocker.patch("jailbee.git.update_ref")
+
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo"])
+
+    assert result.exit_code == 0, result.output
+    update_ref.assert_not_called()
+
+
+def test_pr_push_does_not_refresh_a_foreign_pr_head(mocker, tmp_path):
+    labels = {
+        "user.jailbee.pr": "123",
+        "user.jailbee.pr_branch": "feat/foo",
+        "user.jailbee.pr_adopted": "1",
+        "user.jailbee.base_branch": "main",
+    }
+    _setup(mocker, tmp_path, labels=labels)
+    mocker.patch("jailbee.sync.publish_branch_from_container", return_value=_publish_result())
+    mocker.patch("jailbee.pr.view_existing_pr", return_value=_pr_created(already=True))
+    update_ref = mocker.patch("jailbee.git.update_ref")
+
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo", "--yes"])
+
+    assert result.exit_code == 0, result.output
+    update_ref.assert_not_called()
 
 
 def test_create_pr_happy_path(mocker, tmp_path):
@@ -2679,6 +3229,8 @@ def _stacked_setup(
 
 def test_stacked_opens_a_pr_based_on_the_reviewed_head(mocker, tmp_path):
     _incus, publish, create, _retarget = _stacked_setup(mocker, tmp_path)
+    mocker.patch("jailbee.git.rev_parse", return_value=None)
+    update_ref = mocker.patch("jailbee.git.update_ref", return_value=True)
 
     result = CliRunner().invoke(
         app, ["pr", "push", "feat-foo", "--stacked", "--as", "fix/worktime-review", "--no-retarget"]
@@ -2689,6 +3241,12 @@ def test_stacked_opens_a_pr_based_on_the_reviewed_head(mocker, tmp_path):
     kwargs = create.call_args.kwargs
     assert kwargs["head"] == "fix/worktime-review"
     assert kwargs["base"] == "contributor/fix-worktime"  # the reviewed PR's head
+    update_ref.assert_called_once_with(
+        tmp_path,
+        "refs/jailbee/pr/123/head",
+        "def5678",
+        old_oid="",
+    )
 
 
 def test_stacked_records_its_own_labels_and_leaves_the_parent_alone(mocker, tmp_path):

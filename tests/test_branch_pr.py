@@ -151,7 +151,26 @@ def test_pending_lists_source_manifests_in_order(source_publisher):
         PendingSource("m.json", "Title", "refs/jailbee/from/child/feature/a", "main"),
         PendingSource("a.json", "Other", "refs/heads/other", None),
     ]
-    p["incus"].exec.assert_not_called()
+
+
+def test_numbered_source_without_description_still_updates(source_publisher):
+    from jailbee.pr import PrInfo
+
+    p = source_publisher
+    p["files"]["m.json"] = json.dumps(dict(p["data"], pr=42, actions=[]))
+    p["resolve"].return_value = PrInfo(
+        number=42,
+        head_ref="feature/a",
+        base_ref="main",
+        head_sha="b" * 40,
+        is_cross_repository=False,
+        head_repo_owner="acme",
+        state="OPEN",
+    )
+    assert _publish(p) == 0
+    p["edit"].assert_not_called()
+    p["push"].assert_called_once()
+    assert consumed(p)
 
 
 def test_pending_skips_own_branch_description(source_publisher):
@@ -190,6 +209,63 @@ def test_pending_unreadable_store_is_empty(source_publisher, mocker):
     p = source_publisher
     mocker.patch("jailbee.outbox.store_db.read_proposals", side_effect=StoreError("locked"))
     assert pending_source_manifests(p["cfg"], p["incus"], "full") == []
+
+
+@pytest.mark.parametrize(
+    ("ref", "sha", "ancestor", "own", "newer"),
+    [
+        ("refs/heads/alias", "a" * 40, False, True, 0),
+        ("refs/heads/topic", "b" * 40, True, True, 3),
+        ("refs/jailbee/from/child/topic", "b" * 40, True, False, 0),
+        ("refs/heads/topic", "b" * 40, False, False, 0),
+    ],
+)
+def test_pending_classifies_own_commit_not_merged_child(
+    source_publisher, ref, sha, ancestor, own, newer
+):
+    from jailbee.branch_pr import pending_source_manifests
+
+    p = source_publisher
+    p["files"]["m.json"] = json.dumps(dict(p["data"], source=ref, source_sha=sha))
+
+    def probe(full, argv, **kwargs):
+        if "symbolic-ref" in argv:
+            return "topic\n"
+        if "rev-parse" in argv:
+            return "a" * 40 + "\n"
+        if "merge-base" in argv:
+            if not ancestor:
+                from jailbee.incus import IncusError
+
+                raise IncusError("not an ancestor")
+            return ""
+        if "rev-list" in argv:
+            return "3\n"
+        return ""
+
+    p["incus"].exec.side_effect = probe
+    (proposal,) = pending_source_manifests(p["cfg"], p["incus"], "full", classify_own=True)
+    assert proposal.own_branch == ("topic" if own else None)
+    assert proposal.newer_commits == newer
+
+
+def test_choose_pr_source_deduplicates_matching_branch_and_warns(mocker):
+    from jailbee.branch_pr import PendingSource, choose_pr_source
+
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    pending = [
+        PendingSource("own.json", "Own", "refs/heads/topic", "main", "topic", 3),
+        PendingSource("child.json", "Child", "refs/jailbee/from/child/topic", "main"),
+    ]
+
+    def select(noun, options):
+        assert len(options) == 2
+        assert "Open/Update PR for topic using the staged description" in options[0].title
+        assert "3 newer commits" in options[0].title
+        return options[0].value
+
+    mocker.patch("jailbee.prompting._select", side_effect=select)
+    assert choose_pr_source(pending, own_label="container branch") == "own.json"
 
 
 @pytest.mark.parametrize("selected", [0, 1, 2])

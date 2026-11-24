@@ -234,7 +234,7 @@ speculatively.
 | `jailbee registry up [--recreate]\|down\|status\|verify [--purge]` | Control the Incus-hosted Docker registry mirror (rpardini proxy; caches all upstreams). `up` is idempotent and self-repairing: if an earlier provisioning run died partway (a network drop during `apt-get install`), it reinstalls the proxy rather than failing forever. `--recreate` deletes and rebuilds the container for damage reinstalling can't fix; the host-side cache and CA survive. `status`: `running`/`stopped`/`degraded`/`missing`. `verify` checks cached blobs/manifests against their digests and removes corrupt ones on confirmation (`--purge`: without asking) — the fix when a pull fails with `unexpected commit digest`. Host-only: the container has no `jailbee`. |
 | `jailbee display up [--recreate]\|down\|status\|attach [name]` | Shared RDP display for GUI apps launched over remote SSH. `up` provisions the `jailbee-display` container (weston) and prints how to connect; `down` stops it and revokes SSH forwarding to it; `--recreate` rebuilds it. Only meaningful with `remote.ssh.rdp: true`. `up` and `down` are host-only (the container has no `jailbee`); `status` also works over remote SSH. `attach` (host only) attaches the host's Wayland display to a running container, for GUI apps started from a shell; the GUI launchers do it themselves (see `gui.wayland` in `docs/config.md`). On a Linux laptop or a Mac (Cocoa-Way), `waypipe ssh` gives native windows instead (on by default via `remote.ssh.waypipe`; titles carry a `[<container>] ` prefix); see `docs/remote-gui.md`. |
 | `jailbee net install` | Deprecated alias for `jailbee setup --yes --only timer`, which does exactly the same work — (re)installing the `jailbee-net-refresh` user systemd timer + service. Still works; prints a deprecation warning. |
-| `jailbee version` / `jailbee --version` | Print the version. |
+| `jailbee version` / `jailbee --version` | Print package version plus source commit when known, e.g. `1.8.9 (abc1234)` or `1.8.9 (abc1234-dirty)` for uncommitted source changes. Editable installs read their checkout; wheels retain build-time identity; containers report the staged host code, not their repo HEAD. Without build info, print just the version. |
 
 ## Default agent runner
 
@@ -435,6 +435,28 @@ hooks); command-only sessions use their first slash command, with title lookup
 bounded to 32 candidate user records once that fallback exists. A leading agent
 wrapper and typed text in one record are displayed separately as metadata and a
 prompt; unknown XML-like tags remain typed text.
+Transcripts follow live entries at the end (opt-in on e-ink). Scrolling up,
+including keyboard or touch momentum, stops follow; reaching the end by hand
+restores it. Answer-start jumps leave long replies in place to read, and only
+jumps reaching the transcript end resume follow.
+The top-right Quick settings menu is available on every page, with live body/code
+font-size steppers and an Auto / Light / Dark / E-ink theme cycler. Its Settings
+link opens the full settings page; both edit the same per-device localStorage
+preferences without Save. Session/subagent menus add Follow new messages (normal
+on by default, e-ink opt-in), Show thinking and Agent context; container pages add
+no contextual controls. Escape or an outside click closes the menu and restores
+focus to its icon; Escape on the native Agent context select is left to that control.
+Navigation closes the menu without restoring icon focus. Short screens paginate whole menu rows with up/down buttons,
+PageUp/PageDown (also n/m on e-ink), never a scrolling popover; e-ink has no shadow.
+The front page and repository menus have three container filters: All,
+Running (Incus state Running), and Active (the terminal dashboard's non-grey
+agent marks, including idle sessions with an event less than 30 minutes old,
+regardless of session count or cell width). A bold `idle 5m` label explains
+recent-idle freshness, including on e-ink. The choice is remembered
+per browser and follows snapshots. Nonmatching ancestors stay dimmed for tree
+context; repositories without retained rows disappear. A dot on the menu icon
+and a slim `Showing: Active · show all` notice expose a non-All filter; `show all`
+resets it. All has no notice. The terminal dashboard is unchanged.
 The front page and repository container lists indent same-repository children
 under their orchestrator, show its child count across all visible repositories
 and each child's state/runner, and keep absent-parent children labelled.
@@ -1114,10 +1136,10 @@ issue outbox are empty — it moves to the very top as "Outbox (N pending)" whil
 holds staged manifests; it opens the Outbox box: the proposals as a tree
 beside a preview, with `Space` mark (a row and everything under it), `d` delete
 (one "No"-first question naming exactly what goes), `p` publish the marked
-proposals, or the one under the cursor (the plans and the choice shown in the box;
+proposals, or the one under the cursor (CLI questions open as modals; marked proposals share a plan preview;
 a description awaiting its PR or a pinned source runs `pr push` /
-`submodule pr push` in the terminal, after the manifests, the first failure
-stopping the rest), `X` clear, `v`/`m` preview and raw
+`submodule pr push` through the shared action runner, after the manifests, the first failure
+stopping the rest; output, URLs and failures stay in the notification queue), `X` clear, `v`/`m` preview and raw
 manifest, `f` full-screen preview reader (`f`/Esc back), `r` refresh and Esc back; keys the SSH policy refuses are not
 offered), then `job clear`, `job log`, then `Autostart →` (re-run, status, cancel and profile when eligible; cancel asks first), then `Git →` (`merge`,
 `git pull`, `git push`, `git push --pr`, `git diff`), `PR →` ("Create/update submodule PR…" when the container has submodule changes, `pr open`,
@@ -1176,11 +1198,15 @@ stop).
 a branch name and a base branch — the base is a separate field because
 `jailbee new` forks a new branch off `default_branch` when its second
 positional is omitted, so leaving it implicit would fork off the wrong branch
-— then hands the terminal to `jailbee new`. It is deliberately not dispatched
-detached and never gets `--yes`: `jailbee new` asks about reusing an existing
-branch and about a branch autostart config that widens network access, and
-that question is asked in the foreground parent even under `--background`. A
-row in an orphan group (no repo config) gets a notice explaining why nothing
+— then asks for the autostart profile and runs `jailbee new --background`
+detached without releasing the terminal. If preflight needs an answer (reusing
+an existing branch or widening network access), the shared create runner retries
+the command through the prompt channel and the dashboard asks in a modal. It
+never adds `--yes`. Declining reuse shows the CLI's "Pick a different name"
+hint and is not a failure. A failure before the background worker starts,
+including an inability to spawn the command, stays in Notifications (`Q`) with
+its output until dismissed; a successful worker is tracked by its job row.
+A row in an orphan group (no repo config) gets a notice explaining why nothing
 happened.
 
 The repo-header menu's **New container…** runs this same flow; orphan repo
@@ -1554,7 +1580,13 @@ For a pinned imported source use `jailbee pr push NAME --source-manifest
 FILE.json`. It publishes that ref at its recorded SHA independently of the
 container's own PR. An existing PR supplies its actual head and base; a
 conflicting manifest branch is refused. `--title`, `--body`, `--base`,
-`--as`, `--pr` and `--stacked` cannot be combined with this option.
+`--as`, `--pr`, `--stacked`, `--branch` and `--no-outbox` cannot be combined with this option.
+A matching own-branch source uses the ordinary branch flow; if it has no description,
+its numbered PR must match the container's bound PR. A rejected push or a reported
+PR lookup error is retryable with the same command. An interrupted PR operation
+remains uncertain: resolve it in the outbox before retrying. A differing proposal base is
+warned about, and the resolved base is used. An unselected own-branch proposal is
+named in a warning.
 Non-fast-forward updates require `--force`. Pending source rows show
 `awaiting-push` and `create_scope`; `outbox apply` (and `p` in the outbox)
 hands them to this PR push. An already-published
@@ -1855,15 +1887,25 @@ or `issue/<manifest>.json`. Inspection is local and never calls GitHub; over
 remote SSH it is read-only. See [Unified proposal
 management](../../../git-bridge.md#unified-proposal-management).
 
-In the terminal manager and dashboard Outbox box, delete verification, drops
-and post-mutation reloads run in the background. A busy line stays visible while
-navigation and preview keys work; refresh waits for the completion reload,
-and another delete, publish, clear or scope change is refused while busy.
-Closing the dashboard box leaves the work running and reports its result as a notice.
-PR-creation verification is background work too; the interactive `pr push` still
-uses the terminal, and is not run if the box was closed meanwhile (a notice
-says so). The standalone manager refuses Esc, `q` and Ctrl-C while a mutation
-runs: quitting waits for it to finish.
+In the terminal manager and dashboard Outbox box, drops and post-mutation reloads
+run in the background. Deletion shows `Deleting 2/5…` and removes each successful
+row immediately. Navigation, opening, marking and preview keys work; repeated
+refresh requests coalesce into the final reload. Another confirmed delete queues
+behind the running drops; deleting or publishing a proposal with running or
+queued drops is refused by name until that proposal's own drops finish. A
+finished proposal can be queued again while other proposals are still running.
+Publish, clear and scope changes wait for the delete queue; other mutations
+still refuse concurrent mutations. All queued batches share one final summary,
+leading with any failures and naming their proposals before the deletion count.
+Closing the dashboard box leaves the work running (the delete busy line says so)
+and reports that same summary as a notice.
+PR-creation verification is background work too. Dashboard publications run through
+the prompt channel, locally and over SSH: CLI questions open as modals, declining
+or cancelling never reports success, and the full output stays in the notification
+queue while the status notice shows only the outcome. Closing the dashboard box
+with Esc leaves confirmed publications running, including later PR creations in
+the batch. The standalone manager still uses terminal hand-offs and refuses Esc,
+`q` and Ctrl-C while a mutation runs: quitting waits for it to finish.
 
 | Command | What it does |
 |---|---|

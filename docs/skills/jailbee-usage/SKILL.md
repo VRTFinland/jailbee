@@ -560,7 +560,9 @@ diff from the sync target), **↑** (commits unique to the container), **↓**
 host target branch, except for a PR-bound container, which compares with the
 PR head the host last fetched (↑ = push needed, ↓ = someone else pushed; cells
 marked dim `pr`, or yellow `pr?` when that ref is missing and the host branch
-stands in), and an orchestration child or fork, which compares with its parent
+stands in). A successful PR push to its own head branch updates that ref
+immediately, before the next git-status refresh. An orchestration child or fork
+compares with its parent
 container ahead of any PR (↑ = commits not yet imported, ↓ = parent commits it
 lacks; dim `⑂`, or yellow `⑂?` when the parent is stopped or not yet seen by the
 dashboard and the host branch stands in; plain `jb ls` has no gather pass, so a
@@ -1844,7 +1846,10 @@ after one question showing each publication plan (a staged description awaiting 
 clears the container's outbox, `v`/`m` toggle preview and raw manifest, `r`
 refreshes, `q` quits. On a narrow terminal Enter on a leaf row (a description,
 a reply, a comment) shows the preview in the list's place; Esc goes back. Off a terminal it prints the overview table. The
-dashboard's container menu opens the same manager for its container, and the
+dashboard's container menu opens the same box for its container. Dashboard
+publication uses the shared action runner: questions are modals, output and
+URLs or failure reasons stay in the notification queue, including over SSH.
+PR creations use it too; only the standalone manager hands over a terminal. The
 Qt dashboard has a native window for it. Over remote SSH the manager is
 read-only. The scriptable forms address a proposal as `pr/<manifest>.json` or
 `issue/<manifest>.json`:

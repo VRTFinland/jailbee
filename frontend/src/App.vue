@@ -1,7 +1,8 @@
 <script setup lang="ts">
 // Holds the dashboard socket open on every signed-in page (so a deep link or
 // reload of any view is live), and closed on public pages such as login.
-import {onBeforeUnmount, onMounted, ref, watch} from "vue"
+import {computed, onBeforeUnmount, onMounted, ref, watch} from "vue"
+import QuickSettings from "./components/QuickSettings.vue"
 import {fetchServerMode, getToken} from "./api"
 import {useRoute, useRouter} from "vue-router"
 import {useDashboard} from "./dashboard"
@@ -10,13 +11,18 @@ import {rememberResumePath, takeResumePath} from "./router"
 const route = useRoute()
 const router = useRouter()
 const dashboard = useDashboard()
+const settingsContext = computed(() => {
+    if (route.name === "front" || route.name === "repo") return "containers"
+    if (route.name === "session" || route.name === "subagent") return "session"
+    return null
+})
 
 dashboard?.onUnauthorized(() => {
     takeResumePath()
     void router.push({name: "login"})
 })
 dashboard?.onSetupMode(() => {
-    rememberResumePath(route.fullPath)
+    rememberResumePath(route)
     void router.replace({name: "setup"})
 })
 
@@ -104,6 +110,7 @@ onBeforeUnmount(() => {
         <p role="alert">This page is out of date; reload.</p>
         <button type="button" @click="reload">Reload</button>
     </aside>
+    <QuickSettings :context="settingsContext" />
     <!-- Route-specific documents must reload and release their live follow on navigation. -->
     <router-view :key="route.path" />
 </template>

@@ -38,7 +38,7 @@ class _Request(QThread):
             )
             incus = Incus()
             full = lifecycle.resolve_container_name(cfg, incus, self.name)
-            self.pending = branch_pr.pending_source_manifests(cfg, incus, full)
+            self.pending = branch_pr.pending_source_manifests(cfg, incus, full, classify_own=True)
         except Exception:
             # The normal CLI remains responsible for reporting target failures.
             log.debug("Cannot read PR source proposals", exc_info=True)

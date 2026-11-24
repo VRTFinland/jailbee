@@ -4,8 +4,9 @@ Shared by the dashboard box and the standalone `jailbee outbox` app. It holds an
 `OutboxState` (from `jailbee.dashboard.outbox`) and turns intents into
 `jailbee outbox …` children through an injected `OutboxRunner`: off-thread
 quiet runs for local `ls`/`drop`, detached jobs for the plan, the publish and the
-clear (they take the lock and may call `gh`), and a terminal hand-off where a
-child must ask itself (a PR creation — `pr push` — and publishing over SSH).
+clear (they take the lock and may call `gh`). Dashboards inject `run_publish`
+for prompt-channel publications with retained output; the standalone manager
+uses terminal hand-offs for PR creations and interactive SSH publication.
 
 Publishing covers PR creations too: a proposal that awaits its PR (or a
 pinned source awaiting its push) is published by handing `jailbee pr push`
@@ -15,9 +16,9 @@ time, and the first that fails or is cancelled stops the rest.
 
 Safety rules kept here, not in the frontends:
 
-- every mutating child carries `--revision` from a listing read just before it,
-  and a proposal that changed since it was shown is left alone ("changed;
-  refreshed");
+- every mutating child carries `--revision` from the shown listing (or a fresh
+  listing after an earlier child drop changed its revision); the CLI refuses
+  a proposal that changed since it was shown;
 - `--foreign` is passed exactly when the plan said `foreign: true` and the
   warning was on screen; `--force` is never passed;
 - container-written plan text goes through `safe_text` before display.
@@ -207,7 +208,8 @@ def _fingerprint(proposal: dob.ProposalItem, key: dob.RowKey) -> tuple[object, .
     comment = next((c for c in action.comments if c.index == key[3]), None)
     if comment is None:
         return None
-    return ("comment", action.kind, comment.label, comment.text)
+    parent = (action.kind, action.title, action.body)
+    return ("comment", parent, comment.label, comment.text)
 
 
 def _action_print(action: dob.ActionItem) -> tuple[object, ...]:
@@ -273,7 +275,9 @@ def _unpublishable_reason(proposal: dob.ProposalItem) -> str | None:
     return None
 
 
-def _creation_lines(name: str, proposal: dob.ProposalItem) -> tuple[str, ...]:
+def _creation_lines(
+    name: str, proposal: dob.ProposalItem, *, dashboard: bool = False
+) -> tuple[str, ...]:
     """What the batch question says a PR creation does."""
     scope = proposal.create_scope or {}
     argv = dob.create_pr_argv(name, proposal.create_scope) or []
@@ -285,7 +289,9 @@ def _creation_lines(name: str, proposal: dob.ProposalItem) -> tuple[str, ...]:
         what = f"the branch of {_safe(name)}"
     return (
         f"pushes {what}, opens/updates its PR: jailbee {_safe(' '.join(argv))}",
-        "runs in the terminal; it may ask its own questions",
+        "runs in the dashboard; questions open as modals"
+        if dashboard
+        else "runs in the terminal; it may ask its own questions",
     )
 
 
@@ -367,8 +373,10 @@ class OutboxController:
         on_change: Callable[[dob.OutboxState], None],
         sent_loader: Callable[[], tuple[dob.SentItem, ...]] | None = None,
         sent_only: bool = False,
+        run_publish: Callable[[Sequence[str], Callable[[JobResult], None]], None] | None = None,
     ) -> None:
         self.runner = runner
+        self.run_publish = run_publish
         self.container = container
         self.standalone = standalone
         self.on_change = on_change
@@ -405,6 +413,17 @@ class OutboxController:
         # Marks carried over from an earlier box of this container, with the revision
         # each proposal had; checked against the first listing, then forgotten.
         self._restored_revisions: dict[str, str] | None = None
+        self._delete_queue: list[
+            tuple[frozenset[dob.RowKey], tuple[dob.ContainerListing, ...]]
+        ] = []
+        self._deleting: set[tuple[str, str]] = set()
+        self._delete_stale: set[tuple[str, str]] = set()
+        self._delete_running = False
+        self._delete_total = 0
+        self._delete_attempted = 0
+        self._delete_deleted = 0
+        self._delete_failed = 0
+        self._delete_status: list[str] = []
 
     def revisions(self) -> dict[str, str]:
         """Proposal id -> revision of the listing shown now (for `restore_marks`)."""
@@ -475,6 +494,7 @@ class OutboxController:
         *,
         cursor: dob.RowKey | None,
         status: tuple[str, ...],
+        refresh_metadata: bool = True,
     ) -> dob.OutboxState:
         keys = _keys_of(containers)
         candidates: list[dob.RowKey | None] = [cursor, self.state.cursor]
@@ -491,8 +511,10 @@ class OutboxController:
         # A marked proposal or action also covers the rows listed under it since.
         for key in [k for k in marks if k[3] is None]:
             marks |= _subtree(containers, key)
-        # Every proposals listing re-reads the Sent log too: a publish just added records.
-        sent_state = self._fresh_sent()
+        # Local row removals reuse metadata; only a real listing re-reads it.
+        if refresh_metadata:
+            self._delete_stale.clear()
+        sent_state = self._fresh_sent() if refresh_metadata else self.state
         # Nothing pending but records sent: open on the Sent tab, unless the user chose.
         empty = not any(c.proposals for c in containers)
         tab = "sent" if sent_state.sent and empty and not sent_state.tab_touched else sent_state.tab
@@ -504,7 +526,7 @@ class OutboxController:
             marks=frozenset(marks),
             cursor=chosen,
             status=status,
-            abilities=self._abilities(containers),
+            abilities=self._abilities(containers) if refresh_metadata else self.state.abilities,
         )
 
     def _fresh_sent(self) -> dob.OutboxState:
@@ -574,7 +596,14 @@ class OutboxController:
         """
         self.state = replace(self.state, busy=busy, question=None, status=())
         try:
-            self.runner.start(key, label, argv, done, on_progress=on_progress)
+            if (
+                self.run_publish is not None
+                and argv[:2] == ["outbox", "apply"]
+                and "--dry-run" not in argv
+            ):
+                self.run_publish(argv, done)
+            else:
+                self.runner.start(key, label, argv, done, on_progress=on_progress)
         except (OSError, ValueError) as exc:
             if chained:
                 self.state = replace(self.state, busy=None, status=())
@@ -694,8 +723,21 @@ class OutboxController:
         if key is not None and name not in ("answer", "cancel"):
             self.state = replace(self.state, cursor=key)
         key = key if key is not None else self.state.cursor
+        if self._delete_running and name in ("publish", "clear"):
+            selected = _covered(self.state.marks) or ({key} if key is not None else set())
+            conflicts = [k for k in selected if (k[0], k[1]) in self._deleting]
+            if name == "publish" and conflicts:
+                self._status(
+                    *(
+                        f"{_safe(k[1])}: already in the delete queue"
+                        for k in sorted(conflicts, key=str)
+                    )
+                )
+            else:
+                self._status(f"{name} must wait for the delete queue to finish")
+            return
         if self.state.busy and (
-            name in ("delete", "publish", "clear")
+            (name in ("delete", "publish", "clear") and not self._delete_running)
             or (name == "scope" and self.state.busy != _LOADING)
         ):
             self._status(f"busy: {self.state.busy}")
@@ -778,6 +820,21 @@ class OutboxController:
         if not keys:
             self._status("Nothing to delete.")
             return
+        conflicts = [k for k in keys if (k[0], k[1]) in self._deleting]
+        if conflicts:
+            self._status(
+                *(f"{_safe(k[1])}: already in the delete queue" for k in sorted(conflicts, key=str))
+            )
+            return
+        if any((k[0], k[1]) in self._delete_stale for k in keys):
+            self._status(
+                *(
+                    f"{_safe(k[1])}: refresh required after deletion"
+                    for k in sorted(keys, key=str)
+                    if (k[0], k[1]) in self._delete_stale
+                )
+            )
+            return
         refused = [(k, r) for k in sorted(keys, key=str) if (r := _block_reason(self.state, k))]
         if refused:
             self._status(*(f"{_safe(k[1])}: {_safe(r)}" for k, r in refused))
@@ -797,33 +854,143 @@ class OutboxController:
             )
         )
 
+    def _delete_busy(self) -> str:
+        progress = min(self._delete_attempted + 1, self._delete_total)
+        hint = "" if self.standalone else " · Esc leaves; deletion continues"
+        return f"Deleting {progress}/{self._delete_total}…{hint}"
+
     def _run_delete(self) -> None:
         pending, self._pending_delete = self._pending_delete, None
-        keys, shown = pending if pending is not None else (frozenset(), ())
+        if pending is None:
+            self._set(replace(self.state, question=None))
+            return
+        keys, shown = pending
+        self._delete_queue.append((keys, shown))
+        self._deleting.update((k[0], k[1]) for k in keys)
+        self._delete_total += len(keys)
+        # Consume only the confirmed marks; marks made while deleting belong to the user.
+        consumed = set().union(*(_subtree(shown, k) for k in keys)) if keys else set()
         self.state = replace(
-            self.state, busy=f"Deleting {len(keys)} from the outbox…", question=None, status=()
+            self.state, question=None, marks=self.state.marks - consumed, status=()
         )
-        marks = self.state.marks
+        if self._delete_running:
+            self._set(replace(self.state, busy=self._delete_busy()))
+            return
+        self._delete_running = True
         self.mutation_running = True
+        self._next_delete()
+
+    def _name_skipped_deletes(self) -> None:
+        proposals = sorted({(key[0], key[1]) for keys, _ in self._delete_queue for key in keys})
+        if proposals:
+            self._delete_status.append(
+                "not deleted: "
+                + ", ".join(f"{_safe(name)}/{_safe(pid)}" for name, pid in proposals)
+            )
+
+    def _next_delete(self) -> None:
+        if not self._delete_queue:
+            # Refresh requests during deletion coalesce into this one final listing.
+            self.state = replace(self.state, busy=self._delete_busy())
+
+            def listed(result: CliResult) -> None:
+                try:
+                    fetched = self._parse(result)
+                    if not isinstance(fetched, str):
+                        self.state = self._listed(fetched, cursor=None, status=())
+                    else:
+                        self._delete_status.append(fetched)
+                except Exception as exc:
+                    self._delete_status.append(f"could not refresh the outbox: {_safe(exc)}")
+                    self._delete_failed += max(
+                        0, self._delete_total - self._delete_deleted - self._delete_failed
+                    )
+                    self._name_skipped_deletes()
+                    self._delete_queue.clear()
+                # A confirmation may have queued more work while the final read ran.
+                if self._delete_queue:
+                    self._next_delete()
+                    return
+                if self._delete_status:
+                    details = "; ".join(self._delete_status)
+                    summary = (
+                        f"{self._delete_failed} not deleted ({details}); "
+                        f"deleted {self._delete_deleted}"
+                        if self._delete_failed
+                        else f"{details}; deleted {self._delete_deleted}"
+                    )
+                else:
+                    summary = f"Deleted {self._delete_deleted} from the outbox."
+                status = (summary,)
+                self._delete_running = False
+                self._deleting.clear()
+                self._delete_total = self._delete_attempted = 0
+                self._delete_deleted = self._delete_failed = 0
+                self._delete_status = []
+                self._set(replace(self.state, busy=None, status=status))
+                self.runner.changed()
+
+            self._quiet_later(self._ls_argv(), listed)
+            return
+        keys, shown = self._delete_queue.pop(0)
         steps = self._delete_steps(keys, shown)
 
         def advance(result: CliResult | None = None) -> None:
             try:
                 argv = next(steps) if result is None else steps.send(result)
             except StopIteration as finished:
-                self.state = replace(self.state, marks=self.state.marks - marks)
-                self._after_mutation(finished.value)
+                self._delete_status.extend(finished.value)
+                self._next_delete()
                 return
+            except Exception as exc:
+                self._delete_failed += max(
+                    0, self._delete_total - self._delete_deleted - self._delete_failed
+                )
+                remaining = ", ".join(_safe(pid) for _, pid in sorted(self._deleting))
+                self._delete_status.append(f"{remaining}: delete failed: {_safe(exc)}")
+                self._deleting.clear()
+                self._delete_queue.clear()
+                self._next_delete()
+                return
+            self.state = replace(self.state, busy=self._delete_busy())
             self._quiet_later(argv, advance)
 
         advance()
+
+    def _deleted_row(self, name: str, listed: dob.ProposalItem, key: dob.RowKey | None) -> None:
+        containers = []
+        for container in self.state.containers:
+            if container.name != name:
+                containers.append(container)
+                continue
+            proposals = []
+            for proposal in container.proposals:
+                if proposal.id != listed.id:
+                    proposals.append(proposal)
+                elif key is not None:
+                    actions = proposal.actions
+                    if key[3] is None:
+                        action = _action(listed, key[2] or 0)
+                        scope = action.delete_scope if action is not None else ()
+                        actions = tuple(a for a in actions if a.index not in (scope or (key[2],)))
+                    else:
+                        actions = tuple(
+                            replace(a, comments=tuple(c for c in a.comments if c.index != key[3]))
+                            if a.index == key[2]
+                            else a
+                            for a in actions
+                        )
+                    proposals.append(replace(proposal, actions=actions))
+            containers.append(replace(container, proposals=tuple(proposals)))
+        self.state = self._listed(
+            tuple(containers), cursor=None, status=self.state.status, refresh_metadata=False
+        )
 
     def _delete_steps(
         self, keys: frozenset[dob.RowKey], shown: tuple[dob.ContainerListing, ...]
     ) -> Generator[list[str], CliResult, tuple[str, ...]]:
         """Sequence checks and drops; runner completions resume this on the UI thread."""
         status: list[str] = []
-        deleted = 0
         groups: dict[tuple[str, str], list[dob.RowKey]] = {}
         for key in sorted(keys, key=str):
             groups.setdefault((key[0], key[1]), []).append(key)
@@ -832,13 +999,106 @@ class OutboxController:
             listed = _find(shown, name, pid)
             if listed is None:
                 status.append(f"{_safe(pid)}: {_CHANGED}")
+                self._delete_attempted += len(chosen)
+                self._delete_failed += len(chosen)
+                self._deleting.discard((name, pid))
                 continue
+            before = self._delete_attempted
             done, failure = yield from self._delete_proposal(name, listed, chosen)
-            deleted += done
+            if done and all(k[2] is not None for k in chosen):
+                # Child drops change the revision and shift indices. Refresh this
+                # proposal before releasing it for another confirmed delete.
+                fetched = self._parse((yield self._ls_argv()))
+                if isinstance(fetched, str):
+                    self._delete_stale.add((name, pid))
+                    self.state = replace(
+                        self.state,
+                        marks=frozenset(k for k in self.state.marks if k[:2] != (name, pid)),
+                    )
+                    status.append(fetched)
+                else:
+                    fresh = _find(fetched, name, pid)
+                    previous = _find(self.state.containers, name, pid)
+                    candidates = (
+                        _keys_of((dob.ContainerListing(name, None, (), (fresh,)),))
+                        if fresh is not None
+                        else set()
+                    )
+
+                    def matching(
+                        key: dob.RowKey,
+                        fresh: dob.ProposalItem | None = fresh,
+                        previous: dob.ProposalItem | None = previous,
+                        candidates: set[dob.RowKey] = candidates,
+                    ) -> list[dob.RowKey]:
+                        if fresh is None or previous is None:
+                            return []
+                        return [
+                            candidate
+                            for candidate in candidates
+                            if candidate[2] is not None
+                            and _fingerprint(fresh, candidate) == _fingerprint(previous, key)
+                        ]
+
+                    cursor = self.state.cursor
+                    if cursor is not None and cursor[:2] == (name, pid) and cursor[2] is not None:
+                        matches = matching(cursor)
+                        if len(matches) == 1:
+                            cursor = matches[0]
+                        else:
+                            old_cursor = cursor
+                            peers = [
+                                k
+                                for k in candidates
+                                if k[2] is not None and (k[3] is None) == (old_cursor[3] is None)
+                            ]
+                            cursor = (
+                                min(
+                                    peers,
+                                    key=lambda k: (
+                                        abs((k[2] or 0) - (old_cursor[2] or 0)),
+                                        abs((k[3] or 0) - (old_cursor[3] or 0)),
+                                        k[2] or 0,
+                                        k[3] or 0,
+                                    ),
+                                )
+                                if peers
+                                else (name, pid, None, None)
+                            )
+                    marks = set(self.state.marks)
+                    for marked in self.state.marks:
+                        if marked[:2] != (name, pid) or marked[2] is None:
+                            continue
+                        marks.discard(marked)
+                        if fresh is None or previous is None:
+                            continue
+                        matches = matching(marked)
+                        if len(matches) == 1:
+                            marks.add(matches[0])
+                    self.state = replace(self.state, marks=frozenset(marks))
+                    containers = tuple(
+                        replace(
+                            c,
+                            proposals=tuple(
+                                replacement
+                                for p in c.proposals
+                                if (replacement := fresh if p.id == pid else p) is not None
+                            ),
+                        )
+                        if c.name == name
+                        else c
+                        for c in self.state.containers
+                    )
+                    self.state = self._listed(
+                        containers, cursor=cursor, status=self.state.status, refresh_metadata=False
+                    )
+            self._deleting.discard((name, pid))
+            # Safety refusals skip this proposal's remaining children too: progress
+            # counts handled selections, not only successful CLI calls.
+            self._delete_attempted += len(chosen) - (self._delete_attempted - before)
             if failure is not None:
+                self._delete_failed += len(chosen) - done
                 status.append(f"{_safe(pid)}: {_safe(failure)}")
-        if deleted and not status:
-            status.append(f"Deleted {deleted} from the outbox.")
         return tuple(status)
 
     def _delete_proposal(
@@ -857,18 +1117,21 @@ class OutboxController:
         steps: list[dob.RowKey | None] = [None] if whole else list(children)
         done = 0
         for step, key in enumerate(steps):
-            fetched = self._parse((yield self._ls_argv()))
-            if isinstance(fetched, str):
-                return done, fetched
-            fresh = _find(fetched, name, listed.id)
-            if fresh is None:
-                return done, _CHANGED
-            if step == 0:
-                # Nothing is done to a proposal that changed since it was shown.
-                if fresh.revision != listed.revision:
+            fresh = listed
+            if step:
+                # Earlier child drops changed this proposal's revision and may shift
+                # indices. Re-read only these steps, preserving the shown scope.
+                fetched = self._parse((yield self._ls_argv()))
+                if isinstance(fetched, str):
+                    return done, fetched
+                current = _find(fetched, name, listed.id)
+                if current is None:
                     return done, _CHANGED
-            elif any(_fingerprint(fresh, k) != expected[k] for k in steps[step:] if k is not None):
-                return done, _CHANGED
+                fresh = current
+                if any(
+                    _fingerprint(fresh, k) != expected[k] for k in steps[step:] if k is not None
+                ):
+                    return done, _CHANGED
             if key is None:
                 # Archive consent is what the question showed, not a later listing's.
                 argv = dob.outbox_drop_argv(
@@ -891,9 +1154,12 @@ class OutboxController:
                     name, fresh.id, fresh.revision, action=key[2], comment=key[3]
                 )
             result = yield argv
+            self._delete_attempted += 1
             if not result.ok:
                 return done, result.message or "delete failed"
             done += 1
+            self._delete_deleted += 1
+            self._deleted_row(name, listed, key)
         return done, None
 
     # -- publish ------------------------------------------------------------
@@ -919,7 +1185,11 @@ class OutboxController:
             self._status(reason)
             return
         name, revision = container.name, proposal.revision
-        if self.state.abilities.publish:
+        if self.run_publish is not None and (
+            self.state.abilities.publish or self.state.abilities.publish_hand_off
+        ):
+            self._interactive_publish(dob.outbox_apply_argv(name, proposal.id, revision, yes=False))
+        elif self.state.abilities.publish:
             self._start(
                 "planning…",
                 f"outbox-plan:{name}:{proposal.id}",
@@ -933,6 +1203,33 @@ class OutboxController:
             self._after_mutation(() if rc is not None else ("outbox apply did not run",))
         else:
             self._status("publishing is not available here")
+
+    def _interactive_publish(
+        self, argv: Sequence[str], done: Callable[[JobResult], None] | None = None
+    ) -> None:
+        """Let the CLI ask through the dashboard, never duplicate or bypass its consent."""
+        assert self.run_publish is not None
+        self.mutation_running = True
+        self.state = replace(self.state, busy="publishing…", question=None, status=())
+
+        def finished(result: JobResult) -> None:
+            if done is not None:
+                done(result)
+            else:
+                self._after_mutation(
+                    _lines(result.stdout, result.stderr)
+                    or (
+                        "published"
+                        if result.returncode == 0
+                        else f"publication exited {result.returncode}",
+                    )
+                )
+
+        try:
+            self.run_publish(argv, finished)
+        except (OSError, ValueError) as exc:
+            finished(JobResult(1, str(exc)))
+        self.on_change(self.state)
 
     def _planned(self, name: str, pid: str, revision: str, result: JobResult) -> None:
         self.state = replace(self.state, busy=None)
@@ -1059,7 +1356,7 @@ class OutboxController:
         for name, proposal in creations:
             pid = _safe(proposal.id)
             lines.append(f"{_safe(name)}: {pid}" if many else pid)
-            lines.extend(_creation_lines(name, proposal))
+            lines.extend(_creation_lines(name, proposal, dashboard=self.run_publish is not None))
         if targets:
             lines.append(
                 "then, one by one, outbox apply for: "
@@ -1067,7 +1364,12 @@ class OutboxController:
                 + " (each asks under its own plan; PR creations run only if all succeed)"
             )
             # Creations run after the hand-offs, so a refusal there must stop them.
-            lines.insert(0, "manifests are handed to the terminal first")
+            lines.insert(
+                0,
+                "manifests publish first"
+                if self.run_publish is not None
+                else "manifests are handed to the terminal first",
+            )
         lines.extend(skipped)
         self._pending_skipped = tuple(skipped)
         self._pending_publish = targets
@@ -1100,6 +1402,45 @@ class OutboxController:
         creations: tuple[_Creation, ...],
     ) -> None:
         failed = False
+
+        def finish_batch() -> None:
+            marks = self._unmarked(targets)
+
+            def finish(created: tuple[_Creation, ...], lines: tuple[str, ...]) -> None:
+                self.state = replace(self.state, marks=marks - self._creation_keys(created))
+                self._after_mutation((*status, *lines))
+
+            if failed and creations:
+                status.append(
+                    "PR creations not run: " + ", ".join(_safe(p.id) for _, p in creations)
+                )
+                finish((), ())
+            else:
+                self._run_creations(creations, finish)
+
+        if self.run_publish is not None:
+
+            def advance(i: int) -> None:
+                nonlocal failed
+                if i == len(targets):
+                    finish_batch()
+                    return
+                name, pid, revision, _ = targets[i]
+
+                def finished(result: JobResult) -> None:
+                    nonlocal failed
+                    failed = failed or result.returncode != 0
+                    status.extend(
+                        f"{_safe(pid)}: {line}" for line in _lines(result.stdout, result.stderr)
+                    )
+                    advance(i + 1)
+
+                self._interactive_publish(
+                    dob.outbox_apply_argv(name, pid, revision, yes=False), finished
+                )
+
+            advance(0)
+            return
         for name, pid, revision, _ in targets:
             rc = self.runner.hand_off(dob.outbox_apply_argv(name, pid, revision, yes=False))
             if rc is None:
@@ -1108,17 +1449,7 @@ class OutboxController:
             elif rc != 0:
                 status.append(f"{_safe(pid)}: outbox apply exited {rc}")
                 failed = True
-        marks = self._unmarked(targets)
-
-        def finish(created: tuple[_Creation, ...], lines: tuple[str, ...]) -> None:
-            self.state = replace(self.state, marks=marks - self._creation_keys(created))
-            self._after_mutation((*status, *lines))
-
-        if failed and creations:
-            status.append("PR creations not run: " + ", ".join(_safe(p.id) for _, p in creations))
-            finish((), ())
-        else:
-            self._run_creations(creations, finish)
+        finish_batch()
 
     def _unmarked(self, targets: Iterable[_BatchTarget]) -> frozenset[dob.RowKey]:
         marks = set(self.state.marks)
@@ -1236,7 +1567,7 @@ class OutboxController:
         for name, proposal in creations:
             pid = _safe(proposal.id)
             lines.append(f"{_safe(name)}: {pid}" if many else pid)
-            lines.extend(_creation_lines(name, proposal))
+            lines.extend(_creation_lines(name, proposal, dashboard=self.run_publish is not None))
         lines.extend(excluded)
         choices: list[tuple[str, str]] = [("Publish", "publish")]
         if planned and all(plan.draftable for _, plan in planned):
@@ -1379,8 +1710,18 @@ class OutboxController:
                 done(False, False, (f"{_safe(name)}: creating a PR is not available here",))
                 return
             what = "source push" if listed.state == "awaiting-push" else "pr push"
-            if not self.shown():
+            if self.run_publish is None and not self.shown():
                 done(False, False, (f"{what} not run: outbox box closed",))
+                return
+            if self.run_publish is not None:
+
+                def published(result: JobResult) -> None:
+                    lines = _lines(result.stdout, result.stderr)
+                    if result.returncode and not lines:
+                        lines = (f"{what} exited {result.returncode}",)
+                    done(True, result.returncode == 0, lines)
+
+                self._interactive_publish(argv, published)
                 return
             rc, diagnostic = self.runner.hand_off_diagnostic(argv)
             lines = (

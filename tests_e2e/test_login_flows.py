@@ -14,7 +14,7 @@ from jailbee.web.auth_admin import add_totp_key, list_sessions, revoke_session
 from jailbee.web.login_link import mint
 from tests.web_fakes import FakeClock, snapshot_of
 from tests_e2e.browser_errors import BrowserErrors
-from tests_e2e.flows import DERIVED_DEVICE, log_in_with_pin
+from tests_e2e.flows import DERIVED_DEVICE, log_in_with_pin, open_settings
 from tests_e2e.server import E2EServer
 
 
@@ -151,7 +151,7 @@ def test_renaming_the_session_in_settings_updates_the_header_and_the_listing(
 ) -> None:
     log_in_with_pin(page, server.url, server.pin.current)
 
-    page.get_by_role("link", name="Settings").click()
+    open_settings(page)
     name = page.get_by_label("Name shown in the header")
     expect(name).to_have_value(re.compile(r"^Chrome on "))
     name.fill("reading room tablet")
@@ -206,7 +206,7 @@ def test_admin_revocation_closes_the_live_socket_and_returns_to_login(
     revoke_session(server.engine, session.id)
     server.push(snapshot_of())
 
-    page.wait_for_function("window.__e2eSocketCloseCodes.includes(4001)")
+    page.wait_for_function("() => window.__e2eSocketCloseCodes.includes(4001)")
     expect(page).to_have_url(server.url + "/#/login")
     expect(page.get_by_role("button", name="Log in", exact=True)).to_be_visible()
     expect(page.get_by_role("button", name="Log out")).to_have_count(0)

@@ -197,6 +197,17 @@ when the same image is published again. If PR creation has an uncertain outcome,
 inspect and reconcile it on the host before retrying; do not blindly repeat PR
 creation.
 
+**Default: your own branch's PR uses `jailbee pr description --new`.**
+Use `pr source` only for other refs, typically an imported child's branch.
+It refuses a SHA equal to your HEAD or a ref naming your HEAD branch; only
+`--allow-same-commit` deliberately keeps a separate, pinned PR head.
+A legacy source proposal matching the own branch is used by `jb pr push` and
+the dashboard's Open/Update PR without a duplicate source choice: the tip is
+pushed with the staged description and the container's normal PR binding.
+The outbox publish action follows that same path. A stale own-branch pin warns
+how many newer commits will be included; a merged child ref stays separate
+unless its SHA equals HEAD exactly.
+
 For imported branches, use `jailbee pr source --ref REF --sha SHA --base BASE
 --repo owner/name --title "..." --body-file PATH`; `--head` aliases `--ref`.
 For an existing PR, supply `--pr N`. A source manifest may include captured

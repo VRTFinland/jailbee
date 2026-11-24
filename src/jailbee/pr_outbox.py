@@ -1744,6 +1744,7 @@ def pending_pr_text(
     for_pr: int | None = None,
     numbered_only: bool = False,
     pick: Callable[[list[str]], str | None] | None = None,
+    source_manifest: str | None = None,
 ) -> OutboxPrText | None:
     """The pending `description` action, as a `PrText`, or None.
 
@@ -1802,8 +1803,16 @@ def pending_pr_text(
         except ManifestError as e:
             warn(f"Ignoring outbox manifest {name}: {e}")
             continue
-        if is_source_manifest(manifest):
+        if source_manifest is not None and name != source_manifest:
             continue
+        if is_source_manifest(manifest):
+            from jailbee.branch_pr import own_source_branch
+
+            if (
+                name != source_manifest
+                or own_source_branch(cfg, incus, container, manifest) is None
+            ):
+                continue
         if manifest.repo != slug:
             if known_slugs is None:
                 # Candidate discovery walks .gitmodules, so the common path —

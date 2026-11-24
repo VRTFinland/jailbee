@@ -28,7 +28,8 @@ work needs:
   no development environment (text, docs or skill wording) goes to a fresh
   subagent, or a forked copy of your own agent session where your agent has
   one (not a `fork` child container), when saving your context matters;
-  tiny edits can be done inline.
+  tiny text edits (docs, skill wording, tickets or plans) can be done inline,
+  never code, tests or config, however small.
   Delegation is the default for any reading or writing task larger than a few
   lookups: code surveys across many files, spec drafts, implementation plans,
   long write-ups and code reviews. Reading many files to anchor a plan burns
@@ -45,12 +46,19 @@ work needs:
   when they would otherwise collide with your own tree.
 - **Child containers** have their own checkout, branch, environment and
   long-running agent session. Use one when work benefits from its own
-  development environment: code changes with test suites, services, long
-  multi-step implementation or whole plans. Brief it with your findings and
-  acceptance tests. The child implements, tests and commits the plan itself; on `done`,
-  merge or stage its work.
+  development environment: all code, test and config changes, services, long
+  multi-step implementation or whole plans.
+  Small review findings and feature requests also go to a child; a cheap
+  runner is fine, and one child may group findings. Brief it with your
+  findings and acceptance tests. The child implements, tests and commits the
+  plan itself; on `done`, merge or stage its work.
 
-Beyond tiny light edits, do the work yourself only when it needs this
+The orchestrator's branch receives code changes only through
+merges of child work and their conflict resolutions. Apart from resolving
+those conflicts, make no direct code, test or config changes in the
+orchestrator's container, however small the work, unless the user explicitly
+asks you to.
+Beyond tiny text edits, do other work yourself only when it needs this
 container's own live environment or the user asks you to.
 
 When a skill or plan tells you to dispatch subagents, use them at the
@@ -156,6 +164,15 @@ sessions receive the managed JailBee inbox monitor; other agents and headless
 Claude sessions need the ordinary inbox waiter.
 
 ## Publishing your own staged manifests
+
+**Default: stage your own branch's PR with `jailbee pr description --new`.**
+`jailbee pr source` is the exception, only for other refs such as an imported
+child branch that you will publish separately rather than merge. It refuses
+your HEAD commit (even under another ref name) or your HEAD branch; use
+`--allow-same-commit` only to deliberately publish a separate pinned head.
+Legacy own-branch source proposals are consumed by the host's ordinary PR
+flow, pushing the tip with the staged description, not offered as a duplicate
+of "container branch". The PR menu and outbox publish use the same path.
 
 If the grant's `publish` rights cover every pending action, stage normally,
 then ask the host broker to publish your own outbox file:
@@ -670,7 +687,7 @@ jailbee inbox send message --to fix-issue-12 --reply-to h-3fa9c012 --text "Use t
    `import_error`, fix the cause and send `import --child C --wait` to retry.
    `on_done_reason` is not an error: the import succeeded, but the child was
    kept instead of destroyed for that reason.
-2. In the merged-fork workflow, `git merge <imported_ref>` (or cherry-pick) and resolve conflicts yourself. For one PR per child, stage the source manifest instead and do not merge.
+2. In the merged-fork workflow, `git merge <imported_ref>` and resolve conflicts yourself. For one PR per child, stage the source manifest instead and do not merge.
    Submodule commits are already local; run `git submodule update` after
    merging so the working trees match their gitlinks.
    Before reusing an imported `refs/jailbee/from/<child>/<branch>`, merge it

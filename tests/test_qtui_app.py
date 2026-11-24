@@ -1271,6 +1271,25 @@ def test_on_action_pr_source_choice_dispatches_or_cancels(mocker, tmp_path, sele
         assert action.launch == "terminal"
 
 
+def test_on_action_single_own_source_leaves_selection_to_command(mocker, tmp_path):
+    from jailbee.branch_pr import PendingSource
+
+    controller = _controller_with_group(mocker, tmp_path)
+    mocker.patch(
+        "jailbee.qtui.app.pending_pr_sources",
+        return_value=[PendingSource("own.json", "Own", "topic", "main", "topic")],
+    )
+    source_dialog = mocker.patch("jailbee.qtui.app.PrSourceDialog")
+    options_dialog = mocker.patch("jailbee.qtui.app.PrOptionsDialog")
+    spawn = mocker.patch.object(qapp.AppController, "_spawn", return_value=True)
+    controller.on_action("pr push", "p-foo")
+    source_dialog.assert_not_called()
+    options_dialog.assert_not_called()
+    action = spawn.call_args.args[0]
+    assert action.argv[:4] == ["jailbee", "pr", "push", "p-foo"]
+    assert "--source-manifest" not in action.argv
+
+
 @pytest.fixture(autouse=True)
 def _no_pending_pr_sources(mocker):
     mocker.patch("jailbee.qtui.app.pending_pr_sources", return_value=[])

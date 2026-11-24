@@ -1,7 +1,7 @@
 // Mirror of src/jailbee/web/protocol.py. Bump PROTOCOL_VERSION in both files
 // on any change either side could misread.
 
-export const PROTOCOL_VERSION = 5
+export const PROTOCOL_VERSION = 7
 
 export const CLOSE_UNAUTHORIZED = 4001
 export const CLOSE_PROTOCOL_MISMATCH = 4002
@@ -51,6 +51,8 @@ export interface ContainerRow {
     name: string
     indent: string
     agent: string | null
+    /** Age of a recently active idle session, independent of the compact cell width. */
+    agent_recent_idle?: string | null
     /** Incus state: "Running", "Stopped", ... */
     state: string
     /** Non-normal row phase from the dashboard core: booting, autostart, job, failed. */
@@ -72,11 +74,20 @@ export interface RepoRow {
     containers: ContainerRow[]
 }
 
+export type ContainerFilter = "all" | "running" | "active"
+
+export interface ContainerFilterRows {
+    visible: string[]
+    context: string[]
+    indents?: Record<string, string>
+}
+
 export interface FrontPageView {
     seq: number
     gathered_at: string
     columns: ColumnHead[]
     repos: RepoRow[]
+    filters?: Partial<Record<Exclude<ContainerFilter, "all">, ContainerFilterRows>>
 }
 
 export interface ServerHello {
@@ -145,6 +156,13 @@ export interface ContainerSessionList {
     container: string
     repo: string
     sessions: ContainerSession[]
+}
+
+/** One server-side page from `GET /api/containers/{name}/sessions/history`. */
+export interface ContainerSessionHistory extends ContainerSessionList {
+    total: number
+    limit: number
+    offset: number
 }
 
 // ---- a session's transcript (REST now; the WebSocket's live appends reuse RenderedEntry) ----

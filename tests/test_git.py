@@ -14,6 +14,76 @@ from jailbee.git import (
 )
 
 
+@pytest.mark.parametrize("branch", ["main", "(detached)"])
+@pytest.mark.parametrize(
+    "changes", ["", "1 .M N... 100644 100644 100644 a b src/file.py\n", "? new.py\n"]
+)
+def test_source_identity_one_bounded_lock_free_call(tmp_path, mocker, branch, changes):
+    run = mocker.patch(
+        "subprocess.run",
+        return_value=CompletedProcess(
+            [], 0, f"# branch.oid {'a' * 40}\n# branch.head {branch}\n{changes}", ""
+        ),
+    )
+    assert git.source_identity(tmp_path) == {"commit": "a" * 40, "dirty": bool(changes)}
+    run.assert_called_once()
+    assert run.call_args.args[0] == [
+        "git",
+        "--no-optional-locks",
+        "status",
+        "--porcelain=v2",
+        "--branch",
+        "--untracked-files=normal",
+    ]
+    assert run.call_args.kwargs["cwd"] == tmp_path
+    assert run.call_args.kwargs["timeout"] <= 1
+
+
+def test_source_identity_ignores_foreign_repository_environment(tmp_path, monkeypatch, mocker):
+    for name in (
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_INDEX_FILE",
+        "GIT_COMMON_DIR",
+        "GIT_OBJECT_DIRECTORY",
+    ):
+        monkeypatch.setenv(name, "/foreign")
+    monkeypatch.setenv("PATH", "/bin")
+    run = mocker.patch(
+        "subprocess.run", return_value=CompletedProcess([], 0, "# branch.oid " + "a" * 40, "")
+    )
+    assert git.source_identity(tmp_path) == {"commit": "a" * 40, "dirty": False}
+    env = run.call_args.kwargs["env"]
+    assert env["PATH"] == "/bin"
+    assert not any(
+        name in env
+        for name in (
+            "GIT_DIR",
+            "GIT_WORK_TREE",
+            "GIT_INDEX_FILE",
+            "GIT_COMMON_DIR",
+            "GIT_OBJECT_DIRECTORY",
+        )
+    )
+
+
+@pytest.mark.parametrize(
+    "failure", [FileNotFoundError(), subprocess.TimeoutExpired("git", 1), OSError(), UnicodeError()]
+)
+def test_source_identity_git_failure_returns_none(tmp_path, mocker, failure):
+    mocker.patch("subprocess.run", side_effect=failure)
+    assert git.source_identity(tmp_path) is None
+
+
+@pytest.mark.parametrize(
+    "output,returncode",
+    [("fatal", 128), ("# branch.oid (initial)\n", 0), ("# branch.oid invalid\n", 0)],
+)
+def test_source_identity_unavailable_commit_returns_none(tmp_path, mocker, output, returncode):
+    mocker.patch("subprocess.run", return_value=CompletedProcess([], returncode, output, ""))
+    assert git.source_identity(tmp_path) is None
+
+
 def test_delete_ref_checked_reports_failure(mocker, tmp_path):
     run = mocker.patch(
         "jailbee.git.subprocess.run",

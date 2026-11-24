@@ -1,5 +1,8 @@
 import {mount} from "@vue/test-utils"
-import {describe, expect, it} from "vitest"
+import {defineComponent} from "vue"
+import QuickSettings from "./QuickSettings.vue"
+import {beforeEach, describe, expect, it} from "vitest"
+import {reloadSettings} from "../settings"
 import {createMemoryHistory} from "vue-router"
 import {createAppRouter} from "../router"
 import type {FrontPageView} from "../protocol"
@@ -27,10 +30,77 @@ const view: FrontPageView = {
 }
 
 function mountList() {
-    return mount(RepoList, {props: {view}, global: {plugins: [createAppRouter(createMemoryHistory())]}})
+    return mount(defineComponent({
+        components: {QuickSettings, RepoList}, props: ["view", "listedContainers"],
+        template: '<QuickSettings context="containers" /><RepoList :view="view" :listed-containers="listedContainers" />',
+    }), {props: {view}, global: {plugins: [createAppRouter(createMemoryHistory())]}})
 }
 
 describe("RepoList", () => {
+    beforeEach(() => reloadSettings())
+
+    it("switches persisted filters, dims context, hides empty repos and follows live membership", async () => {
+        const wrapper = mountList()
+        const parent = {...view.repos[0].containers[0], agent: null, state: "Stopped"}
+        const child = {...view.repos[0].containers[1], depth: 1, state: "Running", agent: "busy"}
+        const filteredView = {...view, repos: [{prefix: "alpha", containers: [parent, child]}, view.repos[1]],
+            filters: {running: {visible: [child.name, parent.name], context: [parent.name]},
+                active: {visible: [child.name, parent.name], context: [parent.name]}}}
+        await wrapper.setProps({view: filteredView})
+        await wrapper.get('button[aria-label="Quick settings"]').trigger("click")
+        await wrapper.get('button[aria-label="Active"]').trigger("click")
+        expect(wrapper.get('button[aria-label="Active"]').attributes("aria-pressed")).toBe("true")
+        expect(wrapper.findAll("section.repo")).toHaveLength(1)
+        expect(wrapper.findAll("li.row")[0].classes()).toContain("filter-context")
+        expect(wrapper.findAll("li.row")[1].classes()).toContain("nested")
+        expect(localStorage.getItem("jailbee.containerFilter")).toBe("active")
+        await wrapper.setProps({view: {...filteredView, filters: {...filteredView.filters,
+            active: {visible: [], context: []}}}})
+        expect(wrapper.findAll("li.row")).toHaveLength(0)
+        expect(wrapper.get('.filter-notice').text()).toBe("Showing: Active · show all")
+        expect(wrapper.find('.filters').exists()).toBe(false)
+        expect(wrapper.find('.filter-marker').exists()).toBe(true)
+        await wrapper.get('button[aria-label="Running"]').trigger("click")
+        expect(wrapper.findAll("li.row")).toHaveLength(2)
+        await wrapper.get('button[aria-label="All"]').trigger("click")
+        expect(wrapper.findAll("section.repo")).toHaveLength(2)
+        expect(wrapper.find(".filter-context").exists()).toBe(false)
+        expect(wrapper.find(".filter-notice").exists()).toBe(false)
+        expect(wrapper.find(".filter-marker").exists()).toBe(false)
+    })
+
+    it("uses the filtered tree layout for the only visible sibling", async () => {
+        const wrapper = mountList()
+        const parent = view.repos[0].containers[0]
+        const children = ["a", "b", "c"].map(suffix => ({...view.repos[0].containers[1],
+            name: `alpha-${suffix}`, indent: suffix === "c" ? "└ " : "├ ", depth: 1,
+            child: {orchestrator: parent.name, orchestrator_short_name: "1", state: "working", runner: null}}))
+        await wrapper.setProps({view: {...view, repos: [{prefix: "alpha", containers: [parent, ...children]}],
+            filters: {active: {visible: [parent.name, "alpha-b"], context: [parent.name],
+                indents: {[parent.name]: "", "alpha-b": "└ "}}}}})
+        await wrapper.get('button[aria-label="Quick settings"]').trigger("click")
+        await wrapper.get('button[aria-label="Active"]').trigger("click")
+        expect(wrapper.get('[data-container="alpha-b"] .indent').element.textContent).toBe("└ ")
+        await wrapper.get('button[aria-label="All"]').trigger("click")
+        expect(wrapper.get('[data-container="alpha-b"] .indent').element.textContent).toBe("├ ")
+    })
+
+    it("explains recent-idle membership with a highlighted age", async () => {
+        const wrapper = mountList()
+        const fresh = {...view.repos[0].containers[0], agent: "idle", agent_recent_idle: "5m"}
+        await wrapper.setProps({view: {...view, repos: [{prefix: "alpha", containers: [fresh]}]}})
+        expect(wrapper.get(".agent").text()).toBe("idle 5m")
+        expect(wrapper.get(".agent").classes()).toContain("agent-recent-idle")
+    })
+
+    it("keeps recent-idle emphasis beside a more urgent session", async () => {
+        const wrapper = mountList()
+        const waiting = {...view.repos[0].containers[0], agent_recent_idle: "5m"}
+        await wrapper.setProps({view: {...view, repos: [{prefix: "alpha", containers: [waiting]}]}})
+        expect(wrapper.findAll(".agent").map(badge => badge.text())).toEqual(["waiting for you", "idle 5m"])
+        expect(wrapper.get(".agent-recent-idle").text()).toBe("idle 5m")
+    })
+
     it("visibly nests children and shows orchestration facts without colour", async () => {
         const wrapper = mountList()
         const parent = {...view.repos[0].containers[0], orchestrator: true, child_count: 2}

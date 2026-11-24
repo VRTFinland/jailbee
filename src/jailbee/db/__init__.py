@@ -28,7 +28,7 @@ from jailbee.db.models import SchemaMeta
 
 log = logging.getLogger(__name__)
 
-CURRENT_SCHEMA_VERSION = 29
+CURRENT_SCHEMA_VERSION = 30
 
 
 def state_dir() -> Path:
@@ -352,6 +352,13 @@ def _migrate_to_v28(conn: Connection) -> None:
     return None
 
 
+def _migrate_to_v30(conn: Connection) -> None:
+    """v29 -> v30 adds the orchestrator reference to background create jobs."""
+    cols = {row[1] for row in conn.exec_driver_sql("PRAGMA table_info(background_op)")}
+    if "spawned_by" not in cols:
+        conn.exec_driver_sql("ALTER TABLE background_op ADD COLUMN spawned_by VARCHAR")
+
+
 def _migrate_to_v29(conn: Connection) -> None:
     """v28 -> v29 adds `session_info_cache.cwd` and `.git_branch`.
 
@@ -395,6 +402,7 @@ _MIGRATIONS: dict[int, Callable[[Connection], None]] = {
     27: _migrate_to_v27,
     28: _migrate_to_v28,
     29: _migrate_to_v29,
+    30: _migrate_to_v30,
 }
 
 

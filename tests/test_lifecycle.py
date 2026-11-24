@@ -7668,7 +7668,16 @@ def test_list_containers_synthesises_row_for_container_less_op(make_cfg, tmp_pat
     repo.mkdir()
     cfg = make_cfg(repo)
     incus = MagicMock()
-    incus.list_containers.return_value = []
+    parent_name = f"{cfg.container_prefix}-orchestrator"
+    incus.list_containers.return_value = [
+        {
+            "name": parent_name,
+            "status": "Running",
+            "profiles": ["default", f"{cfg.container_prefix}-base"],
+            "config": {},
+            "state": None,
+        }
+    ]
 
     from datetime import UTC, datetime
 
@@ -7685,14 +7694,42 @@ def test_list_containers_synthesises_row_for_container_less_op(make_cfg, tmp_pat
             branch="feat/pre",
             pid=4242,
             log_path="/l",
-            now=datetime.now(UTC),
+            now=datetime(2020, 1, 1, tzinfo=UTC),
+            spawned_by=parent_name,
         )
 
     out = list_containers(cfg, incus, with_background=True)
-    assert len(out) == 1
-    assert out[0].name == f"{cfg.container_prefix}-feat-pre"
-    assert out[0].state == "—"
-    assert out[0].job_phase == "starting"
+    assert [c.name for c in out] == [parent_name, f"{cfg.container_prefix}-feat-pre"]
+    placeholder = out[1]
+    assert placeholder.state == "—"
+    assert placeholder.job_phase == "starting"
+    assert placeholder.child is not None
+    from jailbee.dashboard.fork_tree import FORK_GLYPH, fork_layout, name_prefix
+
+    assert name_prefix(fork_layout(out), placeholder.name) == FORK_GLYPH
+    incus.list_containers.return_value.append(
+        {
+            "name": placeholder.name,
+            "status": "Running",
+            "profiles": ["default", f"{cfg.container_prefix}-base"],
+            "config": {"user.jailbee.spawned_by": parent_name},
+            "state": None,
+            "created_at": "2026-11-24T12:00:00Z",
+        }
+    )
+    appeared = list_containers(cfg, incus, with_background=True)
+    child = next(c for c in appeared if c.name == placeholder.name)
+    assert child.child is not None
+    assert child.created_at == datetime(2026, 11, 24, 12, 0, tzinfo=UTC)
+    assert name_prefix(fork_layout(appeared), child.name) == FORK_GLYPH
+
+    with Session(get_engine()) as s:
+        s.delete(s.get(background.BackgroundJob, placeholder.name))
+        s.commit()
+
+    without_job = list_containers(cfg, incus, with_background=True)
+    child_without_job = next(c for c in without_job if c.name == placeholder.name)
+    assert child_without_job.created_at == child.created_at
 
 
 def test_list_containers_attaches_job_error_to_existing(make_cfg, tmp_path, monkeypatch):
@@ -8655,6 +8692,7 @@ def test_submodule_sub_rows_formats_changed_submodules():
     assert rows[0]["wt"] == "clean"
     assert rows[1]["name"] == "  └ vendor/bar"
     assert rows[1]["wt"] == "+3 -0"
+    assert "[dim]clean[/dim]" in rows[1]["sync"]
 
 
 def test_submodule_sub_rows_empty_when_no_status():
@@ -11200,7 +11238,7 @@ def test_agent_compact_cell_orders_sessions_across_agents_by_urgency():
     assert _plain(agent_compact_cell((claude, codex), _AGENT_NOW)) == "● 5s ○ 2m ○"
 
 
-def test_agent_compact_cell_age_is_the_sessions_own_not_the_agents_event_age():
+def test_agent_compact_cell_attributes_event_age_to_matching_state_session():
     from jailbee.accounts.models import AgentActivity
     from jailbee.lifecycle import agent_compact_cell
 
@@ -11213,7 +11251,32 @@ def test_agent_compact_cell_age_is_the_sessions_own_not_the_agents_event_age():
     )
     a = _agent_marks("waiting", [("waiting", own), ("busy", None)], since=own, activity=activity)
 
-    assert _plain(agent_compact_cell((a,), _AGENT_NOW, activity_age=True)) == "◆ 4m ●"
+    assert _plain(agent_compact_cell((a,), _AGENT_NOW, activity_age=True)) == "◆ 4m ● 3s"
+
+
+def test_agent_compact_cell_attributes_event_age_to_first_matching_state_session():
+    from jailbee.accounts.models import AgentActivity
+    from jailbee.lifecycle import agent_compact_cell
+
+    event = _AGENT_NOW - timedelta(seconds=3)
+    activity = AgentActivity(
+        last_tool=None,
+        last_message=None,
+        state="busy",
+        last_event_at=event,
+    )
+    a = _agent_marks(
+        "waiting",
+        [
+            ("waiting", _AGENT_NOW - timedelta(minutes=4)),
+            ("busy", _AGENT_NOW - timedelta(minutes=2)),
+            ("busy", _AGENT_NOW - timedelta(minutes=1)),
+        ],
+        since=_AGENT_NOW - timedelta(minutes=4),
+        activity=activity,
+    )
+
+    assert _plain(agent_compact_cell((a,), _AGENT_NOW, activity_age=True)) == "◆ 4m ● 3s ●"
 
 
 def test_agent_compact_cell_narrow_tier_counts_cells_not_characters():
@@ -11927,6 +11990,23 @@ def test_agent_compact_cell_brightens_a_recent_idle_only_when_asked():
     bright = agent_compact_cell(fresh, _AGENT_NOW, recent_idle=timedelta(minutes=30))
     assert bright == "[bold bright_white]○ 29m[/bold bright_white]"
     assert Text.from_markup(bright).plain == "○ 29m"  # valid markup, closes cleanly
+
+
+@pytest.mark.parametrize("max_cells", [None, 5, 1])
+def test_agent_compact_cell_preserves_recent_idle_emphasis_at_every_width(max_cells):
+    from jailbee.lifecycle import agent_compact_cell, agent_compact_is_active
+
+    fresh = (_agent("idle", since=_AGENT_NOW - timedelta(minutes=5)),)
+    cell = agent_compact_cell(
+        fresh,
+        _AGENT_NOW,
+        recent_idle=timedelta(minutes=30),
+        recent_idle_style="bold",
+        activity_age=True,
+        max_cells=max_cells,
+    )
+    assert "[bold]" in cell
+    assert agent_compact_is_active(fresh, _AGENT_NOW, recent_idle=timedelta(minutes=30))
 
 
 def _aliased(name, alias, profiles=None):
@@ -12884,6 +12964,21 @@ def test_sync_columns_carry_a_pr_marker_only_for_a_pr_head_target():
     assert "[dim]pr[/dim]" in specs["sync"].cell(pr)
     # JSON stays the bare value; the target is in the git_status payload.
     assert specs["ahead_count"].json(pr) == "2"
+
+
+def test_sync_cell_dims_a_clean_diff():
+    from jailbee.host_target import SyncTarget
+    from jailbee.lifecycle import ls_field_specs
+
+    specs = {f.name: f for f in ls_field_specs(now=_NOW)}
+    container = _ci_with_status(
+        target_diff="clean",
+        ahead_count="0",
+        behind_count="0",
+        sync_target=SyncTarget("pr", "PR #7", "p" * 40, "refs/jailbee/pr/7/head"),
+    )
+
+    assert "[dim]clean[/dim]" in specs["sync"].cell(container)
 
 
 def test_sync_columns_mark_a_pr_container_that_fell_back_to_the_host_branch():

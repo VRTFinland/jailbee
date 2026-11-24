@@ -195,7 +195,27 @@ def run_pr_push(
 
     from jailbee import branch_pr, prompting
 
-    def publish_source(manifest: str) -> None:
+    selected_own: str | None = None
+    selected_actionless = False
+    selected_base: str | None = None
+    selected_source = None
+
+    def publish_source(manifest: str) -> bool:
+        nonlocal selected_own, selected_actionless, selected_base, selected_source, branch
+        from jailbee.outbox.service import instance_identity
+        from jailbee.tui import warn_plain
+
+        _, uuid = instance_identity(incus, full)
+        source = branch_pr.stored_source(uuid, manifest)
+        own = branch_pr.own_source_branch(cfg, incus, full, source.manifest) if source else None
+        if own is not None and source is not None:
+            selected_own, branch = manifest, own[0]
+            selected_actionless = not source.manifest.actions
+            selected_base = source.manifest.base
+            selected_source = source
+            if own[1]:
+                warn_plain(f"{manifest}: {own[1]} newer commits; pushing the tip of {branch}")
+            return False
         result = branch_pr.publish_source_manifest(
             cfg,
             incus,
@@ -208,13 +228,31 @@ def run_pr_push(
         )
         if result:
             raise typer.Exit(result)
+        return True
 
-    if source_manifest is not None:
-        publish_source(source_manifest)
+    if source_manifest is not None and publish_source(source_manifest):
         return
 
     short = short_name(cfg, full)
-    pending = branch_pr.pending_source_manifests(cfg, incus, full)
+    pending = (
+        []
+        if source_manifest is not None
+        else branch_pr.pending_source_manifests(cfg, incus, full, classify_own=True)
+    )
+    if (
+        len(pending) == 1
+        and pending[0].own_branch
+        and not no_outbox
+        and branch is None
+        and pr_number is None
+        and as_name is None
+        and not stacked
+        and title is None
+        and body is None
+    ):
+        if publish_source(pending[0].manifest):
+            return
+        pending = []
     if pending:
         own_options = any(
             (
@@ -237,8 +275,7 @@ def run_pr_push(
         )
         if not own_options and prompting.is_interactive():
             picked = branch_pr.choose_pr_source(pending, own_label="container branch")
-            if picked is not None:
-                publish_source(picked)
+            if picked is not None and publish_source(picked):
                 return
         else:
             from rich.text import Text
@@ -248,6 +285,14 @@ def run_pr_push(
             hint_console.print(
                 Text(branch_pr.pending_sources_note(pending, short)), highlight=False
             )
+            from jailbee.tui import warn_plain
+
+            for proposal in pending:
+                if proposal.own_branch:
+                    warn_plain(
+                        f"{proposal.manifest}: own-branch proposal not used for this PR",
+                        stderr=True,
+                    )
     scope = pr_flow.PrScope.for_repo(cfg)
     pr_flow.assert_pr_inheritance_complete(incus, full)
     state = pr_flow.ContainerLabelState(incus, full, short=short)
@@ -383,6 +428,23 @@ def run_pr_push(
         stored_pr_branch = record.head
         pr_label = str(record.number) if record.number is not None else None
 
+    if selected_actionless and selected_source is not None:
+        from jailbee import pr_outbox
+
+        slug = pr_outbox.scope_slug(scope)
+        if slug is None or slug.casefold() != selected_source.manifest.repo.casefold():
+            error(
+                f"{selected_own}: proposal targets {selected_source.manifest.repo}, "
+                f"not {slug or 'a configured GitHub repository'}"
+            )
+            raise typer.Exit(2)
+        if pr_label != str(selected_source.manifest.pr):
+            error(
+                f"{selected_own}: source targets PR #{selected_source.manifest.pr}, "
+                "not the container's PR; bind that PR first"
+            )
+            raise typer.Exit(2)
+
     # A container whose PR jailbee did not create (`jailbee new --pr`, or a PR
     # adopted by number or by branch name). Three things follow: --force needs
     # its own confirmation (it rewrites a branch the PR author may own), the
@@ -404,6 +466,15 @@ def run_pr_push(
         )
         raise typer.Exit(1)
 
+    if selected_base is not None and selected_base != resolved_base:
+        from jailbee.tui import warn_plain
+
+        warn_plain(
+            f"{selected_own}: proposed base '{selected_base}' differs from resolved base "
+            f"'{resolved_base}'; using '{resolved_base}'",
+            stderr=True,
+        )
+
     from jailbee import pr_ai, pr_links, pr_submodule_flow, prompting
 
     ai_on = pr_ai.ai_description_on(cfg, no_ai=no_ai)
@@ -412,9 +483,61 @@ def run_pr_push(
 
     management = PrManagement()
     try:
-        with pr_flow.outbox_publication_guard(
-            cfg, incus, full, enabled=not no_outbox, management=management
-        ):
+        import time
+        from contextlib import ExitStack
+
+        with ExitStack() as stack:
+            stack.enter_context(
+                pr_flow.outbox_publication_guard(
+                    cfg, incus, full, enabled=not no_outbox, management=management
+                )
+            )
+            source_store = None
+            source_claim = None
+            if selected_actionless and selected_source is not None:
+                from jailbee.outbox import publication_db
+                from jailbee.outbox.models import OutboxChanged
+
+                source_store = publication_db.open_publications()
+                source_claim = stack.enter_context(
+                    source_store.claim(selected_source.uuid, "pr", selected_source.name)
+                )
+                if (
+                    source_store.stored_digest(selected_source.uuid, "pr", selected_source.name)
+                    != selected_source.digest
+                ):
+                    raise OutboxChanged(f"{selected_source.name}: proposal changed")
+                journal = source_store.begin(
+                    source_claim,
+                    digest=selected_source.digest,
+                    action_count=1,
+                    container_full=full,
+                    now=time.time(),
+                )
+                if journal.actions:
+                    raise OutboxChanged(
+                        f"{selected_source.name}: publication already recorded or uncertain"
+                    )
+            own_text = None
+            if selected_own is not None and not selected_actionless:
+                from jailbee import pr_outbox
+                from jailbee.outbox.models import OutboxChanged
+
+                own_text = pr_outbox.pending_pr_text(
+                    cfg,
+                    incus,
+                    full,
+                    scope=scope,
+                    source_branch=container_branch,
+                    uid=cfg.container_user.uid,
+                    for_pr=int(pr_label) if pr_label is not None else None,
+                    numbered_only=is_foreign_pr_head,
+                    source_manifest=selected_own,
+                )
+                if own_text is None:
+                    raise OutboxChanged(
+                        f"{selected_own}: staged description unavailable for this PR"
+                    )
             plan = pr_flow.resolve_pr_text_and_head(
                 cfg,
                 incus,
@@ -430,7 +553,8 @@ def run_pr_push(
                 no_ai=no_ai,
                 consent=consent,
                 status_label=f"Generating PR title/description with Claude in '{short}'…",
-                use_outbox=not no_outbox,
+                use_outbox=not no_outbox and not selected_actionless,
+                **({"outbox_hint": own_text} if own_text is not None else {}),
             )
             pr_flow.bind_outbox_source(management, plan.outbox_source)
             publish_name, ai_text = plan.publish_name, plan.ai_text
@@ -490,6 +614,16 @@ def run_pr_push(
             # --- Publish (fetch + push under the chosen name) ---
             # On a foreign PR head the generic push-failure hint's "--as" advice does
             # not apply, so `is_foreign_pr_head` (resolved above) tailors it.
+            if (
+                source_store is not None
+                and source_claim is not None
+                and selected_source is not None
+            ):
+                if (
+                    source_store.stored_digest(selected_source.uuid, "pr", selected_source.name)
+                    != selected_source.digest
+                ):
+                    raise OutboxChanged(f"{selected_source.name}: proposal changed")
             try:
                 publish = sync.publish_branch_from_container(
                     cfg,
@@ -577,6 +711,18 @@ def run_pr_push(
                 explicit_body=body is not None or is_update_path,
                 confirm=lambda question: prompting.ask_confirm(question, default=False),
             )
+            if (
+                source_store is not None
+                and source_claim is not None
+                and selected_source is not None
+            ):
+                source_store.mark_prepared(
+                    source_claim,
+                    selected_source.digest,
+                    0,
+                    repo=selected_source.manifest.repo,
+                    now=time.time(),
+                )
             try:
                 created = pr_flow.create_or_view_pr(
                     scope,
@@ -593,6 +739,15 @@ def run_pr_push(
                     record_context=f"failed to record the PR label on '{short}'",
                 )
             except pr_mod.PrError as exc:
+                if (
+                    source_store is not None
+                    and source_claim is not None
+                    and selected_source is not None
+                    and is_update_path
+                ):
+                    # Action-less sources require the matching bound PR, so this
+                    # path only looks it up; it cannot have created another PR.
+                    source_store.clear_prepared(source_claim, selected_source.digest, 0)
                 error(str(exc))
                 raise typer.Exit(1) from exc
 
@@ -616,7 +771,12 @@ def run_pr_push(
                     generated_text=plan.ai_text,
                     foreign_head=is_foreign_pr_head,
                     url=created.url,
-                    use_outbox=not no_outbox,
+                    use_outbox=not no_outbox and not selected_actionless,
+                    **(
+                        {"strict_description": True}
+                        if selected_own is not None and not selected_actionless
+                        else {}
+                    ),
                     # What the create path already resolved this run, when `gh pr
                     # create` turned out to find an existing PR. Passing it forward is
                     # what keeps the "which pending description?" question to one
@@ -642,6 +802,21 @@ def run_pr_push(
                 # outbox lookup (against the PR's real number) and recorded whatever it
                 # consumed. Recording here as well would burn the action twice.
                 pr_flow.record_outbox_consumption(cfg, incus, full, plan.outbox_source, created.url)
+            if (
+                source_store is not None
+                and source_claim is not None
+                and selected_source is not None
+            ):
+                source_store.settle(
+                    source_claim,
+                    selected_source.digest,
+                    0,
+                    outcome="applied",
+                    url=created.url,
+                    issue=created.number,
+                    sent=None,
+                    now=time.time(),
+                )
             if is_stacked_create and review_target is not None:
                 info(
                     f"PR #{created.number} is stacked on PR #{review_target.parent_number} "
@@ -657,6 +832,29 @@ def run_pr_push(
                     f"ignored. To move the base later: jailbee git retarget {short} <branch>"
                 )
             pr_links.link_pr_family(cfg, incus, full, short)
+            # SYNC reads this cached PR head ref; the successful push is already
+            # authoritative for a same-repository head we just published.
+            if not is_foreign_pr_head and (
+                stored_pr_branch is None or publish.publish_name == stored_pr_branch
+            ):
+                head_ref = pr_mod.pr_head_ref(created.number)
+                cached_sha = git_mod.rev_parse(cfg.repo_root, head_ref)
+                # A force-push may replace a divergent cached head, so ancestry
+                # is not a safe freshness test. Compare-and-swap avoids overwriting
+                # an autofetch that changes the ref after this read.
+                if (
+                    not git_mod.update_ref(
+                        cfg.repo_root,
+                        head_ref,
+                        publish.fetch.new_oid,
+                        old_oid=cached_sha or "",
+                    )
+                    and git_mod.rev_parse(cfg.repo_root, head_ref) != publish.fetch.new_oid
+                ):
+                    warn(
+                        f"PR #{created.number} was published, but JailBee could not refresh "
+                        "the cached PR head; SYNC may be stale until the next head fetch."
+                    )
             # The offer to publish what else the container wrote, deliberately *not*
             # adjacent to `render_pr_outcome`: the description this run consumed is
             # recorded just above (here on the create path, inside `apply_pr_updates`
@@ -676,7 +874,9 @@ def run_pr_push(
                 # that the comments did not follow it or a submodule PR failed.
                 raise typer.Exit(1)
     except OutboxError as exc:
-        error(str(exc))
+        from jailbee.tui import error_plain
+
+        error_plain(str(exc))
         raise typer.Exit(1) from exc
 
 

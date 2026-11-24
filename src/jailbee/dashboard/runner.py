@@ -69,6 +69,8 @@ class RunResult:
     status: int | None = None
     refused: str | None = None
     error: str | None = None
+    cancelled: bool = False  # the UI cancelled a prompt, not the answer "no"
+    declined: bool = False  # a confirmation was answered "no"
 
     @property
     def ok(self) -> bool:
@@ -277,8 +279,11 @@ def run_actions(
 
             try:
                 result = runner_fn(item.argv, cwd=item.cwd, on_output=sink, **run_common)
-            finally:
-                outputs.append(own.text())
+            except Exception as exc:
+                result = RunResult(error=str(exc))
+            if result.error is not None:
+                sink(f"\n{result.error}\n")
+            outputs.append(own.text())
             results.append(result)
             if result.error is not None or result.refused is not None:
                 break
@@ -372,8 +377,18 @@ def run_action(
     reader = threading.Thread(target=_pump, args=(child, on_output), daemon=True)
     reader.start()
     ui = UiEnd(ui_sock)
+    cancelled = False
+    declined = False
+
+    def ask(prompt: Prompt) -> Any:
+        nonlocal cancelled, declined
+        answer = on_prompt(prompt)
+        cancelled |= answer is None
+        declined |= prompt.kind == "confirm" and answer is False
+        return answer
+
     try:
-        ui.serve(on_prompt)
+        ui.serve(ask)
     except BaseException:
         child.kill()
         child.wait()
@@ -385,7 +400,7 @@ def run_action(
     status = child.wait()
     reader.join()
     record(f"exit:{status}")
-    return RunResult(status=status)
+    return RunResult(status=status, cancelled=cancelled, declined=declined)
 
 
 def _pump(child: ChildProcess, on_output: OutputSink) -> None:

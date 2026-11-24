@@ -12,6 +12,8 @@ export interface Pager {
     pageCount: ComputedRef<number>
     next(): void
     prev(): void
+    /** Jump to the last page that contains transcript content. */
+    end(): void
     /** Start a page at `el`, continuing page turns from that anchor. */
     goToElement(el: Element): void
     /** Re-measure after the content changed. */
@@ -122,6 +124,11 @@ export function usePager(
         prev: () => {
             measure()
             goTo(page.value - 1)
+        },
+        end: () => {
+            measure()
+            anchorStop.value = 0
+            goTo(pageCount.value - 1)
         },
         goToElement: (el) => {
             measure()

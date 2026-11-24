@@ -125,6 +125,34 @@ def test_dashboard_sync_aligns_markers_counts_and_diff_across_visible_rows():
     assert "[dim]⑂[/dim]" in fields["sync"].cell(rows[2])
 
 
+def _spans(markup):
+    text = Text.from_markup(markup)
+    return [(text.plain[s.start : s.end], str(s.style)) for s in text.spans]
+
+
+def test_sync_cell_colours_each_segment_without_changing_widths():
+    rows = mixed_rows()
+    sync = {f.name: f for f in visible_fields(NOW, rows)}["sync"]
+    first = Text.from_markup(sync.cell(rows[0]))
+    assert first.plain == "    ↑  1 ↓123 +1 -0"
+    spans = _spans(sync.cell(rows[0]))
+    assert ("↑  1", "cyan") in spans
+    assert ("↓123", "yellow") in spans
+    assert ("+1", "green") in spans
+    # A zero count is dim, like other zero values.
+    assert ("-0", "dim") in spans
+    pr = _spans(sync.cell(rows[1]))
+    assert ("-9", "red") in pr
+    assert ("+12345", "green") in pr
+    zero = _spans(sync.cell(rows[2]))
+    assert ("↓  0", "dim") in zero
+    assert ("↑ 12", "cyan") in zero
+    assert ("✓", "dim") in zero
+    # Unknown values keep their existing warning colour and add no diff colour.
+    unknown = _spans(sync.cell(rows[4]))
+    assert not {"green", "red"} & {style for _, style in unknown}
+
+
 def test_legacy_sync_fields_stay_selectable_without_repeating_the_marker():
     rows = mixed_rows()
     names = ("target_diff", "ahead_count", "behind_count", "conflict")

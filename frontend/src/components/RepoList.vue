@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import {computed} from "vue"
 import type {FrontPageView} from "../protocol"
+import {settings, updateSettings} from "../settings"
 
 const props = withDefaults(defineProps<{
     view: FrontPageView
@@ -10,6 +11,19 @@ const props = withDefaults(defineProps<{
 const listed = computed(() => new Set(props.listedContainers ?? props.view.repos.flatMap(
     repo => repo.containers.map(row => row.name),
 )))
+
+const selection = computed(() => settings.containerFilter === "all" ? null
+    : props.view.filters?.[settings.containerFilter] ?? {visible: [], context: []})
+const context = computed(() => new Set(selection.value?.context ?? []))
+const repos = computed(() => {
+    if (!selection.value) return props.view.repos
+    const visible = new Set(selection.value.visible)
+    return props.view.repos.map(repo => ({...repo,
+        containers: repo.containers.filter(row => visible.has(row.name)).map(row => ({...row,
+            indent: selection.value?.indents?.[row.name] ?? row.indent,
+        })),
+    })).filter(repo => repo.containers.length > 0)
+})
 
 const AGENT_LABELS: Record<string, string> = {
     waiting: "waiting for you",
@@ -34,8 +48,9 @@ function agentLabel(state: string): string {
 </script>
 
 <template>
-    <p v-if="view.repos.length === 0" class="muted">No repositories.</p>
-    <section v-for="repo in view.repos" :key="repo.prefix" class="repo" :data-repo="repo.prefix">
+    <p v-if="settings.containerFilter !== 'all'" class="filter-notice muted" role="status">Showing: {{ settings.containerFilter === 'active' ? 'Active' : 'Running' }} · <button type="button" @click="updateSettings({containerFilter: 'all'})">show all</button></p>
+    <p v-if="repos.length === 0" class="muted">{{ settings.containerFilter === 'all' ? 'No repositories.' : 'No matching containers.' }}</p>
+    <section v-for="repo in repos" :key="repo.prefix" class="repo" :data-repo="repo.prefix">
         <h2 v-if="showHeadings" class="repo-heading">
             <router-link :to="{name: 'repo', params: {prefix: repo.prefix}}">{{
                 repo.prefix
@@ -47,7 +62,7 @@ function agentLabel(state: string): string {
                 v-for="c in repo.containers"
                 :key="c.name"
                 class="row"
-                :class="{nested: c.depth > 0}"
+                :class="{nested: c.depth > 0, 'filter-context': context.has(c.name)}"
                 :data-container="c.name"
                 :data-agent="c.agent ? agentFamily(c.agent) : undefined"
                 :data-state="c.state"
@@ -60,9 +75,10 @@ function agentLabel(state: string): string {
                     >
                     <span v-if="c.phase" class="phase">{{ c.phase }}</span>
                     <span v-else-if="c.state === 'Stopped'" class="phase">Stopped</span>
-                    <span v-if="c.agent" class="agent" :class="`agent-${agentFamily(c.agent)}`">{{
-                        agentLabel(c.agent)
+                    <span v-if="c.agent" class="agent" :class="[`agent-${agentFamily(c.agent)}`, {'agent-recent-idle': c.agent === 'idle' && c.agent_recent_idle}]">{{
+                        agentLabel(c.agent) + (c.agent === 'idle' && c.agent_recent_idle ? ` ${c.agent_recent_idle}` : '')
                     }}</span>
+                    <span v-if="c.agent !== 'idle' && c.agent_recent_idle" class="agent agent-recent-idle">idle {{ c.agent_recent_idle }}</span>
                 </div>
                 <p v-if="c.orchestrator || c.child_count" class="orchestration">
                     Orchestrator · {{ c.child_count }} {{ c.child_count === 1 ? 'child' : 'children' }}
@@ -86,6 +102,11 @@ function agentLabel(state: string): string {
 </template>
 
 <style scoped>
+.filter-notice { margin: var(--space-2) 0 0; font-size: 0.85rem; }
+.filter-notice button { font: inherit; color: var(--accent); background: none; border: 0; text-decoration: underline; padding: 0.5rem 0; min-height: 2.75rem; }
+.row.filter-context[data-container] {
+    opacity: 0.5;
+}
 .repo {
     margin: var(--space-4) 0;
 }
@@ -232,6 +253,10 @@ a.name:hover {
 .agent-idle,
 .agent-shell {
     color: var(--muted);
+}
+.agent-recent-idle {
+    color: var(--text);
+    font-weight: 700;
 }
 .cells {
     display: flex;

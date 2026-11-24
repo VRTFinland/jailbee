@@ -84,6 +84,17 @@ def test_sync_removes_stale_files_in_managed_skill(tmp_path: Path, monkeypatch) 
     assert (skills / "jailbee-usage" / "SKILL.md").is_file()
 
 
+def test_orchestration_skill_reserves_code_changes_for_children() -> None:
+    text = (agent_skills._skills_root() / "jailbee-orchestration" / "SKILL.md").read_text()
+    for guidance in (
+        "merges of child work and their conflict resolutions",
+        "never code, tests or config, however small",
+        "Small review findings and feature requests",
+        "separate git worktree",
+    ):
+        assert guidance in text, guidance
+
+
 def test_bundled_skills_include_container_reference() -> None:
     assert "jailbee-container" in agent_skills.bundled_skill_names()
 
@@ -147,7 +158,7 @@ def _validate_guidance_commands(skill: str, preamble: str) -> None:
         if not tokens or tokens[0] == "...":
             continue
         root = tokens[0]
-        assert root in host_roots | container_roots, example
+        assert root.startswith("-") or root in host_roots | container_roots, example
         command = get_command(app if root in host_roots else container_app)
         index = 0
         while index < len(tokens):

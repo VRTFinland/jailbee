@@ -656,6 +656,7 @@ def resolve_pr_text_and_head(
     status_label: str,
     use_outbox: bool = False,
     consent: AiConsent | None = None,
+    outbox_hint: OutboxPrText | None = None,
 ) -> HeadPlan:
     """Decide the PR head name and (on create) generate the title/body.
 
@@ -688,7 +689,7 @@ def resolve_pr_text_and_head(
         # "container branch" fallback, only a submodule branch that may not
         # exist (detached HEAD) — it lands in cli.py's "no head branch name
         # was chosen" error instead.
-        return HeadPlan(publish_name=stored_head or None, ai_text=None)
+        return HeadPlan(publish_name=stored_head or None, ai_text=None, outbox_source=outbox_hint)
 
     if as_name is not None and not git_mod.check_ref_format(as_name):
         error(f"--as '{as_name}' is not a valid branch name.")
@@ -703,8 +704,8 @@ def resolve_pr_text_and_head(
     # Looked up only when the text could actually be used: consuming a manifest
     # whose body then loses to an explicit --title/--body would delete a
     # description that was never published.
-    outbox_source: OutboxPrText | None = None
-    if use_outbox and need_text:
+    outbox_source = outbox_hint
+    if use_outbox and need_text and outbox_source is None:
         from jailbee import pr_outbox
 
         outbox_source = pr_outbox.pending_pr_text(
@@ -2002,6 +2003,7 @@ def apply_pr_updates(
     management: PrManagement | None = None,
     consent: AiConsent | None = None,
     generated_text: PrText | None = None,
+    strict_description: bool = False,
 ) -> PrUpdate:
     """Apply description and ready/draft updates to an already-existing PR.
 
@@ -2092,6 +2094,10 @@ def apply_pr_updates(
                 title_changed = edit.title is not None
                 body_changed = edit.body is not None
             except pr_module.PrError as exc:
+                if strict_description:
+                    from jailbee.outbox.models import OutboxError
+
+                    raise OutboxError(f"Updating the PR description failed: {exc}") from exc
                 warn(f"{scope.prefix}Updating the PR description failed: {exc}")
             else:
                 if edit.source is not None:

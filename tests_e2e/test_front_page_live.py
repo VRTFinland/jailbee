@@ -11,7 +11,7 @@ from playwright.sync_api import Locator, Page, WebSocketRoute, expect
 from tests.follower_fixture import CLAUDE, FOLLOWER, WRAPPER, gather
 from tests.web_fakes import container, repo_group, snapshot_of
 from tests_e2e.browser_errors import BrowserErrors
-from tests_e2e.flows import DERIVED_DEVICE, log_in_with_pin
+from tests_e2e.flows import DERIVED_DEVICE, log_in_with_pin, open_settings
 from tests_e2e.server import E2EServer
 
 if TYPE_CHECKING:
@@ -80,7 +80,7 @@ def test_row_phases_have_distinct_edges_and_labels_in_the_eink_theme(
             )
         )
     )
-    logged_in.get_by_role("link", name="Settings", exact=True).click()
+    open_settings(logged_in)
     logged_in.get_by_role("radio", name="E-ink", exact=True).check()
     logged_in.get_by_role("link", name="JailBee").click()
 

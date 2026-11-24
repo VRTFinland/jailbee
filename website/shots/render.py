@@ -185,7 +185,7 @@ def _seed_queue(app: Any, world: World) -> None:
         else:
             default = 0 if item["state"] == "done" else 1
             queue.finish(entry_id, int(item.get("status", default)), output)
-    app.session._queue_changed()
+    app.session.queue_changed()
 
 
 def _no_action(argv: Any, **_kwargs: Any) -> Any:

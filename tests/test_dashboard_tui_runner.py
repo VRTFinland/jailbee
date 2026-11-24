@@ -111,6 +111,54 @@ def test_prompt_during_action_is_a_modal_and_the_answer_reaches_the_child(mocker
     assert spawn.calls[0]["argv"][-2:] == ["merge", "alpha-x"]
 
 
+@pytest.mark.parametrize("kind", ["pr", "issue", "source"])
+@pytest.mark.parametrize("transport", ["none", "ssh"])
+def test_outbox_publish_uses_runner_modal_and_keeps_queue_result(mocker, tmp_path, kind, transport):
+    from jailbee.dashboard.accounts import CliResult
+    from tests.test_dashboard_outbox_flow import _listing, _proposal
+
+    row = _proposal(f"{kind if kind != 'source' else 'pr'}/a.json")
+    if kind == "source":
+        row.update(state="awaiting-push", create_scope={"kind": "source", "manifest": "a.json"})
+    mocker.patch(
+        "jailbee.dashboard.accounts.run_cli_quiet", return_value=CliResult(True, "", _listing(row))
+    )
+    from jailbee.config.models_remote import RemoteSSHConfig
+
+    app = make_app(
+        mocker,
+        [_group(tmp_path)],
+        transport=transport,
+        remote=transport != "none",
+        ssh_policy=RemoteSSHConfig(),
+    )
+    app.threaded_actions = True
+    app.action_runner = drunner.run_action
+    spawn = Spawns([_prompt(question="Publish proposal?", default=False)])
+    app.action_spawn = spawn
+    hand_off = mocker.patch.object(app, "hand_off", side_effect=AssertionError("terminal hand-off"))
+
+    async def main():
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.session.overlay = app.session.open_outbox("alpha-x")
+            app.refresh_frame()
+            await _until(pilot, lambda: app.session.outbox.state.busy is None, "outbox listing")
+            await pilot.press("p")
+            await _until(pilot, lambda: isinstance(app.screen, pm.ConfirmModal), "publish modal")
+            assert app.screen.prompt.question == "Publish proposal?"
+            await pilot.press("y")
+            await _until(pilot, lambda: _finished(app), "publication result")
+            (entry,) = app.session.queue
+            assert entry.state == "done" and "alku" in entry.output
+
+    asyncio.run(asyncio.wait_for(main(), _RUN_SECONDS))
+    hand_off.assert_not_called()
+    assert spawn.child.answers[0].value is True
+    argv = spawn.calls[0]["argv"]
+    assert "--source-manifest" in argv if kind == "source" else "apply" in argv
+
+
 def test_single_choice_answer_reaches_the_child(mocker, tmp_path):
     options = (WireOption("0", "a", "a", ""), WireOption("1", "b", "b", ""))
     spawn = Spawns([_prompt(kind="choose_one", question="which", options=options)])
@@ -210,6 +258,38 @@ def test_refused_action_shows_the_refusal_and_starts_nothing(mocker, tmp_path):
     _drive(mocker, tmp_path, spawn, script)
     assert not spawn.calls
     assert "not allowed" in seen["notice"]
+
+
+def test_source_update_exception_remains_in_queue_detail_and_log(mocker, tmp_path):
+    from jailbee.dashboard.model import RepoTarget
+
+    session, terminal = bare_session(mocker, [_group(tmp_path)])
+
+    def run(runs, done, progress=None):
+        def failing(argv, *, on_output, **kwargs):
+            on_output("manifest own.json\n")
+            raise RuntimeError("source update rejected: permission denied [remote]")
+
+        done(drunner.run_actions(runs, run=failing))
+
+    terminal.run_actions = run
+    session.run_action(
+        RepoTarget(tmp_path, None),
+        ["pr", "push", "alpha-x", "--source-manifest", "own.json"],
+        style="output",
+        label="pr push alpha-x",
+    )
+    (entry,) = session.queue
+    assert entry.state == "failed"
+    assert "permission denied [remote]" in entry.output
+    assert "permission denied [remote]" in " ".join(session.queue_entry_picker(entry.id).detail)
+    assert "permission denied [remote]" in session.notice
+    from jailbee.dashboard.tui.session import PickerEntry
+
+    session._queue_chosen(
+        session.queue_entry_picker(entry.id), PickerEntry("Show output", "output", "o")
+    )
+    assert "permission denied [remote]" in terminal.shown[-1][1]
 
 
 def test_attach_verbs_still_hand_over_the_terminal(mocker, tmp_path):

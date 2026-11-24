@@ -971,6 +971,8 @@ def list_containers(
                     job_pid=row.pid,
                     job_kind=row.op_kind,
                     job_error=row.error_msg,
+                    child=view.parse_child_view(row.spawned_by, None, None),
+                    created_at=row.started_at if row.spawned_by is not None else None,
                 )
             )
 
@@ -3827,6 +3829,73 @@ _AGENT_ERROR_GLYPH: tuple[str, str] = ("✖", "red")
 """The mark of any `error:<kind>` state, followed by the kind."""
 
 
+@dataclass(frozen=True)
+class AgentCompactMark:
+    """One urgency-ordered session mark, independent of rendering and cell width."""
+
+    state: str
+    stamp: datetime | None
+    colour: str | None
+    emphasized: bool
+
+
+def agent_compact_marks(
+    statuses: Sequence[AgentSummary],
+    now: datetime,
+    *,
+    recent_idle: timedelta | None = None,
+    recent_idle_style: str = "bold bright_white",
+    activity_age: bool = False,
+) -> list[AgentCompactMark]:
+    """Resolve session freshness and emphasis once for every dashboard frontend."""
+    from jailbee.agent_status import ERROR_PREFIX, rank_key
+
+    marks: list[AgentCompactMark] = []
+    for summary in statuses:
+        # Old snapshots carry no per-session marks: `count` stands in for them.
+        entries = [(m.state, m.since) for m in summary.sessions] or [(summary.state, None)] * max(
+            summary.count, 1
+        )
+        activity = summary.activity
+        event = activity.last_event_at if activity is not None else None
+        event_state = activity.state if activity is not None else None
+        # Activity belongs to the latest-event session, not necessarily the
+        # most urgent one. Legacy activity without a state belongs to the first.
+        event_index = next(
+            (i for i, (state, _) in enumerate(entries) if event_state in (None, state)), None
+        )
+        for i, (state, stamp) in enumerate(entries):
+            if activity_age and event is not None and i == event_index:
+                stamp = event
+            elif i == 0 and stamp is None and not activity_age:
+                stamp = summary.since
+            colour = _AGENT_GLYPHS.get(state, ("?", None))[1]
+            emphasized = state in ("waiting", "busy", "shell") or state.startswith(ERROR_PREFIX)
+            if state.startswith(ERROR_PREFIX):
+                colour = _AGENT_ERROR_GLYPH[1]
+            if (
+                state == "idle"
+                and recent_idle is not None
+                and stamp is not None
+                and timedelta(0) <= now - stamp < recent_idle
+            ):
+                colour = recent_idle_style
+                emphasized = True
+            marks.append(AgentCompactMark(state, stamp, colour, emphasized))
+    marks.sort(key=lambda mark: rank_key(mark.state, mark.stamp))
+    return marks
+
+
+def agent_compact_is_active(
+    statuses: Sequence[AgentSummary], now: datetime, *, recent_idle: timedelta
+) -> bool:
+    """Whether any session has activity emphasis, regardless of the rendered width."""
+    return any(
+        mark.emphasized
+        for mark in agent_compact_marks(statuses, now, recent_idle=recent_idle, activity_age=True)
+    )
+
+
 def agent_compact_cell(
     statuses: Sequence[AgentSummary],
     now: datetime,
@@ -3854,13 +3923,14 @@ def agent_compact_cell(
     if not statuses:
         return "[dim]—[/dim]"
 
-    from jailbee.agent_status import ERROR_PREFIX, rank_key
+    from jailbee.agent_status import ERROR_PREFIX
 
-    def glyph_of(state: str, *, age_from: datetime | None = None, with_age: bool = False) -> str:
-        glyph, colour = _AGENT_GLYPHS.get(state, ("?", None))
+    def glyph_of(mark: AgentCompactMark, *, with_age: bool = False) -> str:
+        state, age_from, colour = mark.state, mark.stamp, mark.colour
+        glyph = _AGENT_GLYPHS.get(state, ("?", None))[0]
         text = glyph
         if state.startswith(ERROR_PREFIX):
-            glyph, colour = _AGENT_ERROR_GLYPH
+            glyph = _AGENT_ERROR_GLYPH[0]
             text = f"{glyph} {escape(state.removeprefix(ERROR_PREFIX))}"
         elif state not in _AGENT_GLYPHS:
             # The state is raw text from a file the container wrote.
@@ -3868,36 +3938,23 @@ def agent_compact_cell(
         if with_age and age_from is not None and age_from <= now:
             age = now - age_from
             text += f" {format_duration_coarse(age)}"
-            if recent_idle is not None and state == "idle" and age < recent_idle:
-                colour = recent_idle_style
         return f"[{colour}]{text}[/{colour}]" if colour else text
 
     # One urgency-ordered list over every agent's sessions, so truncation drops
     # the least urgent session whichever agent owns it.
-    marks: list[tuple[str, datetime | None]] = []
-    for s in statuses:
-        # Old snapshots carry no per-session marks: `count` stands in for them.
-        entries = [(m.state, m.since) for m in s.sessions] or [(s.state, None)] * max(s.count, 1)
-        for i, (state, own) in enumerate(entries):
-            stamp = own
-            if i == 0:
-                # The agent-wide stamps describe the most urgent session; the
-                # event time only when that session produced the latest event.
-                event = s.activity.last_event_at if s.activity is not None else None
-                event_state = s.activity.state if s.activity is not None else None
-                if activity_age and event is not None and event_state in (None, state):
-                    stamp = event
-                elif stamp is None and not activity_age:
-                    stamp = s.since
-            marks.append((state, stamp))
-    marks.sort(key=lambda m: rank_key(m[0], m[1]))
-
-    glyphs = [glyph_of(state) for state, _ in marks]
+    marks = agent_compact_marks(
+        statuses,
+        now,
+        recent_idle=recent_idle,
+        recent_idle_style=recent_idle_style,
+        activity_age=activity_age,
+    )
+    glyphs = [glyph_of(mark) for mark in marks]
     full: list[str] = []
     seen: set[str] = set()
-    for state, stamp in marks:
-        full.append(glyph_of(state, age_from=stamp, with_age=state not in seen))
-        seen.add(state)
+    for mark in marks:
+        full.append(glyph_of(mark, with_age=mark.state not in seen))
+        seen.add(mark.state)
     cell = " ".join(full)
     if max_cells is None or Text.from_markup(cell).cell_len <= max_cells:
         return cell
@@ -4120,15 +4177,48 @@ def _sync_count_widths(
     )
 
 
+_SYNC_DIFF_RE = re.compile(r"^\+(\d+) -(\d+)$")
+_SYNC_ARROW_STYLE = {"↑": "cyan", "↓": "yellow"}
+
+
+def _sync_count_segment(arrow: str, value: str, width: int) -> str:
+    """One aligned ``↑``/``↓`` count; colour wraps arrow, padding and number.
+
+    Padding stays inside the markup so the plain text, and so the cell width,
+    is the same as without colour. Unknown values keep their own markup.
+    """
+    plain = Text.from_markup(value).plain
+    segment = f"{arrow}{' ' * max(0, width - Text(plain).cell_len)}{value}"
+    if plain == "0":
+        return f"[dim]{arrow}{' ' * max(0, width - 1)}0[/dim]"
+    if plain.isdigit():
+        style = _SYNC_ARROW_STYLE[arrow]
+        return f"[{style}]{segment}[/{style}]"
+    return segment
+
+
+def _sync_diff(diff: str) -> str:
+    """Colour ``+N -M`` (green insertions, red deletions, zeros dim)."""
+    if diff == "clean":
+        return "[dim]clean[/dim]"
+    match = _SYNC_DIFF_RE.match(diff)
+    if match is None:
+        return diff
+    parts = []
+    for sign, count, style in (("+", match[1], "green"), ("-", match[2], "red")):
+        style = "dim" if int(count) == 0 else style
+        parts.append(f"[{style}]{sign}{count}[/{style}]")
+    return " ".join(parts)
+
+
 def _sync_comparison(
     marker: str, ahead: str, behind: str, diff: str, widths: tuple[int, int]
 ) -> str:
     marker_width = max(Text(m).cell_len for m in ("pr", "pr?", "⑂", "⑂?"))
     parts = [marker + " " * (marker_width - Text.from_markup(marker).cell_len)]
     for arrow, value, width in zip(("↑", "↓"), (ahead, behind), widths, strict=True):
-        pad = " " * max(0, width - Text.from_markup(value).cell_len)
-        parts.append(f"{arrow}{pad}{value}")
-    return " ".join((*parts, diff))
+        parts.append(_sync_count_segment(arrow, value, width))
+    return " ".join((*parts, _sync_diff(diff)))
 
 
 def ls_field_specs(

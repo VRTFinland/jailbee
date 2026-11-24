@@ -17,7 +17,7 @@ from typing import Any
 import pytest
 from playwright.sync_api import Page, expect
 
-from tests_e2e.flows import log_in_with_pin
+from tests_e2e.flows import log_in_with_pin, open_settings
 from tests_e2e.server import E2EServer
 
 CORPUS = Path(__file__).resolve().parents[1] / "tests/fixtures/transcripts/claude-corpus"
@@ -150,12 +150,12 @@ def test_thinking_follows_the_setting(reader: Page, session: dict[str, Any]) -> 
     expect(reader.locator(".entry.assistant").first).to_be_visible()
     expect(thinking).to_have_count(0)
 
-    reader.get_by_role("link", name="Settings", exact=True).click()
+    open_settings(reader)
     reader.get_by_role("checkbox", name="Show thinking").check()
     reader.go_back()
     expect(thinking.first).to_be_visible()
 
-    reader.get_by_role("link", name="Settings", exact=True).click()
+    open_settings(reader)
     reader.get_by_role("checkbox", name="Show thinking").uncheck()
     reader.go_back()
     expect(reader.locator(".entry.assistant").first).to_be_visible()
@@ -183,7 +183,7 @@ def test_compaction_and_interruption_notices_follow_the_agent_context_setting(
         else:
             expect(transcript).not_to_contain_text(text)
 
-    reader.get_by_role("link", name="Settings", exact=True).click()
+    open_settings(reader)
     reader.get_by_label("Agent context").select_option("shown")
     reader.go_back()
     for text in notices:

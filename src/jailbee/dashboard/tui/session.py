@@ -73,6 +73,7 @@ from jailbee.dashboard.commands import (
     permitted,
     remote_unlocks,
 )
+from jailbee.dashboard.create import start_create
 from jailbee.dashboard.dispatch import (
     DispatchStyle,
     _dispatch_action,
@@ -90,7 +91,7 @@ from jailbee.dashboard.egress import (
 )
 from jailbee.dashboard.egress_data import load_egress_rows
 from jailbee.dashboard.hit import Hit
-from jailbee.dashboard.jobs import JobResult, JobRunner, needs_terminal
+from jailbee.dashboard.jobs import JobResult, JobRunner
 from jailbee.dashboard.menus import (
     APPS_RUN_PREFIX,
     ATTACH_VERBS,
@@ -654,7 +655,7 @@ class DashboardSession:
         jobs = job_rows(self.groups)
         if jobs != self.queue.jobs:
             self.queue.set_jobs(jobs)
-            self._queue_changed()
+            self.queue_changed()
         # Every refresh: a column appears once it has content (a mount attached,
         # a container turned loose) and goes once it has none.
         self._recompute_shown()
@@ -937,7 +938,7 @@ class DashboardSession:
             )
             for i, run in enumerate(runs)
         ]
-        self._queue_changed()
+        self.queue_changed()
         # A critical action's result is the modal's (or, once sent to the
         # background, the queue's): no output screen of its own on the end.
         if any((e := self.queue.get(i)) is not None and e.critical for i in ids):
@@ -990,7 +991,7 @@ class DashboardSession:
             (found := self.queue.get(self._following)) is None or found.finished
         ):
             self._following = None
-        self._queue_changed()
+        self.queue_changed()
 
     def _drop_entry(self, entry_id: int, why: str) -> None:
         """Forget an entry that never ran; a modal it opened says why and goes on closing."""
@@ -1026,7 +1027,7 @@ class DashboardSession:
         self._modal_entry = None
         self._following = None
         self.queue.send_to_background(entry_id)
-        self._queue_changed()
+        self.queue_changed()
         self._open_next_modal()
 
     def _hand_off_refused(self) -> bool:
@@ -1043,7 +1044,7 @@ class DashboardSession:
 
     def _entry_output(self, entry_id: int, chunk: str) -> None:
         self.queue.append(entry_id, chunk)
-        self._queue_changed()
+        self.queue_changed()
         if entry_id == self._following:
             found = self.queue.get(entry_id)
             if found is not None:
@@ -1051,7 +1052,7 @@ class DashboardSession:
 
     def _entry_question(self, entry_id: int, asking: bool) -> None:
         self.queue.set_awaiting(entry_id, asking)
-        self._queue_changed()
+        self.queue_changed()
 
     def after_hand_off(self, attention_before: frozenset[tuple[str, str | int]]) -> None:
         """Back from a tmux hand-off: show the queue if something new waits on the user.
@@ -1064,7 +1065,7 @@ class DashboardSession:
         if self.overlay is None and not self.queue.attention_items() <= attention_before:
             self.open_queue()
 
-    def _queue_changed(self) -> None:
+    def queue_changed(self) -> None:
         """Redraw an open queue list or entry from the queue as it is now."""
         overlay = self.overlay
         if not isinstance(overlay, Picker):
@@ -1458,9 +1459,9 @@ class DashboardSession:
         questions — the escalation question is asked by the foreground
         parent before it detaches (`lifecycle._autostart_approved`) —
         and a detached run has no terminal to ask on. When it stops
-        for that reason the command is re-run through `foreground`
-        (`needs_terminal`). The only other option is `--yes`, i.e.
-        accepting a network-widening branch config unseen.
+        for that reason the shared create runner retries through the prompt
+        channel, asking in dashboard modals rather than releasing the terminal.
+        It never adds `--yes`, which would accept unseen branch config.
         """
         try:
             check_dashboard_command(["new"], self.ssh_policy, transport=self.transport)
@@ -1494,36 +1495,32 @@ class DashboardSession:
             self.set_notice(f"'{prefix}' is no longer listed")
             return
         argv = build_argv(repo)
-        # `jailbee new` or `jailbee fork`: a failure is reported as the
-        # command the user asked for.
-        command = " ".join(argv[:2])
         try:
             check_dashboard_command(argv[1:], self.ssh_policy, transport=self.transport)
         except RouteError as exc:
             self.set_notice(str(exc))
             return
 
-        def run_with_questions() -> None:
-            # `argv` starts with the program name; the runner adds its own.
-            self.run_action(repo, argv[1:], style="output", label=command.removeprefix("jailbee "))
-
-        def finish(result: JobResult) -> None:
-            if needs_terminal(result):
-                # It stopped to ask something: run it again where its
-                # questions are asked as dashboard modals.
-                run_with_questions()
-                return
-            if result.returncode != 0:
-                reason = result.failure_line() or f"exited {result.returncode}"
-                self.set_notice(f"{command} failed: {reason}", seconds=FAILURE_NOTICE_SECONDS)
+        def finished(notice: str | None) -> None:
+            if notice is not None:
+                self.set_notice(f"{notice} · Q: queue", seconds=FAILURE_NOTICE_SECONDS)
             self.client.refresh()
 
         try:
-            self.jobs.start(f"new:{prefix}:{what}", f"creating {what}…", argv, repo.cwd(), finish)
+            start_create(
+                self.jobs,
+                self.queue,
+                key=f"new:{prefix}:{what}",
+                label=f"creating {what}…",
+                argv=argv,
+                cwd=repo.cwd(),
+                target=what,
+                run_questions=self.terminal.run_actions,
+                changed=self.queue_changed,
+                done=finished,
+            )
         except ValueError:
             self.set_notice("That container is already being created")
-        except OSError:
-            self._report_vanished_repo(repo)
 
     def run_dashboard_command(
         self,
@@ -2769,6 +2766,7 @@ class DashboardSession:
             prefix=group.prefix if group is not None else "",
             standalone=False,
             on_change=lambda _state: None,  # nothing is on screen yet
+            run_publish=runner.publish,
         )
         prefix = group.prefix if group is not None else ""
 
@@ -4653,7 +4651,7 @@ class DashboardSession:
                 self._drop_bulk_entry(entry_id)
                 batch.pending.discard(name)
                 raise
-        self._queue_changed()
+        self.queue_changed()
         self._settle(batch)
 
     def _bulk_child_done(
@@ -4664,7 +4662,7 @@ class DashboardSession:
             if len(output) > OUTPUT_KEEP_CHARS:
                 output = OUTPUT_DROPPED_MARKER + output[-OUTPUT_KEEP_CHARS:]
             self.queue.finish(entry_id, result.returncode, output)
-            self._queue_changed()
+            self.queue_changed()
         batch.finish(name, result)
         self.client.refresh()
         self._settle(batch)
