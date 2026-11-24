@@ -269,6 +269,25 @@ def test_new_container_does_not_hand_off_when_nothing_detaches(tmp_path, make_cf
     assert calls == []
 
 
+@pytest.mark.parametrize("skip", [False, True])
+def test_new_records_boot_decision_for_empty_or_skipped_plan(tmp_path, make_cfg, mocker, skip):
+    from jailbee.boot_state import MARKER
+    from jailbee.lifecycle import new_container
+
+    _patch_new_container_deps(mocker)
+    mocker.patch("jailbee.autostart.run_autostart", return_value=AutostartPlan([], []))
+    incus = mocker.MagicMock()
+    incus.exists.return_value = False
+
+    new_container(_cfg_for_new(make_cfg, tmp_path), incus, _opts(autostart=not skip))
+
+    expected = "skipped" if skip else "handled"
+    assert any(
+        MARKER in " ".join(call.args[1]) and expected in " ".join(call.args[1])
+        for call in incus.exec.call_args_list
+    )
+
+
 def test_new_container_forwards_the_autostart_override(tmp_path, make_cfg, mocker):
     """`--wait` / `--no-wait` reaches the planner through the options object;
     without it the flag would be accepted and then ignored."""

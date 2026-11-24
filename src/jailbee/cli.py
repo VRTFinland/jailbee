@@ -5037,6 +5037,9 @@ def _post_start_actions(
         from jailbee.agent_resume import boot_entries
 
         boot_entries(cfg, incus, name)
+        from jailbee.boot_state import record
+
+        record(incus, name, "skipped")
         return
 
     profile = resolve_profile(cfg, incus, name)
@@ -5078,6 +5081,9 @@ def _post_start_actions(
         on_detach(
             cfg.autostart, AutostartTrigger.ON_START.value, repo_dir, bool(cfg.services), plan
         )
+    from jailbee.boot_state import record
+
+    record(incus, name, "handled")
 
 
 def _clear_superseded_boot_job(cfg: "Config", full_name: str) -> None:

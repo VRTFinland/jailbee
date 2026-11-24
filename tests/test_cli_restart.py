@@ -71,7 +71,7 @@ def test_boot_uses_committed_legacy_startup_with_host_services(command, tmp_path
     result = runner.invoke(app, [command, "myrepo-feat-x", "--yes"])
 
     assert result.exit_code == 0, result.output
-    incus.exec.assert_called_once_with(
+    incus.exec.assert_any_call(
         "myrepo-feat-x",
         ["git", "-C", "/repo", "show", "HEAD:.jailbee/config.yaml"],
         uid=cfg.container_user.uid,

@@ -91,15 +91,21 @@ are left to their own Incus `boot.autostart` settings.
 
 Successful clean stops, including agent-session capture, are saved in
 `${XDG_STATE_HOME:-~/.local/state}/jailbee/resume-set.json`. Repeating the stop
-preserves earlier entries. `resume` starts that set and repairs running
-containers whose `autostart` tmux session is missing after Incus restarted them.
-Healthy running sessions are left alone. It runs the normal start setup and
+preserves earlier entries; journal updates are locked across concurrent commands.
+`resume` starts that set and repairs running containers whose boot setup has not
+been handled after Incus restarted them. A volatile `/run` marker records normal
+start setup (including empty plans) or an intentional `--no-autostart` skip;
+both are left alone for that boot. For older boots without a marker, an existing
+`autostart` tmux session or an empty start plan also counts as healthy. It runs the normal start setup and
 `on_start` autostart (services, agent windows and session restoration), waiting
 for all stages. Each container is reported independently; failures and live-job
 skips on resume exit non-zero, retain retry state, and do not block other
 containers. Repeat `resume` after fixing the failure. Nothing to do exits 0.
-Missing containers or unavailable repository configurations are reported rather
-than silently forgotten. Restricted remote sessions cannot use either
+Missing containers are dropped from the saved set with an info line, not a
+failure; `destroy` also removes their entries. An unavailable repository config
+is reported once per repository per invocation, retaining entries only for
+containers that still exist. Restore the config and retry, or remove unwanted
+containers with `jailbee orphan destroy`. Restricted remote sessions cannot use either
 host-wide operation; ordinary `stop NAME` remains available.
 
 ## Snapshots and rollback
