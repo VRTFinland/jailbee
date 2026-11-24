@@ -14,6 +14,7 @@ from pathlib import Path
 from subprocess import TimeoutExpired
 
 SNAPSHOT_RELPATH = ".local/state/jailbee/agent-sessions.json"
+BOOT_RELPATH = ".local/state/jailbee/boot-agent-sessions.json"
 LAUNCHERS_RELPATH = ".local/state/jailbee/launchers"
 SESSIONS_RELPATH = ".claude/sessions"
 REGISTRY_RELPATH = ".local/state/jailbee/live-agent-sessions.json"
@@ -326,30 +327,63 @@ def _unlink_stale(path: Path) -> bool:
         return False
 
 
-def boot(home: Path, *, proc: Path = Path("/proc")) -> dict[str, object]:
+def boot(
+    home: Path, *, proc: Path = Path("/proc"), retain: bool = False
+) -> dict[str, object]:
     registry = home / REGISTRY_RELPATH
-    if _read(registry) is None:
-        return _boot(home, proc=proc, path=home / SNAPSHOT_RELPATH)
+    pending = home / BOOT_RELPATH
+    registry.parent.mkdir(parents=True, exist_ok=True)
     try:
         fd = os.open(registry.with_suffix(".lock"), os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
         try:
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            _lock(fd)
+            saved = _json(pending)
+            if isinstance(saved, dict) and isinstance(saved.get("sessions"), list):
+                return _boot(home, proc=proc, path=pending, retain=retain)
             frozen = home / SNAPSHOT_RELPATH
+            if _read(registry) is None:
+                return _boot(home, proc=proc, path=frozen, retain=retain)
             if _read(frozen) is not None:
-                result = _boot(home, proc=proc, path=frozen)
+                result = _boot(home, proc=proc, path=frozen, retain=retain)
                 remaining = _read(frozen)
                 _write_snapshot(
                     registry, remaining or b'{"version":1,"source":"capture","sessions":[]}'
                 )
                 return result
-            return _boot(home, proc=proc, path=registry, registry=True)
+            return _boot(home, proc=proc, path=registry, registry=True, retain=retain)
         finally:
             os.close(fd)
     except (OSError, ValueError):
         return {"version": 1, "source": "capture", "sessions": []}
 
 
-def _boot(home: Path, *, proc: Path, path: Path, registry: bool = False) -> dict[str, object]:
+def acknowledge(home: Path, session_ids: list[str]) -> None:
+    """Remove only launched boot entries, never newly registered live sessions."""
+    registry = home / REGISTRY_RELPATH
+    registry.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(registry.with_suffix(".lock"), os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    try:
+        _lock(fd)
+        path = home / BOOT_RELPATH
+        saved = _json(path)
+        if not isinstance(saved, dict) or not isinstance(saved.get("sessions"), list):
+            return
+        ids = set(session_ids)
+        saved["sessions"] = [
+            row for row in saved["sessions"]
+            if not isinstance(row, dict) or row.get("session_id") not in ids
+        ]
+        if saved["sessions"]:
+            _write_snapshot(path, json.dumps(saved, separators=(",", ":")).encode())
+        else:
+            path.unlink(missing_ok=True)
+    finally:
+        os.close(fd)
+
+
+def _boot(
+    home: Path, *, proc: Path, path: Path, registry: bool = False, retain: bool = False
+) -> dict[str, object]:
     has_snapshot = (path.exists() or path.is_symlink()) and not path.is_dir()
     result: dict[str, object] = {
         "version": 1,
@@ -391,6 +425,11 @@ def _boot(home: Path, *, proc: Path, path: Path, registry: bool = False) -> dict
                     continue
                 print(f"agent snapshot: dropping oversized session {pid}", file=sys.stderr)
                 item = None
+        if retain and not has_snapshot and item is not None:
+            _write_snapshot(
+                home / BOOT_RELPATH,
+                json.dumps({**result, "sessions": [*stale, item]}, separators=(",", ":")).encode(),
+            )
         if _unlink_stale(entry):
             if not has_snapshot and item is not None:
                 stale.append(item)
@@ -435,7 +474,14 @@ def _boot(home: Path, *, proc: Path, path: Path, registry: bool = False) -> dict
                 print("agent snapshot: dropping oversized snapshot session", file=sys.stderr)
             else:
                 blocked.insert(0, item)
-        if blocked or registry:
+        if retain and emitted and path != home / BOOT_RELPATH:
+            _write_snapshot(
+                home / BOOT_RELPATH,
+                json.dumps({**result, "sessions": emitted}, separators=(",", ":")).encode(),
+            )
+        if retain and path == home / BOOT_RELPATH:
+            result["sessions"] = emitted
+        elif blocked or registry:
             remaining = {**result, "sessions": blocked}
             try:
                 _write_snapshot(path, json.dumps(remaining, separators=(",", ":")).encode())
@@ -479,7 +525,16 @@ def main(argv: list[str]) -> int:
         except Exception as exc:
             print(f"agent snapshot: {exc}", file=sys.stderr)
         return 0
-    if argv == ["--boot"]:
-        print(json.dumps(boot(Path(pwd.getpwuid(os.getuid()).pw_dir)), separators=(",", ":")))
+    if argv in (["--boot"], ["--boot", "--retain"]):
+        home = Path(pwd.getpwuid(os.getuid()).pw_dir)
+        result = boot(home, retain=True) if "--retain" in argv else boot(home)
+        print(json.dumps(result, separators=(",", ":")))
+        return 0
+    if argv[:1] == ["--ack-boot"] and all(_UUID.fullmatch(sid) for sid in argv[1:]):
+        try:
+            acknowledge(Path(pwd.getpwuid(os.getuid()).pw_dir), argv[1:])
+        except (OSError, ValueError) as exc:
+            print(f"agent snapshot: cannot acknowledge boot sessions: {exc}", file=sys.stderr)
+            return 1
         return 0
     return 2

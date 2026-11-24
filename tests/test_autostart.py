@@ -1457,7 +1457,7 @@ def test_resume_unavailable_warns_and_launches_plain(
 
 
 @pytest.mark.parametrize("enabled", [False, True])
-def test_on_start_consumes_snapshot_once_even_when_disabled(tmp_path, mocker, enabled):
+def test_on_start_retains_snapshot_only_when_resume_enabled(tmp_path, mocker, enabled):
     from jailbee.agent_resume import ResumeEntry, resume_run
     from jailbee.autostart import _on_start_agent_steps
 
@@ -1474,9 +1474,83 @@ def test_on_start_consumes_snapshot_once_even_when_disabled(tmp_path, mocker, en
     entry = ResumeEntry("12345678-abcd-1234-abcd-1234567890ab", "/work", ("claude",), "claude")
     boot = mocker.patch("jailbee.agent_resume.boot_entries", return_value=[entry])
     steps, pending = _on_start_agent_steps(cfg, incus, "box", AutostartTrigger.ON_START)
-    boot.assert_called_once_with(cfg, incus, "box")
+    boot.assert_called_once_with(cfg, incus, "box", retain=enabled)
     assert pending is False
     assert (steps[0].run == resume_run(entry)) is enabled
+
+
+@pytest.mark.parametrize("source", ["snapshot", "registry", "stale"])
+@pytest.mark.parametrize("failure", ["prepare", "claude"])
+@pytest.mark.parametrize("detached", [False, True])
+def test_failed_pre_agent_stage_keeps_sessions_for_retry(tmp_path, mocker, source, failure, detached):
+    import json
+
+    from jailbee import agent_snapshot as snapshot
+    from jailbee.agent_resume import ResumeEntry, resume_run
+    from tests.test_agent_snapshot import record
+
+    cfg = _claude_cfg(tmp_path)
+    cfg = cfg.model_copy(
+        update={"autostart": Autostart(on_start=[AutostartStep(name="prepare", run="prepare")])}
+    )
+    entry = ResumeEntry("12345678-abcd-1234-abcd-1234567890ab", "/work", ("claude",), "claude")
+    if source == "stale":
+        record(tmp_path, 1, sessionId=entry.session_id, cwd=entry.cwd)
+    else:
+        path = tmp_path / (snapshot.SNAPSHOT_RELPATH if source == "snapshot" else snapshot.REGISTRY_RELPATH)
+        path.parent.mkdir(parents=True)
+        path.write_text(json.dumps({"version": 1, "source": "capture", "sessions": [{
+            "agent": "claude", "session_id": entry.session_id, "cwd": entry.cwd,
+            "launcher": ["claude"], "window": "claude",
+        }]}))
+    incus = mocker.Mock()
+    incus.config_get.return_value = None
+
+    def read_boot(_container, argv, **kwargs):
+        return json.dumps(snapshot.boot(tmp_path, proc=tmp_path / "proc", **({"retain": True} if "--retain" in argv else {})))
+
+    def execute(_container, argv, **kwargs):
+        if argv[1:2] == ["_agent-snapshot"] and argv[2:3] == ["--ack-boot"]:
+            snapshot.acknowledge(tmp_path, argv[3:])
+        return ""
+
+    incus.list_containers.return_value = []
+    incus.exec_capped.side_effect = read_boot
+    incus.exec.side_effect = execute
+    mocker.patch("jailbee.initial_prompt.prompt_pending", return_value=False)
+    mocker.patch("jailbee.accounts.adapters.claude.ClaudeAdapter.session_exists", return_value=True)
+    _, run_step = _patch_tmux(mocker)
+    def fail_step(*args, **kwargs):
+        if kwargs["name"] == failure or (failure == "claude" and "--resume" in kwargs["command"]):
+            raise RuntimeError(f"{failure} failed")
+
+    def start():
+        from jailbee.autostart import run_detached
+        from jailbee.background import AutostartJob
+
+        plan = run_autostart(cfg, incus, "box", AutostartTrigger.ON_START, "/work", override="no_wait" if detached else None)
+        if detached:
+            run_detached(cfg, incus, AutostartJob(
+                container_name="box", autostart=cfg.autostart, repo_dir="/work", from_trigger="on_start",
+                mirror_endpoint=None, log_path="/tmp/test.log", progress_path="/tmp/test-progress.json",
+                override="no_wait", agent_steps=plan.agent_steps, agents_last=plan.agents_last,
+            ))
+
+    run_step.side_effect = fail_step
+    if failure == "prepare":
+        with pytest.raises(RuntimeError, match="prepare failed"):
+            start()
+    else:
+        start()  # Agent launch failures are continue_on_error, but not acknowledged.
+
+    run_step.side_effect = None
+    run_step.reset_mock()
+    start()
+    assert resume_run(entry) in [call.kwargs["command"] for call in run_step.call_args_list]
+
+    run_step.reset_mock()
+    start()
+    assert all("--resume" not in call.kwargs["command"] for call in run_step.call_args_list)
 
 
 # ---------- repo default runner (agents.default_runner)

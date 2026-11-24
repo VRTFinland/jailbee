@@ -131,6 +131,7 @@ def test_replacing_hook_session_preserves_launcher_and_drops_old_id(
     marker(tmp_path, 7, b"777\0claude-jb\0-P\0codex\0--tools\0\0")
     monkeypatch.setattr(snapshot, "PROC", proc)
     monkeypatch.setattr(snapshot.os, "getppid", lambda: 7)
+    monkeypatch.setattr("jailbee.inbox.hook_cmd.window_names", lambda **kwargs: {})
     monkeypatch.setattr(pwd, "getpwuid", lambda uid: SimpleNamespace(pw_dir=str(tmp_path)))
     set_role("plain")
     runner = CliRunner()

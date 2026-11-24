@@ -670,9 +670,13 @@ Plain `claude` sessions do not need a marker. Hook payloads do not provide the
 launcher argv, so the start hook reads the owning process and matching launcher
 marker at registration time. Hook bookkeeping is best effort, with a
 registry lock retried for at most 200 ms and a 200 ms tmux query timeout;
-failures never prevent the Claude session from starting or ending. Only saved transcripts can be resumed, and boot consumes each
-entry once. Set `autostart.resume_agent_sessions: false` to consume the saved
-sessions without resuming them.
+failures never prevent the Claude session from starting or ending. Only saved
+transcripts can be resumed. Boot entries remain pending until their tmux
+launch succeeds, including across detached autostart handoffs. If an earlier
+`on_start` stage or an agent launch fails, the next start can retry those
+sessions; a successful launch acknowledges only that session, without removing
+new live hook registrations. Set `autostart.resume_agent_sessions: false` to
+consume the saved sessions without resuming them.
 
 The live registry ships with the plugin from `/opt/jailbee/app/current`; no
 golden-image rebuild is needed for this update. Restart Claude to load the

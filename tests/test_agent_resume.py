@@ -143,7 +143,7 @@ def test_restore_matches_and_deduplicates_windows(make_cfg, tmp_path):
     ]
     result = restore_steps(cfg, [step], entries, prompted=None, extra_env={"ROLE": "child"})
     assert result[0].run == resume_run(entries[0])
-    assert result[0].env == {"keep": "yes"}
+    assert result[0].env == {"keep": "yes", "JAILBEE_BOOT_SESSION_ID": VALID_ID}
     assert result[1].name == "claude-2"
     assert result[1].env["ROLE"] == "child"
 
@@ -216,7 +216,7 @@ def test_restore_inherits_matching_custom_launcher_env(make_cfg, tmp_path):
     cfg = cfg.model_copy(update={"agents": {"claude": agent}})
     entry = ResumeEntry(VALID_ID, "/work", ("claude-jb", "-P", "codex"), None)
     result = restore_steps(cfg, [], [entry], prompted=None, extra_env={"ROLE": "child"})
-    assert result[0].env == {"ROLE": "child", "TOKEN": "value"}
+    assert result[0].env == {"ROLE": "child", "TOKEN": "value", "JAILBEE_BOOT_SESSION_ID": VALID_ID}
     assert result[0].background and result[0].continue_on_error
 
 

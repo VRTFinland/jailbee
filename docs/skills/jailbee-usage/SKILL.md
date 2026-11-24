@@ -48,9 +48,12 @@ preserves the original `claude-jb` flags. Without a valid marker, a captured
 process command line naming `claude` or `claude-jb` is used; otherwise resume
 falls back to plain `claude`. Plain `claude` sessions do not need a marker. The `autostart.resume_agent_sessions` setting defaults
 to `true`; setting it to `false` consumes a saved snapshot without resuming.
-Rebuild the golden image and create new containers to install the shutdown
-unit and updated launcher; `jailbee apply` alone does not retrofit existing
-containers. Unit tests cover the stop/start integration; a real-container
+Entries stay pending until their agent launch succeeds, so failed earlier
+`on_start` stages or failed launches do not lose sessions on retry. This
+acknowledgement protocol ships with the runtime code and needs no rebuild.
+Older containers need a golden-image rebuild and recreation only to install
+the original shutdown unit and launcher markers; `jailbee apply` alone does not
+retrofit those. Unit tests cover the stop/start integration; a real-container
 restart check remains unverified in this environment. For a host reboot, use
 `jailbee stop --all` before it and `jailbee resume` afterwards: see
 [host-wide lifecycle](references/commands.md#host-reboot). Actual host reboot and

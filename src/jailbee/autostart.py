@@ -472,7 +472,7 @@ def _on_start_agent_steps(
         default_runner=cfg.orchestration_view().default_runner,
         resume=read_resume(incus, container),
     )
-    entries = boot_entries(cfg, incus, container)
+    entries = boot_entries(cfg, incus, container, retain=cfg.autostart.resume_agent_sessions)
     if cfg.autostart.resume_agent_sessions:
         prompted = (
             ("claude" if runner is not None else primary_agent(cfg).name) if pending else None
@@ -1188,6 +1188,10 @@ def _apply_step(
                 background=step.background,
                 timeout=timeout,
             )
+            from jailbee.agent_resume import BOOT_SESSION_ENV, acknowledge_boot
+
+            if session_id := step.env.get(BOOT_SESSION_ENV):
+                acknowledge_boot(cfg, incus, container, session_id)
         except TmuxStepError as e:
             raise AutostartStepError(
                 container=container,
