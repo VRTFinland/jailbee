@@ -583,7 +583,9 @@ def test_finished_proposal_can_be_deleted_again_while_another_drop_runs(
                         app.refresh_frame()
                         await pilot.pause(0.001)
                 await pilot.press("home", "p")
-                assert controller.state.status == ("publish must wait for the delete queue to finish",)
+                assert controller.state.status == (
+                    "publish must wait for the delete queue to finish",
+                )
                 await pilot.press("d")
                 assert controller.state.question is not None
                 await pilot.press("down", "enter")

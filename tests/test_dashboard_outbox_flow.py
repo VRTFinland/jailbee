@@ -577,7 +577,9 @@ def test_delete_proposal_changed_before_first_drop_does_nothing_to_it():
     ctl.intent("delete", _key())
     ctl.intent("answer", None, "yes")
     assert runner.argvs("drop") == [dob.outbox_drop_argv(C, "pr/a.json", "r1")]
-    assert ctl.state.status == ("1 not deleted (pr/a.json: proposal changed; refresh required); deleted 0",)
+    assert ctl.state.status == (
+        "1 not deleted (pr/a.json: proposal changed; refresh required); deleted 0",
+    )
     assert ctl.state.containers[0].proposals[0].revision == "r9"
 
 
@@ -588,7 +590,9 @@ def test_delete_failure_reports_message():
     ctl.load()
     ctl.intent("delete", _key())
     ctl.intent("answer", None, "yes")
-    assert ctl.state.status == ("1 not deleted (pr/a.json: proposal changed; refresh required); deleted 0",)
+    assert ctl.state.status == (
+        "1 not deleted (pr/a.json: proposal changed; refresh required); deleted 0",
+    )
 
 
 def test_delete_issue_create_passes_with_dependents():
@@ -965,7 +969,9 @@ def test_delete_checks_against_the_listing_the_question_showed():
     runner.drop_results = [CliResult(False, "proposal changed; refresh required")]
     ctl.intent("answer", None, "yes")
     assert runner.argvs("drop") == [dob.outbox_drop_argv(C, "pr/a.json", "r1", action=0)]
-    assert ctl.state.status == ("1 not deleted (pr/a.json: proposal changed; refresh required); deleted 0",)
+    assert ctl.state.status == (
+        "1 not deleted (pr/a.json: proposal changed; refresh required); deleted 0",
+    )
 
 
 def test_delete_surfaces_cli_disappearance_refusal():
