@@ -61,6 +61,10 @@ def test_every_response_carries_the_hardening_headers(app, static: Path, path: s
     assert response.headers["Referrer-Policy"] == "no-referrer"
     csp = directives(response.headers["Content-Security-Policy"])
     assert csp["default-src"] == "'self'"
+    # Only Reka SelectViewport's fixed scrollbar stylesheet may run inline.
+    assert csp["style-src"] == (
+        "'self' 'sha256-60LHlRjW/B3CtzIoE/Lf1/NEDvko9efWMFaGVhHu/cs='"
+    )
     assert csp["frame-ancestors"] == "'none'"
     assert csp["object-src"] == "'none'"
     assert csp["base-uri"] == "'none'"

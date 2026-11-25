@@ -55,7 +55,8 @@ describe("GalleryView", () => {
     it("shows every primitive in every variant and state in each panel", async () => {
         const wrapper = mountGallery()
         for (const panel of wrapper.findAll("section[aria-label]")) {
-            const buttons = panel.findAll(".button")
+            const buttons = panel.findAll('.group')
+                .find((group) => group.get('.group-title').text() === 'Buttons')!.findAll('.button')
             expect(buttons.map((b) => [b.attributes("data-variant"), b.attributes("disabled") !== undefined]))
                 .toEqual([...["primary", "tonal", "text", "danger"].flatMap((v) => [[v, false], [v, true]]),
                     ["primary", false], ["tonal", false]])
@@ -92,6 +93,18 @@ describe("GalleryView", () => {
         await follow[0].trigger("click")
         expect(follow[0].attributes("aria-checked")).toBe("true")
         expect(follow[1].attributes("aria-checked")).toBe("false")
+    })
+
+    it("offers working overlays and labelled fields in every panel", async () => {
+        const wrapper = mountGallery()
+        for (const panel of wrapper.findAll("section[aria-label]")) {
+            expect(panel.text()).toContain("Open centred dialog")
+            expect(panel.text()).toContain("Open drawer")
+            expect(panel.text()).toContain("Container actions")
+            expect(panel.findAll("label").map((label) => label.text())).toEqual([
+                "Container name", "Invalid name", "Disabled field", "Theme", "Disabled select",
+            ])
+        }
     })
 
     it("draws each swatch from its token", () => {

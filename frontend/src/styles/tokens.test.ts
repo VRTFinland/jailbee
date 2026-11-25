@@ -151,9 +151,10 @@ describe("design tokens", () => {
         const eink = RULES.filter((r) => r.selectors.includes('[data-theme="eink"]')).flatMap((r) => r.decls)
         const OPACITIES = /^--md-(state|disabled)-/
         for (const [name] of eink) {
-            if (!name.startsWith("--md-") || OPACITIES.test(name)) continue
+            if (!name.startsWith("--md-") || OPACITIES.test(name) || name === "--md-scrim") continue
             expect(["#000000", "#ffffff"], name).toContain(resolve("eink", name).toLowerCase())
         }
+        expect(resolve("eink", "--md-scrim")).toBe("transparent")
         // No tinted state layers and no greyed-out disabled controls.
         expect(resolve("eink", "--md-state-hover-opacity")).toBe("0")
         expect(resolve("eink", "--md-state-pressed-opacity")).toBe("0")

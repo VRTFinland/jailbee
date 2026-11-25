@@ -5,7 +5,9 @@ The session token lives in `localStorage` and transcripts render through
 styles, the manifest, icons and the `/api/ws` socket, all from the page's
 own origin (CSP3 `'self'` covers same-origin `ws:`/`wss:`). The Vite build
 inlines no script or style and the server-rendered HTML carries classes, not
-`style` attributes, so no `'unsafe-inline'`. `frame-ancestors` (and the older
+`style` attributes, so no `'unsafe-inline'`. Reka UI's SelectViewport injects one
+fixed scrollbar stylesheet, allowed by its exact hash (the Chrome overlay tests
+catch changes to that stylesheet when upgrading Reka UI). `frame-ancestors` (and the older
 `X-Frame-Options`) stop framing, `nosniff` stops type sniffing, and
 `no-referrer` keeps URLs out of other sites' logs.
 """
@@ -20,6 +22,9 @@ if TYPE_CHECKING:
 CONTENT_SECURITY_POLICY = "; ".join(
     (
         "default-src 'self'",
+        # Reka UI SelectViewport's fixed scrollbar CSS (reka-ui 2.11.0).
+        # A hash permits exactly that stylesheet, not arbitrary inline styles.
+        "style-src 'self' 'sha256-60LHlRjW/B3CtzIoE/Lf1/NEDvko9efWMFaGVhHu/cs='",
         "object-src 'none'",
         "base-uri 'none'",
         "form-action 'self'",
