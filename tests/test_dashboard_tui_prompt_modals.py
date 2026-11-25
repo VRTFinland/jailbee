@@ -88,11 +88,14 @@ def test_confirm_has_two_ordered_rows_and_enter_chooses_the_highlight(
 def test_destructive_confirm_is_styled_and_focuses_no():
     p = Prompt(1, "confirm", "Delete x?", default=False, destructive=True)
     answer, host = run(p, ["enter"])
-    screen = host.shown["screen"]  # type: ignore[attr-defined]
+    # The run helper attaches its captured modal observations to the host.
+    shown = host.shown  # type: ignore[attr-defined]
+    screen = shown["screen"]
     assert screen.has_class("destructive")
     assert "DESTRUCTIVE" in screen.heading()
-    assert isinstance(host.shown["focused"], OptionList)  # type: ignore[attr-defined]
-    assert host.shown["focused"].highlighted == 0  # type: ignore[attr-defined]
+    focused = shown["focused"]
+    assert isinstance(focused, OptionList)
+    assert focused.highlighted == 0
     assert answer is False  # Enter on the preset focus must not delete
 
 

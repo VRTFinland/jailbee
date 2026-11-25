@@ -758,8 +758,9 @@ and keeps drawing while it runs; the status line names the running command.
   Up/Down moves, Enter chooses, and y/n answers immediately. Tab, Shift-Tab,
   Left and Right also switch the answer. A destructive confirmation is titled
   `DESTRUCTIVE:`, has a red border and title, and always starts on "No";
-  neither answer row is coloured red. The dashboard asks exactly what the CLI would ask: a value
-  a repo config settles without asking is not asked here either.
+  neither answer row is coloured red. The dashboard asks exactly what the CLI
+  would ask: a value a repo config settles without asking is not asked here
+  either.
 - **Cancel means cancel.** Esc or Ctrl-C in a modal has the effect of Esc or
   Ctrl-C at the CLI prompt. Quitting the dashboard with a question open
   cancels it, and the command exits instead of waiting.
