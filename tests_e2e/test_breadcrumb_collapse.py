@@ -19,9 +19,7 @@ SUBAGENT_TITLE = "Authentication review"
 
 
 @pytest.fixture
-def breadcrumb_page(
-    make_server: Callable[..., E2EServer], page: Page, tmp_path: Path
-) -> Page:
+def breadcrumb_page(make_server: Callable[..., E2EServer], page: Page, tmp_path: Path) -> Page:
     home = tmp_path / "claude"
     shutil.copytree(FIXTURES, home)
     parent_path = session_path(home)
@@ -47,7 +45,7 @@ def test_narrow_parent_collapses_and_navigates_without_a_viewport_breakpoint(
     page.locator(".title-bar").evaluate("bar => bar.style.width = '280px'")
     breadcrumb = page.get_by_role("navigation", name="Breadcrumb")
     parent = breadcrumb.get_by_role("link", name=SESSION_TITLE, exact=True)
-    expect(parent).to_have_text("‹")
+    expect(parent).to_have_text("‹")  # noqa: RUF001 - Specified breadcrumb back glyph.
     expect(breadcrumb.get_by_role("link")).to_have_count(1)
     expect(parent).to_have_attribute("aria-label", SESSION_TITLE)
     box = parent.bounding_box()
@@ -67,7 +65,9 @@ def test_short_parent_keeps_its_name_when_the_current_title_is_long(breadcrumb_p
     expect(page.get_by_role("heading", name=SESSION_TITLE, exact=True)).to_be_visible()
     page.set_viewport_size({"width": 280, "height": 844})
     expect(breadcrumb.get_by_role("link")).to_have_count(1)
-    page.evaluate("() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))")
+    page.evaluate(
+        "() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))"
+    )
     expect(breadcrumb.get_by_role("link", name="work", exact=True)).to_have_text("work")
     assert page.get_by_role("heading", name=SESSION_TITLE, exact=True).evaluate(
         "title => title.clientWidth >= 24"
@@ -91,7 +91,7 @@ def test_wide_phone_and_resize_restore_the_subagent_path(breadcrumb_page: Page) 
         "title => title.scrollWidth === title.clientWidth"
     )
     page.set_viewport_size({"width": 280, "height": 844})
-    expect(parent).to_have_text("‹")
+    expect(parent).to_have_text("‹")  # noqa: RUF001 - Specified breadcrumb back glyph.
     assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
     page.set_viewport_size({"width": 1280, "height": 800})
     expect(breadcrumb.get_by_role("link")).to_have_text(["JailBee", "work", SESSION_TITLE])
