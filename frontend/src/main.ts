@@ -5,6 +5,7 @@ import {createAppRouter} from "./router"
 import {startSettings} from "./settings"
 import {DashboardSocket} from "./socket"
 import "./styles/tokens.css"
+import "./styles/base.css"
 import "./styles/highlight.css"
 
 startSettings()

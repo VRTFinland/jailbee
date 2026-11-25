@@ -1,0 +1,20 @@
+{
+    "states": [
+        "Running",
+        "Frozen",
+        "Stopped"
+    ],
+    "phases": [
+        "booting",
+        "autostart",
+        "job",
+        "failed"
+    ],
+    "agents": [
+        "error",
+        "waiting",
+        "busy",
+        "shell",
+        "idle"
+    ]
+}

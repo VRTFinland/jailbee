@@ -2,7 +2,9 @@
    `md` prefix. Colours are the Material 3 tonal palette of one blue seed, for
    both the light and dark themes; the e-ink theme is black on white. Themes
    are selectors, not only `:root`, so the /ui gallery can scope one to a panel.
-   No component library and no third-party font host: Inter is bundled. */
+   No component library and no third-party font host: Inter is bundled.
+   Only custom property declarations (and @font-face) belong here: Stylelint
+   exempts their values and rejects anything else, which goes in base.css. */
 
 @font-face {
     font-family: "Inter";
@@ -279,131 +281,25 @@
     --page-controls-width: 52px;
     --quick-trigger-size: 2.75rem;
     --quick-trigger-top: 0.5rem;
+    /* E-ink pages keep their text clear of the edge tap zones. */
+    --eink-page-inset: 8vw;
 }
-[data-theme="eink"] a {
-    text-decoration: underline;
-}
-[data-theme="eink"] .notice {
-    border: 1px solid #000;
-}
-
-*,
-*::before,
-*::after {
-    box-sizing: border-box;
-}
-
-html {
-    font-size: var(--font-size-body);
-}
-
-html,
-body {
-    margin: 0;
-    background: var(--bg);
-    color: var(--text);
-    font-family: var(--font-body);
-    line-height: 1.5;
-    -webkit-text-size-adjust: 100%;
-}
-
-code {
-    font-family: var(--font-mono);
-}
-
-
-
-button.link {
-    font: inherit;
-    background: none;
-    border: none;
-    color: var(--accent);
-    cursor: pointer;
-    padding: var(--space-2);
-}
-
-/* The guard itself: a fixed strip that swallows taps and holds no controls;
-   the page leaves room for it. Both display profiles. */
-body {
-    padding-bottom: var(--guard-bottom);
-}
-.bottom-guard {
-    position: fixed;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    height: var(--guard-bottom);
-    background: var(--bg);
-    z-index: 20;
-}
-
-/* Only the full-width bar reserves vertical reading space. Floating controls
-   and jump buttons share the bottom edge without covering one another. */
+/* Only the full-width bar reserves vertical reading space. */
 :root[data-profile="eink"][data-page-controls="bar"] {
     --page-nav-height: 26px;
 }
-:root[data-profile="eink"]:not([data-page-controls="bar"]) .jump-latest {
-    right: calc(var(--space-2) + var(--page-controls-width) + var(--space-2));
-    max-width: calc(100vw - var(--page-controls-width) - 3 * var(--space-2));
-}
 
-/* Theme and profile scoping (#167): a theme or display-profile difference is
-   a token (custom properties inherit from the nearest `[data-theme]` or
-   `[data-profile]`, so a /ui gallery panel shows its own), or failing that a
-   rule `[data-profile="eink"] .x` / `[data-theme="eink"] .x` without `:root`.
-   Never `:root[data-…] .x`: no panel can scope it. `:root` stays only for what
-   exists once per page (body padding, the page controls and what is placed
-   around them). Exception: the generated `highlight.css` (Pygments) keys code
-   colours to the page's theme; the gallery shows no highlighted code. */
-
-/* E-ink never animates, nor does anything under reduced motion; edge tap
-   zones need margins clear of links. The motion token follows the nearest
-   profile; the blanket stop below skips a normal-profile scope inside an
-   e-ink one (a gallery panel on an e-ink page). A browser without complex
-   `:not()` drops the blanket stop; transitions on the token still stop. */
-[data-theme="light"],
-[data-theme="dark"] {
-    --md-icon-ink: initial;
-}
+/* Motion follows the nearest display profile: e-ink never animates, nor does
+   anything under reduced motion (base.css stops every transition too). */
 [data-profile="eink"] {
     --md-motion-duration: 0ms;
-    --md-icon-ink: #000000;
-}
-[data-theme="eink"] {
-    --md-icon-ink: #000000;
 }
 [data-profile="normal"] {
     --md-motion-duration: 150ms;
-}
-[data-profile="eink"],
-[data-profile="eink"] *:not([data-profile="normal"], [data-profile="eink"] [data-profile="normal"] *),
-[data-profile="eink"] *:not([data-profile="normal"], [data-profile="eink"] [data-profile="normal"] *)::before,
-[data-profile="eink"] *:not([data-profile="normal"], [data-profile="eink"] [data-profile="normal"] *)::after {
-    transition: none !important;
-    animation: none !important;
-    scroll-behavior: auto !important;
 }
 @media (prefers-reduced-motion: reduce) {
     :root,
     [data-profile] {
         --md-motion-duration: 0ms;
     }
-    *,
-    *::before,
-    *::after {
-        transition: none !important;
-        animation: none !important;
-        scroll-behavior: auto !important;
-    }
-}
-:root[data-profile="eink"] html,
-:root[data-profile="eink"] {
-    scroll-behavior: auto !important;
-}
-:root[data-profile="eink"] body {
-    padding-inline: 8vw;
-    padding-bottom: calc(var(--guard-bottom) + var(--page-nav-height) + var(--space-3));
-}
-:root[data-profile="eink"]:not([data-page-controls="bar"]) body {
-    padding-right: max(8vw, calc(var(--page-controls-width) + 2 * var(--space-2)));
 }

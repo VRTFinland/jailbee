@@ -92,7 +92,8 @@ web-e2e:
 		--output $(E2E_OUTPUT) $(E2E_ARGS)
 
 # Accept intentional gallery changes. Only the gallery tests run, with no
-# Playwright artifacts or pytest cache writes; review and commit the PNG diff.
+# Playwright artifacts or pytest cache writes. Only gallery groups that no
+# longer match are rewritten (losslessly compressed); review and commit the diff.
 web-e2e-snapshots:
 	$(MAKE) web
 	@output=$$(mktemp -d); trap 'rm -rf "$$output"' EXIT; \

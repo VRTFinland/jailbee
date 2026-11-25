@@ -22,6 +22,5 @@ withDefaults(defineProps<{
     display: inline-block;
     flex: none;
     vertical-align: middle;
-    color: var(--md-icon-ink, inherit);
 }
 </style>

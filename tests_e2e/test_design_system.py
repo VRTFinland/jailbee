@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import re
 from urllib.parse import urlsplit
 
-from playwright.sync_api import Page, expect
+from playwright.sync_api import Locator, Page, Position, expect
 
 from tests_e2e.flows import open_settings
 from tests_e2e.server import E2EServer
@@ -98,7 +99,16 @@ def test_gallery_shows_every_theme_and_profile_after_login(logged_in: Page) -> N
     )
 
 
-def test_bundled_icons_render_at_token_sizes_and_turn_black_in_eink(logged_in: Page) -> None:
+# Every icon's painted fill and the text colour of the element it sits in.
+_ICON_INK = """
+(panel) => [...panel.querySelectorAll("svg")].map((svg) => [
+    getComputedStyle(svg.querySelector("path")).fill,
+    getComputedStyle(svg.parentElement).color,
+])
+"""
+
+
+def test_bundled_icons_render_at_token_sizes_and_follow_the_text_colour(logged_in: Page) -> None:
     page = logged_in
     _open_gallery(page)
     for name in PANELS:
@@ -111,9 +121,16 @@ def test_bundled_icons_render_at_token_sizes_and_turn_black_in_eink(logged_in: P
             assert icon.locator("path").evaluate("el => el.getBBox().width > 0")
         assert icons.first.evaluate("el => el.getBoundingClientRect().width") == 24
         assert icons.first.evaluate("el => el.getBoundingClientRect().height") == 24
-        if "E-ink theme" in name or "e-ink profile" in name:
-            for icon in icons.all():
-                expect(icon.locator("path")).to_have_css("fill", "rgb(0, 0, 0)")
+        # Colour belongs to the theme (ADR 0007): an icon is drawn in its
+        # surroundings' text colour, light on a dark e-ink-profile panel and on
+        # a primary button, black in the e-ink theme because its text is.
+        ink = panel.evaluate(_ICON_INK)
+        assert len(ink) > 30
+        assert [fill for fill, _ in ink] == [colour for _, colour in ink], name
+        if "E-ink theme" in name:
+            assert {fill for fill, _ in ink} <= {"rgb(0, 0, 0)", "rgb(255, 255, 255)"}, name
+        if "Dark theme" in name:
+            assert "rgb(0, 0, 0)" not in {fill for fill, _ in ink}, name
 
     sizes = page.get_by_role("region", name="Light theme, normal profile").get_by_label(
         "Icon sizes", exact=True
@@ -348,3 +365,94 @@ def test_gallery_switch_toggles_by_pointer_and_keyboard(logged_in: Page) -> None
     # The 32px track sits in a 44px hit target.
     assert follow.evaluate("el => el.getBoundingClientRect().height") == 44
     assert track.evaluate("el => el.getBoundingClientRect().height") == 32
+
+
+def _linked_row(page: Page, title: str) -> tuple[Locator, Locator]:
+    """The light panel's ListRow linked by `title`, and its row link."""
+    panel = page.get_by_role("region", name="Light theme, normal profile", exact=True)
+    inner = page.locator("a.list-row-link").filter(has_text=re.compile(f"^{title}$"))
+    row = panel.locator("li.list-row", has=inner)
+    return row, row.locator("a.list-row-link")
+
+
+def _over_secondary(row: Locator) -> Position:
+    """A point of `row` over its secondary line, clear of the title."""
+    box, line = row.bounding_box(), row.locator(".list-row-secondary").bounding_box()
+    assert box and line
+    return {"x": line["x"] - box["x"] + 4, "y": line["y"] - box["y"] + line["height"] / 2}
+
+
+def test_linked_list_row_opens_from_anywhere_with_layer_and_focus_ring(logged_in: Page) -> None:
+    """A ListRow with `to` (#167 ticket 05b): the whole row opens its route,
+    hover draws the state layer over the row, keyboard focus rings the row,
+    and links in its body keep their own target."""
+    page = logged_in
+    _open_gallery(page)
+    row, link = _linked_row(page, "dev-ork")
+    expect(row.locator(".list-row-body")).to_contain_text("Orchestrator · 2 children")
+    assert row.evaluate("el => el.getBoundingClientRect().height") >= 48
+    expect(link).to_have_attribute("href", re.compile(r"#/ui\?row=dev-ork$"))
+
+    row.hover(position=_over_secondary(row))
+    page.wait_for_function(
+        "el => getComputedStyle(el, '::before').opacity === '0.08'", arg=row.element_handle()
+    )
+    # A trailing control is its own target: hovering it does not light the
+    # row, clicking it does not open the row; a chip beside it is part of the row.
+    actions = row.get_by_role("button", name="Actions for dev-ork", exact=True)
+    actions.hover()
+    page.wait_for_timeout(200)
+    assert row.evaluate(_LAYER_OPACITY) == "0"
+    actions.click()
+    expect(page).to_have_url(re.compile(r"#/ui$"))
+    row.locator(".status-chip").first.click(force=True)
+    expect(page).to_have_url(re.compile(r"#/ui\?row=dev-ork$"))
+    _open_gallery(page)
+    row, link = _linked_row(page, "dev-ork")
+
+    # A click on the secondary line, not the title, still opens the route (the
+    # gallery's sample rows link back to it: their names are no real containers).
+    row.click(position=_over_secondary(row))
+    expect(page).to_have_url(re.compile(r"#/ui\?row=dev-ork$"))
+
+    _open_gallery(page)
+    row, link = _linked_row(page, "dev-ork")
+    link.focus()
+    page.keyboard.press("Shift+Tab")
+    page.keyboard.press("Tab")
+    expect(link).to_be_focused()
+    expect(row).to_have_css("outline-style", "solid")
+    expect(row).to_have_css("outline-color", "rgb(58, 95, 148)")
+
+    child_row, child_link = _linked_row(page, "dev-ork-1")
+    expect(child_link).to_have_attribute("aria-current", "true")
+    expect(child_row).not_to_have_attribute("aria-current", "true")
+    # The body's own link opens its target, not the row's.
+    child_row.locator(".list-row-body").get_by_role("link", name="dev-ork", exact=True).click()
+    expect(page).to_have_url(re.compile(r"#/ui\?row=dev-ork$"))
+    _open_gallery(page)
+    child_row, _ = _linked_row(page, "dev-ork-1")
+    child_row.click(position=_over_secondary(child_row))
+    expect(page).to_have_url(re.compile(r"#/ui\?row=dev-ork-1$"))
+
+
+def test_disabled_switch_draws_no_hover_or_pressed_halo(logged_in: Page) -> None:
+    page = logged_in
+    _open_gallery(page)
+    panel = page.get_by_role("region", name="Light theme, normal profile", exact=True)
+    disabled = panel.get_by_role("switch", name="On, disabled", exact=True)
+    handle = disabled.locator(".switch-handle")
+    disabled.hover()
+    page.wait_for_timeout(200)
+    assert handle.evaluate(_LAYER_OPACITY) == "0"
+    page.mouse.down()
+    page.wait_for_timeout(200)
+    assert handle.evaluate(_LAYER_OPACITY) == "0"
+    page.mouse.up()
+    # The enabled switch still draws its halo.
+    enabled = panel.get_by_role("switch", name="On", exact=True)
+    enabled.hover()
+    page.wait_for_function(
+        "el => getComputedStyle(el, '::before').opacity === '0.08'",
+        arg=enabled.locator(".switch-handle").element_handle(),
+    )

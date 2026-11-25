@@ -13,7 +13,7 @@ defineEmits<{click: [event: MouseEvent]}>()
 </script>
 
 <template>
-    <button type="button" class="icon-button state-layer focus-ring" :aria-label="label" :title="label"
+    <button type="button" class="icon-button ui-state-layer ui-focus-ring" :aria-label="label" :title="label"
         :disabled="disabled" @click="$emit('click', $event)">
         <Icon :name="icon" />
     </button>

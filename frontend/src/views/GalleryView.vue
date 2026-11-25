@@ -10,6 +10,7 @@ import IconButton from "../components/ui/IconButton.vue"
 import ListRow from "../components/ui/ListRow.vue"
 import StatusChip, {STATUS_NAMES} from "../components/ui/StatusChip.vue"
 import Switch from "../components/ui/Switch.vue"
+import {rowStatuses} from "../components/ui/status"
 import {ICON_NAMES} from "../components/ui/material-symbols/paths"
 import iconLicence from "../components/ui/material-symbols/LICENSE?url&no-inline"
 import iconNotice from "../components/ui/material-symbols/NOTICE.md?url&no-inline"
@@ -55,6 +56,10 @@ const BUTTON_VARIANTS = ["primary", "tonal", "text", "danger"] as const
 const followLive = reactive<Record<string, boolean>>(Object.fromEntries(
     THEMES.flatMap((t) => PROFILES.map((p) => [`${t.id}-${p.id}`, false])),
 ))
+
+/** The linked sample rows' chips, through the same mapping the views use. */
+const ORCHESTRATOR_CHIPS = rowStatuses({state: "Running", phase: null, agent: "busy"})
+const CHILD_CHIPS = rowStatuses({state: "Running", phase: "job", agent: "waiting"})
 
 const SHAPES = ["small", "medium", "large", "extra-large", "full"]
 
@@ -156,6 +161,7 @@ function typeStyle(token: string): Record<string, string> {
                         <div class="samples">
                             <StatusChip v-for="status in STATUS_NAMES" :key="status" :status="status" />
                             <StatusChip status="error" label="API error: overloaded" />
+                            <StatusChip status="unknown" label="Error" />
                         </div>
                     </div>
 
@@ -177,6 +183,26 @@ function typeStyle(token: string): Record<string, string> {
                             <ListRow title="Follow live">
                                 <template #trailing>
                                     <Switch v-model="followLive[`${theme.id}-${profile.id}`]" label="Follow live" />
+                                </template>
+                            </ListRow>
+                            <ListRow title="dev-ork" secondary="orchestrator · 3 min"
+                                :to="{name: 'gallery', query: {row: 'dev-ork'}}">
+                                <p class="row-line">Orchestrator · 2 children</p>
+                                <dl class="row-cells">
+                                    <div><dt>Sync</dt><dd>↑2</dd></div>
+                                    <div><dt>Diff</dt><dd>+12 −3</dd></div>
+                                </dl>
+                                <template #trailing>
+                                    <StatusChip v-for="chip in ORCHESTRATOR_CHIPS" :key="chip.status" v-bind="chip" />
+                                    <IconButton icon="menu" label="Actions for dev-ork" />
+                                </template>
+                            </ListRow>
+                            <ListRow title="dev-ork-1" secondary="child · codex" selected
+                                :to="{name: 'gallery', query: {row: 'dev-ork-1'}}">
+                                <p class="row-line">Child of <router-link
+                                    :to="{name: 'gallery', query: {row: 'dev-ork'}}">dev-ork</router-link> · running</p>
+                                <template #trailing>
+                                    <StatusChip v-for="chip in CHILD_CHIPS" :key="chip.status" v-bind="chip" />
                                 </template>
                             </ListRow>
                         </ul>
@@ -284,6 +310,25 @@ function typeStyle(token: string): Record<string, string> {
     padding: 0;
     display: grid;
     gap: var(--md-space-4);
+}
+.row-line {
+    margin: var(--md-space-4) 0 0;
+}
+.row-cells {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--md-space-4) var(--md-space-16);
+    margin: var(--md-space-4) 0 0;
+}
+.row-cells div {
+    display: flex;
+    gap: var(--md-space-4);
+}
+.row-cells dt {
+    color: var(--md-on-surface-variant);
+}
+.row-cells dd {
+    margin: 0;
 }
 .type-sample {
     margin: 0 0 var(--md-space-4);

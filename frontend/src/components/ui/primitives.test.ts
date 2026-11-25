@@ -1,9 +1,10 @@
 import {describe, expect, it} from "vitest"
 import {mount} from "@vue/test-utils"
+import {createMemoryHistory, createRouter} from "vue-router"
 import Button from "./Button.vue"
 import IconButton from "./IconButton.vue"
 import Switch from "./Switch.vue"
-import StatusChip, {STATUS_NAMES} from "./StatusChip.vue"
+import StatusChip from "./StatusChip.vue"
 import ListRow from "./ListRow.vue"
 
 // The static UI primitives (#167 ticket 05): observable behaviour only. The
@@ -28,15 +29,19 @@ describe("Button", () => {
         expect(wrapper.get("button").attributes("data-variant")).toBe("tonal")
     })
 
-    it("emits clicks while enabled and none when disabled", async () => {
+    it("emits clicks while enabled", async () => {
         const enabled = mount(Button, {slots: {default: "Go"}})
         await enabled.get("button").trigger("click")
         expect(enabled.emitted("click")).toHaveLength(1)
+    })
 
+    // A disabled button gets no clicks from the browser; VTU's trigger skips
+    // disabled elements too, so an `emitted` check could never fail. The
+    // attribute is what the component controls.
+    it("is a disabled button when disabled", () => {
         const disabled = mount(Button, {props: {disabled: true}, slots: {default: "Go"}})
         expect(disabled.get("button").attributes("disabled")).toBeDefined()
-        await disabled.get("button").trigger("click")
-        expect(disabled.emitted("click")).toBeUndefined()
+        expect(mount(Button, {slots: {default: "Go"}}).get("button").attributes("disabled")).toBeUndefined()
     })
 
     it("can submit a form", () => {
@@ -62,15 +67,17 @@ describe("IconButton", () => {
         expect(wrapper.get("svg").attributes("aria-hidden")).toBe("true")
     })
 
-    it("emits clicks while enabled and none when disabled", async () => {
+    it("emits clicks while enabled", async () => {
         const enabled = mount(IconButton, {props: {icon: "close", label: "Close"}})
         await enabled.get("button").trigger("click")
         expect(enabled.emitted("click")).toHaveLength(1)
+    })
 
+    it("is a disabled button when disabled", () => {
         const disabled = mount(IconButton, {props: {icon: "close", label: "Close", disabled: true}})
         expect(disabled.get("button").attributes("disabled")).toBeDefined()
-        await disabled.get("button").trigger("click")
-        expect(disabled.emitted("click")).toBeUndefined()
+        expect(mount(IconButton, {props: {icon: "close", label: "Close"}}).get("button").attributes("disabled"))
+            .toBeUndefined()
     })
 })
 
@@ -104,25 +111,17 @@ describe("Switch", () => {
         expect(control.attributes("aria-checked")).toBe("false")
     })
 
-    it("does not toggle when disabled", async () => {
+    it("is a disabled button when disabled", () => {
         const wrapper = mount(Switch, {props: {modelValue: false, label: "Follow live", disabled: true}})
-        const control = wrapper.get('[role="switch"]')
-        expect(control.attributes("disabled")).toBeDefined()
-        await control.trigger("click")
-        expect(wrapper.emitted("update:modelValue")).toBeUndefined()
+        expect(wrapper.get('[role="switch"]').attributes("disabled")).toBeDefined()
+        expect(mount(Switch, {props: {modelValue: false, label: "Follow live"}}).get('[role="switch"]')
+            .attributes("disabled")).toBeUndefined()
     })
 })
 
 describe("StatusChip", () => {
-    it("covers every container phase and agent state", () => {
-        expect([...STATUS_NAMES]).toEqual([
-            "running", "stopped", "booting", "autostart", "job", "failed",
-            "waiting", "busy", "idle", "shell", "error",
-        ])
-    })
-
     it.each([
-        ["running", "running"], ["stopped", "stopped"], ["booting", "booting"],
+        ["running", "running"], ["frozen", "frozen"], ["stopped", "stopped"], ["booting", "booting"],
         ["autostart", "autostart"], ["job", "job"], ["failed", "failed"],
         ["waiting", "waiting for you"], ["busy", "working"], ["idle", "idle"],
         ["shell", "shell"], ["error", "error"],
@@ -164,5 +163,58 @@ describe("ListRow", () => {
         expect(plain.attributes("aria-current")).toBeUndefined()
         const selected = mount(ListRow, {props: {title: "a", selected: true}})
         expect(selected.attributes("aria-current")).toBe("true")
+    })
+
+    it("carries block content in its body below the title and secondary line", () => {
+        const wrapper = mount(ListRow, {
+            props: {title: "dev-plan", secondary: "waiting for you"},
+            slots: {default: '<p class="orchestration">Orchestrator · 2 children</p><dl><dt>Sync</dt><dd>ok</dd></dl>'},
+        })
+        const body = wrapper.get(".list-row-body")
+        expect(body.element.tagName).toBe("DIV")
+        expect(body.get(".orchestration").text()).toBe("Orchestrator · 2 children")
+        expect(body.get("dl dd").text()).toBe("ok")
+        expect(mount(ListRow, {props: {title: "a"}}).find(".list-row-body").exists()).toBe(false)
+    })
+
+    describe("with a route", () => {
+        function linked(props: Record<string, unknown>, slots: Record<string, string> = {}) {
+            const router = createRouter({history: createMemoryHistory(), routes: [
+                {path: "/", component: {template: "<div />"}},
+                {path: "/c/:name", name: "container", component: {template: "<div />"}},
+            ]})
+            return {router, wrapper: mount(ListRow, {props, slots, global: {plugins: [router]}})}
+        }
+
+        it("makes the title a link to the route, which the whole row opens", async () => {
+            const {router, wrapper} = linked({title: "dev-plan", to: {name: "container", params: {name: "dev-plan"}}})
+            const link = wrapper.get("a.list-row-link")
+            expect(link.attributes("href")).toBe("/c/dev-plan")
+            expect(link.text()).toBe("dev-plan")
+            expect(wrapper.classes()).toContain("linked")
+            await link.trigger("click")
+            await router.isReady()
+            await new Promise((resolve) => setTimeout(resolve))
+            expect(router.currentRoute.value.fullPath).toBe("/c/dev-plan")
+        })
+
+        it("puts aria-current on the link, not the list item", () => {
+            const {wrapper} = linked({title: "a", to: "/c/a", selected: true})
+            expect(wrapper.get("a").attributes("aria-current")).toBe("true")
+            expect(wrapper.attributes("aria-current")).toBeUndefined()
+            const {wrapper: plain} = linked({title: "a", to: "/c/a"})
+            expect(plain.get("a").attributes("aria-current")).toBeUndefined()
+        })
+
+        it("keeps trailing controls and body links outside the row link", () => {
+            const {wrapper} = linked({title: "a", to: "/c/a"}, {
+                trailing: '<button type="button">Actions</button>',
+                default: '<p>Child of <a href="#/c/ork">ork</a></p>',
+            })
+            const rowLink = wrapper.get("a.list-row-link")
+            expect(rowLink.find("button").exists()).toBe(false)
+            expect(rowLink.find("a").exists()).toBe(false)
+            expect(wrapper.findAll("a")).toHaveLength(2)
+        })
     })
 })

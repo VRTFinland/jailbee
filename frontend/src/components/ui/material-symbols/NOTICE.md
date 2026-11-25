@@ -45,8 +45,9 @@ external sprite or runtime request to Google is used.
 Import `Icon` from `components/ui/Icon.vue`. `name` is a typed dashboard name
 from the table above. `size` is `small`, `medium` (default) or `large`, using
 `--md-icon-small`, `--md-icon-medium` and `--md-icon-large` (1, 1.5 and 2rem).
-The vectors inherit the surrounding text colour; the e-ink theme and display
-profile force black through `--md-icon-ink`.
+The vectors are filled with `currentColor`, the surrounding text colour, in
+every theme and display profile: colour belongs to the theme (ADR 0007), and
+the e-ink theme's text tokens are already black.
 
 Supply `label="Settings"` for a standalone meaningful image. Omit `label` for a
 decorative icon, including one inside a button that already has an accessible
