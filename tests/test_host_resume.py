@@ -237,6 +237,29 @@ def test_resume_no_stages_planned_does_not_require_tmux(host, mocker):
     start.assert_not_called()
 
 
+@pytest.mark.parametrize("marker", ["handled", "skipped", "present", "missing"])
+def test_resume_backfills_handled_boot_and_hides_upgrade_offer(host, mocker, marker):
+    from jailbee.config import Autostart
+    from jailbee.dashboard.model import RepoGroup
+    from jailbee.host_resume import resumable_repos
+    from jailbee.lifecycle import list_containers
+
+    cfg, _, incus, _ = host
+    cfg = cfg.model_copy(update={"autostart": Autostart()})
+    mocker.patch("jailbee.cli._load_orphan_base_or_exit", return_value=cfg)
+    incus.list_containers.return_value = incus.list_containers.return_value[:1]
+    incus.list_containers.return_value[0]["last_used_at"] = "2099-11-25T09:00:00Z"
+    incus.exec.return_value = marker
+
+    def candidates():
+        return resumable_repos([RepoGroup("one", str(cfg.repo_root), None, list_containers(cfg, incus))])
+
+    assert candidates() == ["one"]
+    result = CliRunner().invoke(app, ["resume"])
+    assert result.exit_code == 0, result.output
+    assert candidates() == []
+
+
 @pytest.mark.parametrize("marker", ["handled", "skipped"])
 def test_resume_honours_this_boot_decision_even_without_tmux(host, mocker, marker):
     _, _, incus, _ = host
@@ -313,6 +336,22 @@ def test_resume_drops_vanished_container_without_loading_its_repository(host, mo
     load.assert_not_called()
 
 
+def test_local_resume_prunes_vanished_handled_boots(host):
+    _, _, incus, _ = host
+    incus.list_containers.return_value = incus.list_containers.return_value[:1]
+    path = state_dir() / "resume-set.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({
+        "version": 1, "containers": {},
+        "handled": {"gone-work": "2026-11-25T09:00:00Z", "one-work": "2026-11-25T09:00:00Z"},
+    }))
+
+    result = CliRunner().invoke(app, ["resume"])
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(path.read_text())["handled"] == {"one-work": "2026-11-25T09:00:00Z"}
+
+
 @pytest.mark.parametrize("saved", [True, False])
 def test_resume_reports_unloadable_repository_once_and_keeps_existing_entries(host, mocker, saved):
     from jailbee.config import ConfigError
@@ -380,6 +419,7 @@ def test_destroy_cleans_all_resume_journal_sections(host, mocker):
                 "containers": {"one-off": str(cfg.repo_root), "one-keep": str(cfg.repo_root)},
                 "pending": ["one-off"],
                 "stopping": {"one-off": str(cfg.repo_root)},
+                "handled": {"one-off": "2026-11-25T09:00:00Z", "one-keep": "2026-11-25T08:00:00Z"},
             }
         )
     )
@@ -390,6 +430,7 @@ def test_destroy_cleans_all_resume_journal_sections(host, mocker):
     assert recorded() == {"one-keep": str(cfg.repo_root)}
     assert json.loads(path.read_text())["pending"] == []
     assert json.loads(path.read_text())["stopping"] == {}
+    assert json.loads(path.read_text())["handled"] == {"one-keep": "2026-11-25T08:00:00Z"}
 
 
 @pytest.mark.parametrize("command", [["stop", "--all", "--yes"], ["resume"]])

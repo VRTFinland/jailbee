@@ -307,7 +307,11 @@ def test_detached_boot_is_completed_only_after_all_stages_succeed(
     def execute(name, argv, **kwargs):
         if MARKER in " ".join(argv):
             events.append(" ".join(argv))
-        return ""
+        return "recorded"
+
+    incus.list_containers.return_value = [{
+        "name": "c1", "status": "Running", "last_used_at": "2099-11-25T09:00:00Z",
+    }]
 
     def stage(*args, **kwargs):
         events.append("stage")
@@ -328,6 +332,13 @@ def test_detached_boot_is_completed_only_after_all_stages_succeed(
         assert len(events) == 2
         assert events[0] == "stage"
         assert "handled" in events[1]
+    from jailbee.db import state_dir
+
+    path = state_dir() / "resume-set.json"
+    if failure:
+        assert not path.exists()
+    else:
+        assert json.loads(path.read_text())["handled"] == {"c1": "2099-11-25T09:00:00Z"}
 
 
 def test_run_detached_runs_only_the_stages_past_the_boundary(tmp_path, mocker, make_cfg):

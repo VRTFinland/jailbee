@@ -32,6 +32,7 @@ class ResumeSet:
     containers: dict[str, str] = field(default_factory=dict)
     pending: set[str] = field(default_factory=set)
     stopping: dict[str, str] = field(default_factory=dict)
+    handled: dict[str, str] = field(default_factory=dict)
 
 
 def _read_set() -> ResumeSet:
@@ -59,29 +60,54 @@ def _read_set() -> ResumeSet:
             isinstance(name, str) and isinstance(root, str) for name, root in stopping.items()
         ):
             raise ValueError("invalid stopping entries")
-        return ResumeSet(dict(entries), set(pending), dict(stopping))
+        handled = data.get("handled", {})
+        if not isinstance(handled, dict) or not all(
+            isinstance(name, str) and isinstance(identity, str)
+            for name, identity in handled.items()
+        ):
+            raise ValueError("invalid handled boots")
+        return ResumeSet(dict(entries), set(pending), dict(stopping), dict(handled))
     except (ValueError, KeyError, TypeError) as exc:
         raise ValueError(f"Cannot read {path}: {exc}") from exc
 
 
+def _needs_setup(container: ContainerInfo, state: ResumeSet) -> bool:
+    identity = container.start_identity
+    if identity is None:
+        return False
+    if container.name in state.handled:
+        return state.handled[container.name] != identity
+    # Upgrade recovery: Incus has already started this instance since host boot,
+    # but an older JailBee could not have recorded completion on the host.
+    from datetime import datetime
+
+    try:
+        boot = next(
+            float(line.split()[1])
+            for line in Path("/proc/stat").read_text().splitlines()
+            if line.startswith("btime ")
+        )
+    except (OSError, ValueError, StopIteration):
+        return True  # No host boot clock: prefer one recovery offer.
+    return datetime.fromisoformat(identity).timestamp() >= boot
+
+
 def resumable_repos(groups: list[RepoGroup]) -> list[str | None]:
     """Resume candidates; None denotes local-only recovery (orphans or read errors)."""
+    from jailbee.config import ORPHAN_BASE_PREFIX
+
     try:
         state = _read_set()
     except (OSError, ValueError):
         # Keep the command reachable locally so it can report the journal error.
         return [None]
-    # The volatile boot marker is not part of the shared inventory. With no
-    # saved intent, keep reboot recovery reachable without an exec per tick.
-    names = state.containers.keys() | state.stopping.keys()
-    empty = not names
     saved = [
         g
         for g in groups
-        if any(
+        if g.prefix != ORPHAN_BASE_PREFIX and any(
             c.name in state.containers
             or (c.name in state.stopping and c.state != "Running")
-            or (empty and c.state == "Running")
+            or (c.state == "Running" and _needs_setup(c, state))
             for c in g.containers
         )
     ]
@@ -102,6 +128,7 @@ def _write_set(state: ResumeSet) -> None:
                     "containers": state.containers,
                     "pending": sorted(state.pending),
                     "stopping": state.stopping,
+                    "handled": state.handled,
                 },
                 stream,
             )
@@ -144,12 +171,20 @@ def _edit_set() -> Iterator[ResumeSet]:
             fcntl.flock(lock, fcntl.LOCK_UN)
 
 
-def remove(name: str) -> None:
-    """Forget a destroyed or successfully resumed container under the journal lock."""
+def remember_boot(name: str, identity: str) -> None:
+    """Persist the start whose setup completed, serialized with resume intent."""
+    with _edit_set() as state:
+        state.handled[name] = identity
+
+
+def remove(name: str, *, destroyed: bool = False) -> None:
+    """Forget resume intent; destruction also forgets the handled start."""
     with _edit_set() as state:
         state.containers.pop(name, None)
         state.pending.discard(name)
         state.stopping.pop(name, None)
+        if destroyed:
+            state.handled.pop(name, None)
 
 
 def _configs(cfg: Config, failures: dict[Path, str] | None = None) -> dict[str, Config]:
@@ -325,6 +360,9 @@ def _resume(
             entries.pop(name, None)
             pending.discard(name)
             state.stopping.pop(name, None)
+        if not remote:
+            for name in state.handled.keys() - by_name.keys():
+                del state.handled[name]
         # Recover intent left by a process that died after stopping an instance.
         for name, root in list(state.stopping.items()):
             if remote and name not in by_name:
@@ -397,6 +435,8 @@ def _resume(
                 from jailbee.autostart_profiles import profiled_config
 
                 if present in ("present", "handled", "skipped"):
+                    if container.start_identity is not None:
+                        remember_boot(name, container.start_identity)
                     if name in entries:
                         remove(name)
                     continue
@@ -409,6 +449,8 @@ def _resume(
                     services_stage=bool(effective.services),
                 )
                 if present == "missing" and not plan.blocking and not plan.detached:
+                    if container.start_identity is not None:
+                        remember_boot(name, container.start_identity)
                     if name in entries:
                         remove(name)
                     continue

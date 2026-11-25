@@ -63,8 +63,11 @@ restart check remains unverified in this environment. For a host reboot, use
 over remote SSH and web command policy within visible repositories only;
 excluded repos and orphans remain untouched, with their saved entries left for
 a local resume. Global offers Resume for eligible saved containers, or running
-in-scope containers when the journal is empty (unplanned reboot recovery).
-This cheap hint does not probe boot markers; Resume may report nothing to do.
+in-scope containers whose Incus start identity differs from the host's handled
+boot record. Completed/skipped setup records that start and hides Resume until
+the next boot. Starts since host boot without a record offer recovery once after
+upgrading; Resume verifies or completes setup and backfills the record. Refresh
+does not probe guest boot markers.
 An unreadable journal keeps Resume available locally to report the error.
 Actual host reboot and
 raw `incus stop` smoke tests remain unverified.

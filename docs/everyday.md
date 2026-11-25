@@ -116,7 +116,13 @@ Over remote SSH or the web command policy, `stop --all` and `resume` operate
 only on repositories visible to that transport. Excluded repositories and
 orphans are untouched; their saved entries remain for a local resume. Command
 allowlists still need `stop` / `resume`. The global menu offers Resume only
-when the saved set contains an existing container in an eligible repository.
+for an existing saved container or a running container needing boot setup in an
+eligible repository. The host records each completed or skipped start in the
+same journal, keyed by Incus `last_used_at`. A changed start identity offers
+Resume without probing inside containers on each refresh; a matching record
+hides it in steady state. After upgrading from a version without these records,
+a container started since host boot is offered once, until Resume verifies or
+completes its setup. Destroy and local Resume prune vanished boot records.
 
 ## Snapshots and rollback
 

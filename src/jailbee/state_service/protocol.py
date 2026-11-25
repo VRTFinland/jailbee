@@ -67,7 +67,8 @@ from jailbee.update_check import UpdateNotice
 # 40 adds ContainerInfo.branch, the branch the container was created on.
 # 41 adds Snapshot.resumable_repos for scoped Resume menu visibility.
 # 42 includes local-only saved orphan entries in Snapshot.resumable_repos.
-PROTOCOL = 42
+# 43 adds ContainerInfo.start_identity for precise host-side boot recovery.
+PROTOCOL = 43
 
 
 class ProtocolError(ValueError):
@@ -120,7 +121,8 @@ class Snapshot:
     groups: list[RepoGroup]
     update: UpdateNotice | None = None
     system: SystemStatus | None = None
-    # Frontends apply their caller's repo scope; None is a local-only orphan.
+    # Shared host-wide snapshot: consumers MUST filter excluded prefixes by
+    # their caller's repo scope. None means local-only orphan/journal recovery.
     resumable_repos: list[str | None] = field(default_factory=list)
 
 

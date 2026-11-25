@@ -115,6 +115,9 @@ class ContainerInfo:
     # Effective ordinary stages, derived by the dashboard gatherer from the host config.
     autostart_rerunnable: bool = False
     created_at: datetime | None = None
+    # Incus last_used_at changes on every start, including daemon autostart.
+    # Preserve RFC3339Nano verbatim: sub-microsecond starts must stay distinct.
+    start_identity: str | None = None
     memory_usage: int | None = None
     memory_override: bool = False
     # Raw inputs for the CPU/DOING columns, from the same `incus list`
@@ -642,6 +645,7 @@ def list_containers(
     """
     from jailbee import egress_scope
     from jailbee.accounts import groups
+    from jailbee.boot_state import start_identity
     from jailbee.mounts import attached_kinds, mount_until
     from jailbee.network_generation import generation_of
     from jailbee.work_mode import work_mode_state
@@ -815,6 +819,7 @@ def list_containers(
                 credential_group=credential_group_raw or None,
                 autostart_profile=config.get("user.jailbee.autostart_profile") or None,
                 created_at=_parse_incus_timestamp(raw.get("created_at")),
+                start_identity=start_identity(raw.get("last_used_at")),
                 uuid=config.get("volatile.uuid") or None,
                 memory_usage=memory_usage,
                 init_pid=init_pid,
@@ -3468,7 +3473,7 @@ def _destroy_container_locked(
     from jailbee import host_resume
 
     try:
-        host_resume.remove(name)
+        host_resume.remove(name, destroyed=True)
     except (OSError, ValueError) as exc:
         warn(f"Could not remove resume entry for '{name}' (continuing): {exc}")
 

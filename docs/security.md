@@ -255,10 +255,11 @@ leaves (`stop` and `resume`). Remotely they affect only containers owned by
 visible repositories: excluded repos and orphans are untouched, including
 saved resume entries. This applies even with `restrict_host: false`; a local
 invocation remains host-wide. Resume uses the state service snapshot: it appears
-for an eligible saved container, or a running in-scope container when the resume
-journal is empty (so recovery after an unplanned host reboot stays reachable).
-The latter is a conservative hint, not a boot-marker probe: the command may
-report nothing to resume. An unreadable journal offers local-only Resume so the
+for an eligible saved container, or a running in-scope container whose Incus
+start identity differs from its host-side completed/skipped boot record. A start
+since host boot without a record is offered once for upgrade recovery. Matching
+records hide Resume in steady state; refresh never probes guest boot markers.
+An unreadable journal offers local-only Resume so the
 command can report the error.
 
 While `restrict_host` is on, the commands that manage the host itself are
