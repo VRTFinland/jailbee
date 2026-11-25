@@ -38,8 +38,11 @@ def current_start(incus: Incus, name: str) -> str | None:
 
 
 def record(
-    incus: Incus, name: str, decision: Literal["started", "handled", "skipped"],
-    *, expected_start: str | None = None,
+    incus: Incus,
+    name: str,
+    decision: Literal["started", "handled", "skipped"],
+    *,
+    expected_start: str | None = None,
 ) -> bool:
     """Best-effort boot state; an unfinished start stays eligible for resume.
 

@@ -60,8 +60,10 @@ def test_start_records_boot_decision_even_when_no_tmux_is_needed(
     ]
 
     if reboot_during_setup:
+
         def restart(*args, **kwargs):
             incus.list_containers.return_value[0]["last_used_at"] = "2099-11-26T09:00:00Z"
+
         mocker.patch("jailbee.autostart.inject_github_token", side_effect=restart)
 
     result = runner.invoke(
@@ -73,17 +75,17 @@ def test_start_records_boot_decision_even_when_no_tmux_is_needed(
     from jailbee.host_resume import resumable_repos
     from jailbee.lifecycle import list_containers
 
-    assert (
-        resumable_repos(
-            [RepoGroup("myrepo", str(tmp_path), None, list_containers(cfg, incus, all_repos=True))]
-        )
-        == (["myrepo"] if reboot_during_setup else [])
-    )
+    assert resumable_repos(
+        [RepoGroup("myrepo", str(tmp_path), None, list_containers(cfg, incus, all_repos=True))]
+    ) == (["myrepo"] if reboot_during_setup else [])
     expected = "skipped" if skip else "handled"
-    assert any(
-        MARKER in " ".join(call.args[1]) and expected in " ".join(call.args[1])
-        for call in incus.exec.call_args_list
-    ) is not reboot_during_setup
+    assert (
+        any(
+            MARKER in " ".join(call.args[1]) and expected in " ".join(call.args[1])
+            for call in incus.exec.call_args_list
+        )
+        is not reboot_during_setup
+    )
 
 
 def test_start_calls_apply_hosts_for_strict_container(mocker):

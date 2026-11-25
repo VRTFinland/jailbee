@@ -359,16 +359,22 @@ def test_detached_setup_cannot_acknowledge_another_start(tmp_path, mocker, make_
     cfg = _cfg_with(make_cfg, tmp_path, block)
     incus = mocker.MagicMock()
     incus.exec.return_value = "recorded"
-    incus.list_containers.return_value = [{
-        "name": "c1", "status": "Running", "last_used_at": "2099-11-26T09:00:00Z",
-    }]
+    incus.list_containers.return_value = [
+        {
+            "name": "c1",
+            "status": "Running",
+            "last_used_at": "2099-11-26T09:00:00Z",
+        }
+    ]
     mocker.patch("jailbee.autostart.run_stages")
     mocker.patch("jailbee.autostart.agent_autostart_steps", return_value=[])
     spec = replace(_spec(tmp_path, block), boot_identity="2099-11-25T09:00:00Z")
 
     autostart_mod.run_detached(cfg, incus, spec)
 
-    container = ContainerInfo("c1", "Running", None, None, None, start_identity="2099-11-26T09:00:00Z")
+    container = ContainerInfo(
+        "c1", "Running", None, None, None, start_identity="2099-11-26T09:00:00Z"
+    )
     assert resumable_repos([RepoGroup("repo", str(tmp_path), None, [container])]) == ["repo"]
 
 

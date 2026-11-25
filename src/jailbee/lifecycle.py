@@ -2815,7 +2815,9 @@ def _new_container(
         if detached_from is not None and on_detach is not None:
             from dataclasses import replace
 
-            handoff = start_plan if detached_from == AutostartTrigger.ON_START.value else create_plan
+            handoff = (
+                start_plan if detached_from == AutostartTrigger.ON_START.value else create_plan
+            )
             handoff = replace(handoff, boot_identity=boot_identity)
             on_detach(
                 effective_cfg.autostart,
@@ -2826,7 +2828,9 @@ def _new_container(
             )
 
     if detached_from is None and marker_written:
-        record(incus, name, "handled" if opts.autostart else "skipped", expected_start=boot_identity)
+        record(
+            incus, name, "handled" if opts.autostart else "skipped", expected_start=boot_identity
+        )
     return name
 
 

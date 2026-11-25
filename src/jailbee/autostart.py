@@ -616,7 +616,9 @@ def run_detached(
     from jailbee.boot_state import current_start, record
     from jailbee.services.autostart import services_stage_wanted
 
-    boot_identity = spec.boot_identity or (None if spec.rerun else current_start(incus, spec.container_name))
+    boot_identity = spec.boot_identity or (
+        None if spec.rerun else current_start(incus, spec.container_name)
+    )
 
     if spec.rerun:
         from jailbee.autostart_rerun import validate_remote, validate_windows
