@@ -43,7 +43,7 @@ before editing `## Unreleased`.
   detached stages succeed; marker-write failures warn without failing the boot.
   Concurrent stop/resume commands report when waiting for each other;
   destroyed containers are dropped and unavailable repository configs receive a
-  recovery hint. The terminal dashboard offers both in a global menu (`g`, F10
+  recovery hint. The terminal dashboard offers both in a global menu (F10
   or the title's ☰), alongside Accounts, Notifications, Global config, Settings,
   Help and Quit; Resume uses the shared state snapshot for eligible saved
   containers or running containers with an unhandled Incus start identity. Host-side

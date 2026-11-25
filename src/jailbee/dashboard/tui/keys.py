@@ -59,7 +59,7 @@ KEY_BINDINGS: tuple[KeyBinding, ...] = (
     ),
     KeyBinding("extend-up", ("shift+up",), "Shift+↑/↓", "mark while moving", "Navigate"),
     KeyBinding("extend-down", ("shift+down",), "", "", "Navigate"),
-    KeyBinding("global-menu", ("g", "f10"), "g / F10", "open the global menu (also ☰)", "Actions"),
+    KeyBinding("global-menu", ("f10",), "F10", "open the global menu (also ☰)", "Actions"),
     # Repo-scoped, not container-scoped: `run`'s dispatch handles it directly,
     # with its own guard.
     KeyBinding("new", ("n",), "n", "create a container in this repo", "Actions"),

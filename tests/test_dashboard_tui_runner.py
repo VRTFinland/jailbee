@@ -281,7 +281,7 @@ def test_global_lifecycle_runs_without_a_repo_and_uses_prompt_channel(mocker, in
 
     async def main():
         async with app.run_test() as pilot:
-            await pilot.press("g")
+            await pilot.press("f10")
             await pilot.pause()
             await _apply(pilot, app, Pick(index))
             await _until(
