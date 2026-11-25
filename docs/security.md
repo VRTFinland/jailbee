@@ -260,8 +260,10 @@ start identity differs from its host-side completed/skipped boot record. A runni
 container without a record is offered once for upgrade recovery; orphan groups
 never offer Resume. Matching
 records hide Resume in steady state; refresh never probes guest boot markers.
-An unreadable journal offers local-only Resume so the
-command can report the error.
+An unreadable journal offers local-only Resume so the command can report the
+error. Registered repos with unloadable configs also offer local-only Resume
+when they have saved containers or running containers needing setup; remote
+viewers never see this config-recovery offer.
 
 While `restrict_host` is on, the commands that manage the host itself are
 refused in every mode, `full` and an allowlist naming them included:

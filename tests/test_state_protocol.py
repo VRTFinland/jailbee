@@ -215,6 +215,7 @@ def _full_snapshot() -> Snapshot:
             default_project="Org/7",
             agent_label="grok/sonnet",
             sent_count=4,
+            unavailable_repo_root="/unavailable",
             push_action_default="merge",
             push_source_default="branch",
             column_notice="note",
@@ -450,7 +451,7 @@ def test_wire_schema_leaves_out_docstrings_and_titles():
 # PROTOCOL fails below: a client of another version would misread it. A pydantic
 # upgrade that only reshapes its schema output trips this too; a bump is then
 # harmless (a protocol mismatch makes the dashboard replace the state service).
-WIRE_SCHEMA = (43, "334231c69a4c188adab83316d1ce2d8deb86568286e9b5d8696700019ca83214")
+WIRE_SCHEMA = (44, "ba57bad99aa10d217e23a5bc89a5d3397e12f07640283a6c3475bc226528908d")
 
 
 def test_a_wire_schema_change_bumps_the_protocol():

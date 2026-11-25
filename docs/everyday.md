@@ -122,8 +122,12 @@ same journal, keyed by Incus `last_used_at`. A changed start identity offers
 Resume without probing inside containers on each refresh; a matching record
 hides it in steady state, including after successful `jailbee apply` restarts.
 After upgrading from a version without these records, a running container is
-offered once, until Resume verifies or completes its setup. Orphan groups never
-offer Resume. Destroy and local Resume prune vanished boot records.
+offered once, until Resume verifies or completes its setup. Unregistered orphan
+groups never offer Resume. A registered repo with an unloadable config still
+offers local-only Resume for saved containers or running containers needing
+setup, so the command can report the config error and recovery hint. An unreadable
+journal also keeps local Resume available to report the error. Destroy and local
+Resume prune vanished boot records.
 
 ## Snapshots and rollback
 

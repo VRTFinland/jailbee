@@ -79,7 +79,7 @@ def _needs_setup(container: ContainerInfo, state: ResumeSet) -> bool:
 
 
 def resumable_repos(groups: list[RepoGroup]) -> list[str | None]:
-    """Resume candidates; None denotes local-only journal error recovery."""
+    """Resume candidates; None denotes local-only config/journal error recovery."""
     from jailbee.config import ORPHAN_BASE_PREFIX
 
     try:
@@ -90,7 +90,7 @@ def resumable_repos(groups: list[RepoGroup]) -> list[str | None]:
     saved = [
         g
         for g in groups
-        if g.repo_root is not None
+        if (g.repo_root is not None or g.unavailable_repo_root is not None)
         and g.prefix != ORPHAN_BASE_PREFIX
         and any(
             c.name in state.containers
@@ -99,7 +99,7 @@ def resumable_repos(groups: list[RepoGroup]) -> list[str | None]:
             for c in g.containers
         )
     ]
-    return [g.prefix for g in saved]
+    return list(dict.fromkeys(g.prefix if g.repo_root is not None else None for g in saved))
 
 
 def _write_set(state: ResumeSet) -> None:
