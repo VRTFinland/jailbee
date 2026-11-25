@@ -613,7 +613,12 @@ def run_detached(
     :func:`_cancel_on_sigterm`.
     """
     from jailbee.autostart_plan import TRIGGER_ORDER
+    from jailbee.boot_state import current_start, record
     from jailbee.services.autostart import services_stage_wanted
+
+    boot_identity = spec.boot_identity or (
+        None if spec.rerun else current_start(incus, spec.container_name)
+    )
 
     if spec.rerun:
         from jailbee.autostart_rerun import validate_remote, validate_windows
@@ -688,9 +693,7 @@ def run_detached(
         finally:
             incus.config_unset(spec.container_name, "user.jailbee.autostart_in_progress")
         if not spec.rerun:
-            from jailbee.boot_state import record
-
-            record(incus, spec.container_name, "handled")
+            record(incus, spec.container_name, "handled", expected_start=boot_identity)
 
 
 def _detach_mounts(

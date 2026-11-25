@@ -104,6 +104,7 @@ def _full_snapshot() -> Snapshot:
             autostart_failed=2,
             autostart_rerunnable=True,
             created_at=T0,
+            start_identity="2026-11-25T09:00:00.123456789Z",
             uuid="u-alpha",
             outbox_pr=2,
             outbox_issue=1,
@@ -449,7 +450,7 @@ def test_wire_schema_leaves_out_docstrings_and_titles():
 # PROTOCOL fails below: a client of another version would misread it. A pydantic
 # upgrade that only reshapes its schema output trips this too; a bump is then
 # harmless (a protocol mismatch makes the dashboard replace the state service).
-WIRE_SCHEMA = (42, "a207e60b5814a6e33614d0fb4a0b0b1d6bfb16b6769e5f291e6e22c99f5ab02f")
+WIRE_SCHEMA = (43, "334231c69a4c188adab83316d1ce2d8deb86568286e9b5d8696700019ca83214")
 
 
 def test_a_wire_schema_change_bumps_the_protocol():

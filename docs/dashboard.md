@@ -123,7 +123,11 @@ command. The sections below describe each menu in full.
 The global menu belongs to no row and opens even with an empty table.
 `Stop all…` runs `jailbee stop --all`; `Resume…` runs `jailbee resume`,
 without a repo selector. Resume is shown only when the state service reports
-an existing saved container in a repository the caller may resume. Remotely,
+an existing saved container or a running container with an unhandled start in
+a repository the caller may resume. Completed/skipped starts are recorded on the
+host against Incus's start identity; normal running containers do not keep
+Resume visible. Older starts without a record may offer it once after upgrading.
+Remotely,
 both commands leave excluded repos and orphans untouched. Both use the action
 runner: CLI confirmation questions
 appear as modals, and output and results stay in the notification queue.

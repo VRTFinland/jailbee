@@ -1222,10 +1222,11 @@ Accounts (`A`), Notifications (`Q`), Global config (`E`), Settings (F2), Help, Q
 Stop all and Resume run `jailbee stop --all` / `jailbee resume` through the
 action runner, with CLI questions as modals and results in Notifications; no
 selected repo is needed. Resume uses the state service snapshot: eligible saved
-containers offer it, as do running in-scope containers when the journal is empty.
-This conservative fallback keeps unplanned reboot recovery reachable without
-probing each container's boot marker on every refresh; the command may report
-nothing to resume. Stale interrupted-stop entries for running containers do not
+containers offer it, as do running in-scope containers whose Incus `last_used_at`
+start identity differs from the host's completed/skipped boot record. A matching
+record hides Resume in steady state. After upgrading from an older version,
+starts since host boot without a record offer it once; Resume verifies or
+completes setup and records that start. No guest boot marker is probed on refresh. Stale interrupted-stop entries for running containers do not
 count as saved work. An unreadable journal offers local-only Resume so the
 command can report the error. Remote policy hides disallowed commands and
 limits stop/resume to visible repositories. Escape or

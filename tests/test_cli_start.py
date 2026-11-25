@@ -27,7 +27,10 @@ def _host_autostart_config(mocker):
 
 
 @pytest.mark.parametrize("skip", [False, True])
-def test_start_records_boot_decision_even_when_no_tmux_is_needed(mocker, make_cfg, tmp_path, skip):
+@pytest.mark.parametrize("reboot_during_setup", [False, True])
+def test_start_records_boot_decision_even_when_no_tmux_is_needed(
+    mocker, make_cfg, tmp_path, skip, reboot_during_setup
+):
     from jailbee.boot_state import MARKER
     from jailbee.incus import Incus
 
@@ -46,16 +49,42 @@ def test_start_records_boot_decision_even_when_no_tmux_is_needed(mocker, make_cf
     mocker.patch("jailbee.cli._post_create_gui_launches")
     incus = mocker.Mock(spec=Incus)
     mocker.patch("jailbee.cli._resolve_existing", return_value=(incus, "myrepo-work"))
+    incus.exec.return_value = "recorded"
+    incus.list_containers.return_value = [
+        {
+            "name": "myrepo-work",
+            "status": "Running",
+            "profiles": ["myrepo-base"],
+            "last_used_at": "2099-11-25T09:00:00Z",
+        }
+    ]
+
+    if reboot_during_setup:
+
+        def restart(*args, **kwargs):
+            incus.list_containers.return_value[0]["last_used_at"] = "2099-11-26T09:00:00Z"
+
+        mocker.patch("jailbee.autostart.inject_github_token", side_effect=restart)
 
     result = runner.invoke(
         app, ["start", "myrepo-work", "--no-background"] + (["--no-autostart"] if skip else [])
     )
 
     assert result.exit_code == 0, result.output
+    from jailbee.dashboard.model import RepoGroup
+    from jailbee.host_resume import resumable_repos
+    from jailbee.lifecycle import list_containers
+
+    assert resumable_repos(
+        [RepoGroup("myrepo", str(tmp_path), None, list_containers(cfg, incus, all_repos=True))]
+    ) == (["myrepo"] if reboot_during_setup else [])
     expected = "skipped" if skip else "handled"
-    assert any(
-        MARKER in " ".join(call.args[1]) and expected in " ".join(call.args[1])
-        for call in incus.exec.call_args_list
+    assert (
+        any(
+            MARKER in " ".join(call.args[1]) and expected in " ".join(call.args[1])
+            for call in incus.exec.call_args_list
+        )
+        is not reboot_during_setup
     )
 
 

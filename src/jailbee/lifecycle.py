@@ -115,6 +115,9 @@ class ContainerInfo:
     # Effective ordinary stages, derived by the dashboard gatherer from the host config.
     autostart_rerunnable: bool = False
     created_at: datetime | None = None
+    # Incus last_used_at changes on every start, including daemon autostart.
+    # Preserve RFC3339Nano verbatim: sub-microsecond starts must stay distinct.
+    start_identity: str | None = None
     memory_usage: int | None = None
     memory_override: bool = False
     # Raw inputs for the CPU/DOING columns, from the same `incus list`
@@ -642,6 +645,7 @@ def list_containers(
     """
     from jailbee import egress_scope
     from jailbee.accounts import groups
+    from jailbee.boot_state import start_identity
     from jailbee.mounts import attached_kinds, mount_until
     from jailbee.network_generation import generation_of
     from jailbee.work_mode import work_mode_state
@@ -815,6 +819,7 @@ def list_containers(
                 credential_group=credential_group_raw or None,
                 autostart_profile=config.get("user.jailbee.autostart_profile") or None,
                 created_at=_parse_incus_timestamp(raw.get("created_at")),
+                start_identity=start_identity(raw.get("last_used_at")),
                 uuid=config.get("volatile.uuid") or None,
                 memory_usage=memory_usage,
                 init_pid=init_pid,
@@ -2484,8 +2489,9 @@ def _new_container(
             groups.set_container_group(cfg, incus, name, wanted)
 
     incus.start(name)
-    from jailbee.boot_state import record
+    from jailbee.boot_state import current_start, record
 
+    boot_identity = current_start(incus, name)
     marker_written = record(incus, name, "started")
     # Clear a failed-refresh guard only after the repaired disk is mounted.
     sync_pr_bindings(incus, name, cfg=cfg)
@@ -2807,16 +2813,24 @@ def _new_container(
             if start_plan.detached:
                 detached_from = AutostartTrigger.ON_START.value
         if detached_from is not None and on_detach is not None:
+            from dataclasses import replace
+
+            handoff = (
+                start_plan if detached_from == AutostartTrigger.ON_START.value else create_plan
+            )
+            handoff = replace(handoff, boot_identity=boot_identity)
             on_detach(
                 effective_cfg.autostart,
                 detached_from,
                 repo_dir,
                 bool(effective_cfg.services),
-                start_plan if detached_from == AutostartTrigger.ON_START.value else None,
+                handoff,
             )
 
     if detached_from is None and marker_written:
-        record(incus, name, "handled" if opts.autostart else "skipped")
+        record(
+            incus, name, "handled" if opts.autostart else "skipped", expected_start=boot_identity
+        )
     return name
 
 
@@ -3468,7 +3482,7 @@ def _destroy_container_locked(
     from jailbee import host_resume
 
     try:
-        host_resume.remove(name)
+        host_resume.remove(name, destroyed=True)
     except (OSError, ValueError) as exc:
         warn(f"Could not remove resume entry for '{name}' (continuing): {exc}")
 

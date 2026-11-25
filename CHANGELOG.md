@@ -46,8 +46,10 @@ before editing `## Unreleased`.
   recovery hint. The terminal dashboard offers both in a global menu (`g`, F10
   or the title's ☰), alongside Accounts, Notifications, Global config, Settings,
   Help and Quit; Resume uses the shared state snapshot for eligible saved
-  containers, or running containers when the journal is empty, keeping unplanned
-  reboot recovery reachable without per-container boot probes. Unreadable journals
+  containers or running containers with an unhandled Incus start identity. Host-side
+  completed/skipped boot records hide Resume in steady state and keep unplanned
+  reboot recovery reachable without per-container boot probes; older starts without
+  records offer one-time upgrade recovery. Unreadable journals
   keep local recovery visible; stale stopping entries do not count as saved work.
   Remote SSH and web command policy permit stop-all and
   resume within visible repositories, leaving excluded repos, orphans and their

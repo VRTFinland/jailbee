@@ -2251,6 +2251,7 @@ def test_new_container_reports_only_successful_instance_creation(
 
 
 def test_new_work_generation_assigns_stable_filtered_nic(tmp_path, mocker, db_session):
+    mocker.patch("jailbee.boot_state.current_start", return_value=None)
     cfg = _cfg_for_new(tmp_path)
     incus = MagicMock()
     incus.exists.return_value = False
@@ -2331,6 +2332,7 @@ def test_new_work_allocations_across_repos_are_unique(tmp_path, mocker, db_sessi
 
 
 def test_new_work_loose_grant_precedes_start(tmp_path, mocker, db_session):
+    mocker.patch("jailbee.boot_state.current_start", return_value=None)
     cfg = _cfg_for_new(tmp_path)
     incus = MagicMock()
     incus.exists.return_value = False
@@ -2374,6 +2376,7 @@ def test_new_work_loose_grant_precedes_start(tmp_path, mocker, db_session):
 def test_scratch_directory_creation_uses_work_profiles(tmp_path, monkeypatch, mocker, db_session):
     from jailbee.config import load_repo_config
 
+    mocker.patch("jailbee.boot_state.current_start", return_value=None)
     xdg = tmp_path / "xdg"
     global_dir = xdg / "jailbee"
     global_dir.mkdir(parents=True)
@@ -12347,6 +12350,8 @@ def test_new_same_pool_copy_is_silent(tmp_path, mocker):
 
 def test_new_work_network_path_uses_the_same_creator(tmp_path, mocker, db_session):
     from jailbee.golden import golden_instance_name
+
+    mocker.patch("jailbee.boot_state.current_start", return_value=None)
 
     cfg = _cfg_for_new(tmp_path)
     golden = golden_instance_name(cfg.golden.alias)

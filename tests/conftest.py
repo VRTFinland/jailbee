@@ -696,6 +696,12 @@ def _isolate_state_dir(_test_isolation_dir, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _isolate_host_boot_clock(monkeypatch):
+    """Resume upgrade detection must not depend on the test machine's uptime."""
+    monkeypatch.setattr("jailbee.host_resume.host_boot_time", lambda: 1795564800.0)
+
+
+@pytest.fixture(autouse=True)
 def _disable_cli_color(monkeypatch):
     """Force Rich/Typer help output to be plain (no ANSI) and width-stable.
 

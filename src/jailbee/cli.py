@@ -3959,6 +3959,7 @@ def _inline_autostart_handler(
                 services_present=services_present,
                 agent_steps=plan.agent_steps if plan else None,
                 agents_last=plan.agents_last if plan else False,
+                boot_identity=plan.boot_identity if plan else None,
             ),
             on_phase=on_phase,
             on_progress=on_progress,
@@ -4052,6 +4053,7 @@ def _spawn_autostart_worker(
     rerun: bool = False,
     agent_steps: "list[AutostartStep] | None" = None,
     agents_last: bool = False,
+    boot_identity: str | None = None,
 ) -> None:
     """Hand the detached stages to a `_autostart-worker` and record its row.
 
@@ -4135,6 +4137,7 @@ def _spawn_autostart_worker(
                 rerun=rerun,
                 agent_steps=agent_steps,
                 agents_last=agents_last,
+                boot_identity=boot_identity,
             )
         )
     )
@@ -4976,10 +4979,11 @@ def _post_start_actions(
         inject_github_token,
         run_autostart,
     )
-    from jailbee.boot_state import record
+    from jailbee.boot_state import current_start, record
     from jailbee.hosts import sync_hosts
     from jailbee.lifecycle import container_repo_dir, current_network_mode
 
+    boot_identity = current_start(incus, name)
     marker_written = record(incus, name, "started")
     mirror_endpoint = _mirror_endpoint_or_none(cfg, incus)
     mode = current_network_mode(cfg, incus, name)
@@ -5040,7 +5044,7 @@ def _post_start_actions(
 
         boot_entries(cfg, incus, name)
         if marker_written:
-            record(incus, name, "skipped")
+            record(incus, name, "skipped", expected_start=boot_identity)
         return
 
     profile = resolve_profile(cfg, incus, name)
@@ -5079,12 +5083,15 @@ def _post_start_actions(
     _post_create_gui_launches(cfg, incus, name)
 
     if plan.detached and on_detach is not None:
+        from dataclasses import replace
+
+        plan = replace(plan, boot_identity=boot_identity)
         on_detach(
             cfg.autostart, AutostartTrigger.ON_START.value, repo_dir, bool(cfg.services), plan
         )
     # A detached continuation owns completion, even if its handler ran inline.
     if not plan.detached and marker_written:
-        record(incus, name, "handled")
+        record(incus, name, "handled", expected_start=boot_identity)
 
 
 def _clear_superseded_boot_job(cfg: "Config", full_name: str) -> None:
@@ -5209,6 +5216,7 @@ def _autostart_detach_handler(
             services_present=services_present,
             agent_steps=plan.agent_steps if plan else None,
             agents_last=plan.agents_last if plan else False,
+            boot_identity=plan.boot_identity if plan else None,
         )
 
     return on_detach

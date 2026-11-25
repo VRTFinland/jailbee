@@ -145,10 +145,36 @@ def test_snapshot_carries_only_existing_resumable_repositories(mocker):
     assert empty.resumable_repos == []
 
 
+def test_handled_running_boot_does_not_offer_resume(mocker):
+    import json
+
+    from jailbee.db import state_dir
+
+    path = state_dir() / "resume-set.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "containers": {},
+                "handled": {"alpha-x": "2026-11-25T09:00:00Z"},
+            }
+        )
+    )
+    container = dataclasses.replace(_ci("alpha-x"), start_identity="2026-11-25T09:00:00Z")
+    groups = [RepoGroup("alpha", "/a", None, [container])]
+    g = _gatherer(mocker, lambda *a, **k: groups, _Clock())
+    snapshot = g.tick(active=True, refresh=True, roots=[])
+
+    assert isinstance(snapshot, Snapshot)
+    assert snapshot.resumable_repos == []
+
+
 def test_reboot_without_saved_set_offers_resume_without_container_probes(mocker):
     from jailbee.dashboard.menus import global_menu_actions
 
-    groups = [RepoGroup("alpha", "/a", None, [_ci("alpha-x")])]
+    container = dataclasses.replace(_ci("alpha-x"), start_identity="2099-11-25T09:00:00Z")
+    groups = [RepoGroup("alpha", "/a", None, [container])]
     incus = mocker.Mock()
     g = _gatherer(mocker, lambda *a, **k: groups, _Clock(), incus=incus)
     snapshot = g.tick(active=True, refresh=True, roots=[])
@@ -159,6 +185,26 @@ def test_reboot_without_saved_set_offers_resume_without_container_probes(mocker)
         resumable_repos=snapshot.resumable_repos
     )
     incus.exec.assert_not_called()
+
+
+def test_boot_before_host_boot_without_record_does_not_offer_resume(mocker):
+    container = dataclasses.replace(_ci("alpha-x"), start_identity="2000-01-01T00:00:00Z")
+    g = _gatherer(mocker, lambda *a, **k: [RepoGroup("alpha", "/a", None, [container])], _Clock())
+    snapshot = g.tick(active=True, refresh=True, roots=[])
+    assert isinstance(snapshot, Snapshot)
+    assert snapshot.resumable_repos == []
+
+
+def test_orphan_placeholder_never_becomes_a_resume_repository(mocker):
+    from jailbee.config import ORPHAN_BASE_PREFIX
+
+    container = dataclasses.replace(_ci("placeholder-x"), start_identity="2099-11-25T09:00:00Z")
+    g = _gatherer(
+        mocker, lambda *a, **k: [RepoGroup(ORPHAN_BASE_PREFIX, "/a", None, [container])], _Clock()
+    )
+    snapshot = g.tick(active=True, refresh=True, roots=[])
+    assert isinstance(snapshot, Snapshot)
+    assert snapshot.resumable_repos == []
 
 
 def test_unreadable_resume_journal_offers_local_recovery_only(mocker):
