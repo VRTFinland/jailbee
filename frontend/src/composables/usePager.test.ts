@@ -164,6 +164,44 @@ describe("page turns", () => {
         expect(y).toBe(0)
     })
 
+    it("can return to page one after a title shrinks far down a long document", async () => {
+        const scrollTo = fakeLayout(20000)
+        const topInset = ref(60)
+        let y = 0
+        vi.spyOn(window, "scrollY", "get").mockImplementation(() => y)
+        scrollTo.mockImplementation((_x, top) => { y = top ?? 0 })
+        updateSettings({displayProfile: "eink"})
+        let pager: Pager
+        const StickyTitle = defineComponent({
+            setup() {
+                pager = usePager(() => topInset.value)
+                return () => h(PageNav, {pager})
+            },
+        })
+        const wrapper = mount(StickyTitle, {attachTo: document.body})
+        await wrapper.vm.$nextTick()
+        pager!.goToElement({getBoundingClientRect: () => ({top: 13200}) as DOMRect} as Element)
+        expect(y).toBe(13140)
+        topInset.value = 44
+        window.dispatchEvent(new Event("scroll"))
+        expect(y).toBe(13140)
+        // Large reflows may renumber pages, but never move or skip the anchor.
+        await wrapper.get("button.next").trigger("click")
+        expect(y).toBe(13596)
+        window.dispatchEvent(new Event("scroll"))
+        await wrapper.get("button.prev").trigger("click")
+        expect(y).toBe(13140)
+        window.dispatchEvent(new Event("scroll"))
+        for (let i = 0; i < 35; i++) {
+            await wrapper.get("button.prev").trigger("click")
+            window.dispatchEvent(new Event("scroll"))
+        }
+        await wrapper.vm.$nextTick()
+        expect(y).toBe(0)
+        expect(wrapper.get(".page-indicator").text()).toMatch(/^1 \/ /)
+        expect(wrapper.get("button.prev").attributes("disabled")).toBeDefined()
+    })
+
     it("keeps the next turn within readable content after the bottom guard shrinks", async () => {
         const scrollTo = fakeLayout(900, 320, 60)
         let boundary = 204

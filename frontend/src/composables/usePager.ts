@@ -105,7 +105,10 @@ export function usePager(
         const keepAnchor = top < previousTop && fraction === previousFraction && index > 0
             && Math.abs(window.scrollY - (index * pageHeight() - gridShift.value)) <= SUBPIXEL_SLACK
         measure()
-        if (keepAnchor) gridShift.value = index * pageHeight() - window.scrollY
+        if (keepAnchor) {
+            // Keep the shift within one page so page zero remains reachable.
+            gridShift.value = (index * pageHeight() - window.scrollY) % pageHeight()
+        }
         page.value = currentPage()
     }, {flush: "sync"})
 
