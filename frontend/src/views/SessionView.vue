@@ -2,10 +2,11 @@
 import TitleBar from "../components/TitleBar.vue"
 // One agent session as a readable document. Every `html` field is rendered
 // and sanitised by the server; it is inserted as is.
-import {computed, nextTick, onBeforeUnmount, onMounted, ref, watch} from "vue"
+import {computed, nextTick, onBeforeUnmount, onMounted, provide, ref, watch} from "vue"
 import {useRoute, useRouter} from "vue-router"
 import {apiFetch, Unauthorized} from "../api"
 import PageNav from "../components/PageNav.vue"
+import JumpPanel from "../components/JumpPanel.vue"
 import ToolCall from "../components/ToolCall.vue"
 import {readableBottom} from "../composables/readableBottom"
 import {usePager} from "../composables/usePager"
@@ -36,6 +37,15 @@ const pager = usePager(
 const eink = computed(() => settings.displayProfile === "eink")
 /** E-ink: live entries wait here until the reader taps the notice. */
 const pending = ref<RenderedEntry[]>([])
+const jumpPanelOpen = ref(false)
+provide("open-jump", () => { jumpPanelOpen.value = true })
+function jumpKey(event: KeyboardEvent) {
+    const target = event.target
+    if (event.key !== "j" || event.ctrlKey || event.metaKey || event.altKey ||
+        (target instanceof HTMLElement && (target.isContentEditable || !!target.closest('input, textarea, select, [contenteditable="true"]')))) return
+    event.preventDefault()
+    jumpPanelOpen.value = true
+}
 
 const route = useRoute()
 const router = useRouter()
@@ -221,6 +231,7 @@ onMounted(() => {
     window.addEventListener("pointerdown", markScrollIntent, {passive: true})
     window.addEventListener("click", markScrollIntent, {capture: true})
     window.addEventListener("keydown", markScrollKey)
+    window.addEventListener("keydown", jumpKey)
     window.addEventListener("resize", measureVisibility)
     if (typeof ResizeObserver !== "undefined") {
         layoutObserver = new ResizeObserver(measureVisibility)
@@ -240,6 +251,7 @@ onBeforeUnmount(() => {
     window.removeEventListener("click", markScrollIntent, {capture: true})
     finishProgrammaticScroll()
     window.removeEventListener("keydown", markScrollKey)
+    window.removeEventListener("keydown", jumpKey)
     window.removeEventListener("resize", measureVisibility)
     layoutObserver?.disconnect()
 })
@@ -327,14 +339,26 @@ onBeforeUnmount(() => {
     unfollow = null
 })
 
-async function jump() {
+function selectJump(target: string) {
+    jumpPanelOpen.value = false
+    void jump(target as "start" | "latest" | "end" | `entry:${string}`)
+}
+
+async function jump(destination: "auto" | "latest" | "end" | "start" | `entry:${string}` = "auto") {
     following.value = false
     const firstUnseen = unseen.value
-    const target = firstUnseen
+    const autoTarget = firstUnseen
         ? (firstUnseen.kind === "assistant" ? firstUnseen.id : null)
         : (jumpAction.value === "answer" ? latestAnswer.value : null)
-    await applyPending()
-    unseen.value = null
+    if (destination === "auto" || destination === "latest" || destination === "end") {
+        await applyPending()
+        unseen.value = null
+    }
+    if (destination === "start") {
+        scrollProgrammatically(() => eink.value ? pager.goToElement(transcriptEl.value!) : window.scrollTo(0, 0))
+        return
+    }
+    const target = destination === "auto" ? autoTarget : destination === "latest" ? latestAnswer.value : destination.startsWith("entry:") ? destination.slice(6) : null
     const el = target === null ? null : document.getElementById(entryDomId(target))
     if (el) {
         // A short answer's start already exposes the transcript end. Arm follow
@@ -539,12 +563,13 @@ watch(
                 type="button"
                 class="jump-latest"
                 :class="{'new-messages': pending.length > 0 || unseen !== null}"
-                @click="jump"
+                @click="jump()"
             >
                 {{ jumpLabel }}
             </button>
         </template>
-        <PageNav :pager="pager" />
+        <PageNav :pager="pager" jump-enabled @jump="jumpPanelOpen = true" />
+        <JumpPanel v-if="jumpPanelOpen" :entries="shown" @close="jumpPanelOpen = false" @select="selectJump" />
     </div>
 </template>
 

@@ -5,7 +5,8 @@ import type {Pager} from "../composables/usePager"
 import {settings} from "../settings"
 import PageGuide from "./PageGuide.vue"
 
-const props = defineProps<{pager: Pager}>()
+const props = defineProps<{pager: Pager; jumpEnabled?: boolean}>()
+const emit = defineEmits<{jump: []}>()
 const percent = computed(() => Math.round(
     (props.pager.page.value + 1) / props.pager.pageCount.value * 100,
 ))
@@ -37,7 +38,8 @@ watch(() => settings.pageControls, async () => {
                 aria-label="Previous page" :disabled="pager.page.value <= 0" @click="pager.prev()">
                 {{ settings.pageControls === 'side' ? '▲' : '‹' }}
             </button>
-            <span class="page-indicator">{{ pager.page.value + 1 }} / {{ pager.pageCount.value }}</span>
+            <button v-if="jumpEnabled" type="button" class="page-indicator" aria-label="Jump to page" @click="emit('jump')">{{ pager.page.value + 1 }} / {{ pager.pageCount.value }}</button>
+            <span v-else class="page-indicator">{{ pager.page.value + 1 }} / {{ pager.pageCount.value }}</span>
             <span v-if="settings.pageControls === 'bar'" class="page-percent">· {{ percent }} %</span>
             <button v-if="settings.pageControls !== 'indicator'" type="button" class="next"
                 aria-label="Next page" :disabled="pager.page.value >= pager.pageCount.value - 1"
@@ -101,6 +103,8 @@ watch(() => settings.pageControls, async () => {
     border: none;
     cursor: pointer;
 }
+.page-nav[data-mode="indicator"] button.page-indicator { width: 100%; height: 100%; }
+.page-nav[data-mode="side"] button.page-indicator { width: 100%; }
 .page-nav[data-mode="bar"] button {
     height: 100%;
 }

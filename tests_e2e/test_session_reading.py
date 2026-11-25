@@ -81,6 +81,38 @@ def assert_latest_starts_below_header(page: Page) -> None:
     }""")
 
 
+@pytest.mark.parametrize("profile", ["normal", "eink"])
+def test_jump_panel_prompt_anchor_and_end_follow(
+    page: Page, make_server: Callable[..., E2EServer], tmp_path: Path, profile: str
+) -> None:
+    page.set_viewport_size({"width": 390, "height": 800})
+    _, transcript = open_transcript(page, make_server, tmp_path)
+    page.evaluate("profile => localStorage.setItem('jailbee.displayProfile', profile)", profile)
+    page.reload()
+    expect(page.get_by_role("heading", name=TITLE, exact=True)).to_be_visible()
+    page.keyboard.press("j")
+    panel = page.get_by_role("dialog", name="Jump to")
+    expect(panel).to_be_visible()
+    panel.get_by_role("button", name=TITLE, exact=True).click()
+    page.wait_for_function("""() => {
+        const prompt = document.querySelector('.entry.user').getBoundingClientRect();
+        const header = document.querySelector('.title-bar').getBoundingClientRect();
+        return Math.abs(prompt.top - header.bottom) <= 2;
+    }""")
+    if profile == "eink":
+        page.keyboard.press("m")
+        page.wait_for_function("() => window.scrollY > 100")
+        page.get_by_role("button", name="Jump to page").click()
+    else:
+        page.get_by_role("button", name="Quick settings").click()
+        page.get_by_role("button", name="Jump to…").click()
+    panel.get_by_role("button", name="End", exact=True).click()
+    wait_for_scroll_settled(page)
+    with transcript.open("a") as stream:
+        stream.write(record(25, "assistant", "Jump end follows this."))
+    expect(page.get_by_text("Jump end follows this.", exact=True)).to_be_in_viewport()
+
+
 @pytest.mark.parametrize("width", [1280, 390], ids=["desktop", "phone"])
 @pytest.mark.parametrize("profile", ["normal", "eink"])
 def test_latest_answer_and_sticky_title_follow_the_readable_area(

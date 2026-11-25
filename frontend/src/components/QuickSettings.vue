@@ -6,6 +6,11 @@ import {FONT_SIZE_RANGE, settings, THEMES, THEME_LABELS, updateSettings} from ".
 const props = defineProps<{context?: "containers" | "session" | null; session?: {agent: string; models: string[]; id: string} | null; parent?: {label: string; to: RouteLocationRaw}}>()
 const route = useRoute()
 const openSettings = inject<(trigger: HTMLElement | null) => void>("open-settings", () => {})
+const openJump = inject<() => void>("open-jump", () => {})
+function showJump() {
+    void close(false)
+    openJump()
+}
 function showSettings() {
     void close(false)
     openSettings(trigger.value)
@@ -160,6 +165,7 @@ onBeforeUnmount(() => {
                         @click="updateSettings({containerFilter: filter.mode})">{{ filter.label }}</button>
                 </div>
                 <template v-else>
+                    <button type="button" class="menu-row" data-action="jump" @click="showJump">Jump to…</button>
                     <label class="menu-row"><input type="checkbox" aria-label="Follow new messages" :checked="follow" @change="setFollow" /> Follow new messages</label>
                     <label class="menu-row"><input type="checkbox" aria-label="Show thinking" :checked="settings.showThinking" @change="updateSettings({showThinking: ($event.target as HTMLInputElement).checked})" /> Show thinking</label>
                     <label class="menu-row context-row">Agent context
