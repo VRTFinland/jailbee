@@ -103,6 +103,8 @@
     --md-on-surface-variant: #43474e;
     --md-outline: #74777f;
     --md-outline-variant: #c4c6cf;
+    /* A border only e-ink draws: it has no tints to tell surfaces apart. */
+    --md-hairline: transparent;
     --md-primary: #3a5f94;
     --md-on-primary: #ffffff;
     --md-primary-container: #d5e3ff;
@@ -139,6 +141,7 @@
     --md-on-surface-variant: #c4c6cf;
     --md-outline: #8e9099;
     --md-outline-variant: #43474e;
+    --md-hairline: transparent;
     --md-primary: #a7c8ff;
     --md-on-primary: #04305f;
     --md-primary-container: #224876;
@@ -175,6 +178,7 @@
     --md-on-surface-variant: #000000;
     --md-outline: #000000;
     --md-outline-variant: #000000;
+    --md-hairline: #000000;
     --md-primary: #000000;
     --md-on-primary: #ffffff;
     --md-primary-container: #ffffff;
@@ -242,11 +246,10 @@
     --quick-trigger-size: 2.75rem;
     --quick-trigger-top: 0.5rem;
 }
-:root[data-theme="eink"] a,
 [data-theme="eink"] a {
     text-decoration: underline;
 }
-:root[data-theme="eink"] .notice {
+[data-theme="eink"] .notice {
     border: 1px solid #000;
 }
 
@@ -310,21 +313,34 @@ body {
     max-width: calc(100vw - var(--page-controls-width) - 3 * var(--space-2));
 }
 
+/* Theme and profile scoping (#167): a theme or display-profile difference is
+   a token (custom properties inherit from the nearest `[data-theme]` or
+   `[data-profile]`, so a /ui gallery panel shows its own), or failing that a
+   rule `[data-profile="eink"] .x` / `[data-theme="eink"] .x` without `:root`.
+   Never `:root[data-…] .x`: no panel can scope it. `:root` stays only for what
+   exists once per page (body padding, the page controls). */
+
 /* E-ink never animates, nor does anything under reduced motion; edge tap
-   zones need margins clear of links. */
+   zones need margins clear of links. The motion token follows the nearest
+   profile; the blanket stop below skips a normal-profile scope inside an
+   e-ink one (a gallery panel on an e-ink page). */
 [data-profile="eink"] {
     --md-motion-duration: 0ms;
 }
+[data-profile="normal"] {
+    --md-motion-duration: 150ms;
+}
 [data-profile="eink"],
-[data-profile="eink"] *,
-[data-profile="eink"] *::before,
-[data-profile="eink"] *::after {
+[data-profile="eink"] *:not([data-profile="normal"], [data-profile="eink"] [data-profile="normal"] *),
+[data-profile="eink"] *:not([data-profile="normal"], [data-profile="eink"] [data-profile="normal"] *)::before,
+[data-profile="eink"] *:not([data-profile="normal"], [data-profile="eink"] [data-profile="normal"] *)::after {
     transition: none !important;
     animation: none !important;
     scroll-behavior: auto !important;
 }
 @media (prefers-reduced-motion: reduce) {
-    :root {
+    :root,
+    [data-profile] {
         --md-motion-duration: 0ms;
     }
     *,

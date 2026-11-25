@@ -19,7 +19,7 @@ const COLOUR_GROUPS: {title: string; roles: string[]}[] = [
         roles: [
             "surface", "surface-container-lowest", "surface-container-low", "surface-container",
             "surface-container-high", "surface-container-highest", "on-surface", "on-surface-variant",
-            "outline", "outline-variant",
+            "outline", "outline-variant", "hairline",
         ],
     },
     {title: "Primary", roles: ["primary", "on-primary", "primary-container", "on-primary-container"]},
@@ -183,6 +183,7 @@ function typeStyle(token: string): Record<string, string> {
     display: grid;
     place-items: center;
     min-height: var(--md-target-row);
+    border: 1px solid var(--md-hairline);
     background: var(--md-primary-container);
     color: var(--md-on-primary-container);
     font-size: var(--md-type-label-medium-size);
@@ -191,8 +192,5 @@ function typeStyle(token: string): Record<string, string> {
 }
 .shape:hover {
     background: var(--md-surface-container-highest);
-}
-[data-theme="eink"] .shape {
-    border: 1px solid var(--md-outline);
 }
 </style>

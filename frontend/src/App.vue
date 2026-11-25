@@ -202,8 +202,8 @@ onBeforeUnmount(() => {
 .settings-header { display: flex; align-items: center; justify-content: space-between; padding: var(--space-3); border-bottom: 1px solid var(--border); }
 .settings-header h2 { margin: 0; font-size: 1.25rem; }
 .settings-header button { min-width: 44px; min-height: 44px; font: inherit; }
-:root[data-profile="eink"] .settings-backdrop { background: transparent; }
-:root[data-profile="eink"] .settings-dialog { box-shadow: none; border: 1px solid var(--border-strong); }
+[data-profile="eink"] .settings-backdrop { background: transparent; }
+[data-profile="eink"] .settings-dialog { box-shadow: none; border: 1px solid var(--border-strong); }
 @media (max-width: 600px) { .settings-dialog { top: auto; width: 100%; height: 92%; border: 1px solid var(--border-strong); } }
 .outdated {
     position: sticky;

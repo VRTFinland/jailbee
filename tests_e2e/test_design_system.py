@@ -33,6 +33,44 @@ _MAX_TRANSITION_MS = """
 """
 
 
+# Every transition and animation time declared in any of the app's stylesheets
+# (the build ships one bundle, so this covers every view, not only the page on
+# screen), with the motion tokens resolved against the root.
+_DECLARED_MOTION_MS = r"""
+() => {
+    const root = getComputedStyle(document.documentElement)
+    const sub = (v) => v.replace(/var\((--[\w-]+)\)/g, (_m, n) => root.getPropertyValue(n).trim())
+    const found = []
+    const walk = (rules) => {
+        for (const rule of rules) {
+            if (rule.cssRules) walk(rule.cssRules)
+            if (!rule.style) continue
+            for (const prop of ["transition", "transition-duration", "transition-delay",
+                                "animation", "animation-duration", "animation-delay"]) {
+                const value = rule.style.getPropertyValue(prop)
+                if (!value) continue
+                for (const m of sub(value).matchAll(/(?<![\w.-])(\d*\.?\d+)(ms|s)\b/g)) {
+                    found.push([rule.selectorText || rule.cssText.slice(0, 60),
+                                m[2] === "s" ? Number(m[1]) * 1000 : Number(m[1])])
+                }
+            }
+        }
+    }
+    for (const sheet of document.styleSheets) walk(sheet.cssRules)
+    return found
+}
+"""
+
+# What each gallery panel's sample shape shows: its transition (the display
+# profile) and its hairline border (the theme).
+_PANEL_LOOK = """
+() => Object.fromEntries([...document.querySelectorAll("section[data-theme][data-profile]")].map((p) => {
+    const s = getComputedStyle(p.querySelector(".shape"))
+    return [p.getAttribute("aria-label"), [s.transitionDuration, s.borderTopColor]]
+}))
+"""
+
+
 def _open_gallery(page: Page) -> None:
     page.goto(f"{page.url.split('#')[0]}#/ui")
     expect(page.get_by_role("heading", name="Design system", exact=True)).to_be_visible()
@@ -95,9 +133,36 @@ def test_inter_is_served_by_the_app_and_no_other_host_is_contacted(
     assert foreign == []
 
 
+def test_gallery_panels_follow_their_own_theme_and_profile_not_the_page(logged_in: Page) -> None:
+    """A panel shows its own theme and profile whatever the page's: the e-ink
+    profile stops motion and the e-ink theme draws hairlines, and neither leaks
+    from a root e-ink page into a normal or light panel."""
+    page = logged_in
+    _open_gallery(page)
+    expected = {
+        f"{theme} theme, {profile} profile": [
+            "0s" if profile == "e-ink" else "0.15s",
+            "rgb(0, 0, 0)" if theme == "E-ink" else "rgba(0, 0, 0, 0)",
+        ]
+        for theme in ("Light", "Dark", "E-ink")
+        for profile in ("normal", "e-ink")
+    }
+    for root_theme, root_profile in (("light", "normal"), ("eink", "eink"), ("dark", "eink")):
+        page.evaluate(
+            "([t, p]) => { document.documentElement.dataset.theme = t;"
+            " document.documentElement.dataset.profile = p }",
+            [root_theme, root_profile],
+        )
+        assert page.evaluate(_PANEL_LOOK) == expected, (root_theme, root_profile)
+
+
 def test_transitions_stay_brief_and_stop_under_reduced_motion_and_eink(logged_in: Page) -> None:
     page = logged_in
     _open_gallery(page)
+    declared = page.evaluate(_DECLARED_MOTION_MS)
+    assert declared, "no stylesheet declares any motion: the scan found nothing"
+    too_long = [(where, ms) for where, ms in declared if ms > 150]
+    assert too_long == []
     longest = page.evaluate(_MAX_TRANSITION_MS)
     assert 0 < longest <= 150
 
@@ -109,5 +174,13 @@ def test_transitions_stay_brief_and_stop_under_reduced_motion_and_eink(logged_in
     page.get_by_role("group", name="Display profile", exact=True).get_by_role(
         "radio", name="E-ink", exact=False
     ).check()
-    _open_gallery(page)
+    # The app's own page: the gallery's normal-profile panels keep their motion
+    # on an e-ink page by design (see the panel test above).
+    page.goto(f"{page.url.split('#')[0]}#/")
+    expect(page.get_by_role("button", name="Log out")).to_be_visible()
     assert page.evaluate(_MAX_TRANSITION_MS) == 0
+    _open_gallery(page)
+    eink_panels = page.locator('section[data-profile="eink"] .shape')  # 3 panels x 5 shapes
+    assert eink_panels.evaluate_all(
+        "(els) => els.map((e) => getComputedStyle(e).transitionDuration)"
+    ) == ["0s"] * 15

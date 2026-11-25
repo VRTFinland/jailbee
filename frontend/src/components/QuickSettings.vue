@@ -211,8 +211,8 @@ onBeforeUnmount(() => {
 .menu-pages { display: flex; align-items: center; justify-content: space-between; padding-top: 0.5rem; }
 .visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 .filter-marker { position: absolute; top: 0.2rem; right: 0.2rem; width: 0.5rem; height: 0.5rem; border-radius: 50%; background: var(--accent); border: 1px solid var(--text); }
-:root[data-profile="eink"] .quick-panel, :root[data-theme="eink"] .quick-panel { box-shadow: none; }
-:root[data-profile="eink"] .quick-backdrop { background: transparent; }
+[data-profile="eink"] .quick-panel, [data-theme="eink"] .quick-panel { box-shadow: none; }
+[data-profile="eink"] .quick-backdrop { background: transparent; }
 /* Keep a full touch-target row plus paging controls reachable in landscape,
    even when the document's reading font is set to its maximum. */
 @media (max-height: 480px) {
