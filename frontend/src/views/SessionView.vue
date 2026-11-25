@@ -163,8 +163,9 @@ let positionReady = false
 function savePosition() {
     if (!positionReady || !transcriptEl.value) return
     measureVisibility()
-    const entry = Array.from(transcriptEl.value.querySelectorAll<HTMLElement>("[id^='entry-']"))
-        .find(el => el.getBoundingClientRect().top >= readableTop.value - 1)
+    const entries = Array.from(transcriptEl.value.querySelectorAll<HTMLElement>("[id^='entry-']"))
+    const first = entries[0]
+    const entry = entries.reverse().find(el => el.getBoundingClientRect().top <= readableTop.value + 1) ?? first
     writePosition(positionStore, positionKey, {entryId: entry ? entry.id.slice(6) : null, atEnd: atTranscriptEnd.value})
 }
 function schedulePosition() {
@@ -437,6 +438,7 @@ async function load() {
                 scrollToEnd()
             } else if (remembered) {
                 if (target) scrollProgrammatically(() => eink.value ? pager.goToElement(target) : target.scrollIntoView({block: "start"}))
+                else if (remembered.entryId === null) scrollToEnd()
                 else window.scrollTo(0, 0)
             }
             positionReady = true
