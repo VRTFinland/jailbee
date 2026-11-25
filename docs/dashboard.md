@@ -103,6 +103,9 @@ list. (Source of truth: `KEY_BINDINGS` in
 | `q` | quit (closes an overlay first) |
 | `Ctrl-C` | quit immediately |
 
+Quitting cancels pending action questions, including a modal that is still
+opening; no answer is accepted on behalf of the user.
+
 ## Menu map
 
 `Enter` on a row opens its menu. What it offers depends on the row kind; an
