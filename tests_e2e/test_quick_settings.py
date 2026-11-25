@@ -250,7 +250,7 @@ def test_resizing_menu_clamps_pages_and_keeps_all_rows_reachable(
 
 
 @pytest.mark.parametrize("public_page", ["login", "setup"])
-def test_quick_settings_icon_does_not_overlap_public_page_content(
+def test_public_page_content_has_no_quick_settings_overlap(
     page: Page, make_server: Callable[..., E2EServer], public_page: str
 ) -> None:
     server = make_server(setup=public_page == "setup")
@@ -269,8 +269,11 @@ def test_quick_settings_icon_does_not_overlap_public_page_content(
     expect(page.locator("main input").first).to_be_visible()
     page.evaluate("window.scrollTo(0, 0)")
 
+    expect(page.locator('.quick-trigger')).to_have_count(0)
     overlaps = page.evaluate("""() => {
-        const icon = document.querySelector('.quick-trigger').getBoundingClientRect();
+        const trigger = document.querySelector('.quick-trigger');
+        if (!trigger) return false;
+        const icon = trigger.getBoundingClientRect();
         return [...document.querySelectorAll('main h1, main input, main button')].some(element => {
             const rect = element.getBoundingClientRect();
             return rect.width > 0 && rect.height > 0
