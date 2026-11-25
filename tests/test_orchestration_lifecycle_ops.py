@@ -237,6 +237,72 @@ def test_destroy_settles_only_its_childs_idle_notices(tmp_path, seams, automatic
     assert st.get("orch-uuid", "idle").acked_at == (None if fails else rig.ctx().now.timestamp())
 
 
+@pytest.mark.parametrize("failure", ["store", "snapshot"])
+def test_automatic_destroy_preparation_failure_does_not_block_other_children(
+    tmp_path, seams, monkeypatch, caplog, failure
+):
+    from dataclasses import replace
+
+    from jailbee.orchestration import finishing
+    from jailbee.orchestration.store import BrokerStore, StoreError, store_path
+
+    rig = Rig(
+        tmp_path,
+        config={
+            labels.LAST_IMPORT: "aaa",
+            labels.STOPPED_HEAD: "aaa",
+            labels.PENDING_DESTROY: "aaa",
+            "volatile.uuid": "child-uuid",
+        },
+    )
+    rig.sender.config["volatile.uuid"] = "orch-uuid"
+    other = replace(rig.child, full="proj-c2", short="c2")
+    ctx = rig.ctx()
+    ctx.nodes[other.full] = other
+    rig.incus.list_containers.return_value = [
+        {"name": child.full, "config": child.config} for child in (rig.child, other)
+    ]
+    st = BrokerStore(store_path(tmp_path))
+    for child in (rig.child, other):
+        st.insert_item(
+            "orch-uuid",
+            rig.sender.full,
+            {"id": child.short, "type": "message", "kind": "idle", "from": child.short},
+            now=1,
+        )
+    if failure == "store":
+        real_unacked = BrokerStore.unacked
+
+        def unacked(self, *args, **kwargs):
+            if not getattr(unacked, "failed", False):
+                unacked.failed = True
+                raise StoreError("locked")
+            return real_unacked(self, *args, **kwargs)
+
+        monkeypatch.setattr(BrokerStore, "unacked", unacked)
+    else:
+        from jailbee.orchestration import idle_cleanup
+
+        real_write = idle_cleanup.atomic_write_text
+        writes = []
+
+        def write(path, text):
+            writes.append(path)
+            if len(writes) == 1:
+                raise OSError("disk full")
+            real_write(path, text)
+
+        monkeypatch.setattr(idle_cleanup, "atomic_write_text", write)
+
+    finishing.settle_destroys(ctx)
+
+    seams["destroy"].assert_called_once_with(rig.cfg, rig.incus, other.full, force=True)
+    assert [item.id for item in st.unacked("orch-uuid")] == ["c1"]
+    assert ctx.nodes.get(rig.child.full) == rig.child
+    assert "idle cleanup" in caplog.text
+    rig.incus.config_unset_checked.assert_not_called()
+
+
 @pytest.mark.parametrize("automatic,failure", [(False, "store"), (False, "spool"), (True, "store")])
 def test_destroy_retries_idle_cleanup_after_io_failure(
     tmp_path, seams, monkeypatch, automatic, failure
@@ -342,6 +408,121 @@ def test_destroy_retries_idle_cleanup_after_io_failure(
     if not automatic:
         assert st.get("orch-uuid", "parked-idle").acked_at is not None
     seams["destroy"].assert_called_once()
+
+
+@pytest.mark.parametrize("present_uuid", ["child-uuid", "replacement-uuid"])
+def test_retry_checks_child_identity_before_settling_snapshot(tmp_path, seams, present_uuid):
+    from jailbee.orchestration import idle_cleanup
+    from jailbee.orchestration.store import BrokerStore, store_path
+
+    rig = Rig(tmp_path, config={"volatile.uuid": "child-uuid"})
+    rig.sender.config["volatile.uuid"] = "orch-uuid"
+    st = BrokerStore(store_path(tmp_path))
+    st.insert_item(
+        "orch-uuid",
+        rig.sender.full,
+        {"id": "idle", "type": "message", "kind": "idle", "from": "c1"},
+        now=1,
+    )
+    path = idle_cleanup.prepare(rig.ctx(), rig.child)
+    assert path is not None
+    st.insert_item(
+        "orch-uuid",
+        rig.sender.full,
+        {"id": "later-idle", "type": "message", "kind": "idle", "from": "c1"},
+        now=2,
+    )
+    idle_cleanup.retry(tmp_path, {rig.child.full: present_uuid})
+    alive = present_uuid == "child-uuid"
+    assert path.exists() == alive
+    assert [item.id for item in st.unacked("orch-uuid")] == (
+        ["idle", "later-idle"] if alive else ["later-idle"]
+    )
+    seams["destroy"].assert_not_called()
+
+
+def test_tick_after_snapshot_crash_does_not_ack_a_living_child(tmp_path, seams):
+    from jailbee.orchestration import broker, broker_state, idle_cleanup
+    from jailbee.orchestration.journal import Journal
+    from jailbee.orchestration.store import BrokerStore, store_path
+
+    rig = Rig(tmp_path, config={"volatile.uuid": "child-uuid"})
+    rig.sender.config["volatile.uuid"] = "orch-uuid"
+    st = BrokerStore(store_path(tmp_path))
+    st.insert_item(
+        "orch-uuid",
+        rig.sender.full,
+        {"id": "idle", "type": "message", "kind": "idle", "from": "c1"},
+        now=1,
+    )
+    path = idle_cleanup.prepare(rig.ctx(), rig.child)
+    assert path is not None
+    # The process dies after the durable snapshot but before the destroy call.
+    rig.incus.list_containers.return_value = [
+        {"name": child.full, "config": child.config, "status": "Stopped"}
+        for child in (rig.sender, rig.child)
+    ]
+    broker.tick(
+        rig.incus,
+        root=tmp_path,
+        journal=Journal(tmp_path),
+        now=rig.ctx().now,
+        memory=broker_state.BrokerMemory(),
+    )
+    assert path.exists()
+    assert [item.id for item in st.unacked("orch-uuid")] == ["idle"]
+    seams["destroy"].assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "damage", ["json", "unreadable", "missing-field", "invalid-date", "invalid-ids"]
+)
+def test_retry_quarantines_unusable_intents_once(tmp_path, seams, monkeypatch, caplog, damage):
+    import json
+    from pathlib import Path
+
+    from jailbee.orchestration import idle_cleanup
+    from jailbee.orchestration.store import BrokerStore, store_path
+
+    rig = Rig(tmp_path, config={"volatile.uuid": "child-uuid"})
+    rig.sender.config["volatile.uuid"] = "orch-uuid"
+    st = BrokerStore(store_path(tmp_path))
+    st.insert_item(
+        "orch-uuid",
+        rig.sender.full,
+        {"id": "idle", "type": "message", "kind": "idle", "from": "c1"},
+        now=1,
+    )
+    path = idle_cleanup.prepare(rig.ctx(), rig.child)
+    assert path is not None
+    if damage == "json":
+        path.write_text("{")
+    elif damage == "unreadable":
+        real_read = Path.read_text
+
+        def read(self, *args, **kwargs):
+            if self == path:
+                raise PermissionError("unreadable intent")
+            return real_read(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "read_text", read)
+    else:
+        data = json.loads(path.read_text())
+        if damage == "missing-field":
+            del data["recipient_uuid"]
+        elif damage == "invalid-date":
+            data["at"] = "not a date"
+        else:
+            data["ids"] = [None]
+        path.write_text(json.dumps(data))
+
+    idle_cleanup.retry(tmp_path, {})
+    assert not path.exists()
+    assert path.with_name(path.name + ".bad").exists()
+    assert [item.id for item in st.unacked("orch-uuid")] == ["idle"]
+    assert len(caplog.records) == 1
+    idle_cleanup.retry(tmp_path, {})
+    assert len(caplog.records) == 1
 
 
 def test_destroy_settles_parked_idle_before_it_can_reach_the_inbox(tmp_path, seams):

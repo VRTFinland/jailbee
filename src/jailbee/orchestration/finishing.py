@@ -227,7 +227,13 @@ def _settle_destroys_locked(ctx: ActionContext) -> None:
         if reason is not None:
             body = f"child {child.short} was kept instead of destroyed: {reason}"
         else:
-            cleanup = idle_cleanup.prepare(ctx, child)
+            try:
+                cleanup = idle_cleanup.prepare(ctx, child)
+            except OSError:
+                logging.getLogger(__name__).exception(
+                    "broker: could not prepare idle cleanup for %s; deferring destroy", child.full
+                )
+                continue
             try:
                 lifecycle.destroy_container(ctx.cfg, ctx.incus, child.full, force=True)
             except Exception as exc:

@@ -125,6 +125,58 @@ def test_reconnects_announce_each_id_once_but_a_new_follower_replays_backlog(mon
     assert not thread.is_alive()
 
 
+@pytest.mark.parametrize(
+    "malformed",
+    [
+        {"kind": "message"},
+        {"kind": "message", "item": None},
+        {"kind": "message", "item": []},
+        {"kind": "message", "item": "invalid"},
+        *(
+            {"kind": "message", "item": {"id": ident, "body": "no usable id"}}
+            for ident in (None, [], {}, 7, "")
+        ),
+        {"kind": "message", "item": {"body": "missing id"}},
+    ],
+)
+def test_follow_renders_malformed_messages_without_dedup_and_keeps_following(
+    monkeypatch, tmp_path, malformed
+):
+    path = tmp_path / "broker.sock"
+    monkeypatch.setenv("JAILBEE_ORCHESTRATION_SOCKET", str(path))
+    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    server.bind(str(path))
+    server.listen()
+    valid = {
+        "kind": "message",
+        "item": {"id": "m1", "from": "kid", "kind": "note", "body": "still following"},
+    }
+
+    def serve():
+        with server:
+            conn, _ = server.accept()
+            with conn, conn.makefile("rb") as reader:
+                assert wire.decode_request(wire.read_line(reader)).op == "follow"
+                for event in (malformed, malformed, valid, valid):
+                    conn.sendall(wire.encode_response(wire.ok(event)))
+
+    thread = threading.Thread(target=serve, daemon=True)
+    thread.start()
+
+    def sleep(seconds):
+        raise StopFollowingError
+
+    monkeypatch.setattr(socket_cli.time, "sleep", sleep)
+    result = CliRunner().invoke(container_cmd.inbox_app, ["follow"])
+    thread.join(timeout=1)
+    assert not thread.is_alive()
+    assert isinstance(result.exception, StopFollowingError)
+    lines = result.output.splitlines()
+    assert len(lines) == 3
+    assert lines[0] == lines[1]
+    assert "JailBee inbox: m1 from kid (note): still following" in lines[2]
+
+
 @pytest.mark.parametrize("response", [wire.fail(wire.VERSION_ERROR, "version"), b"not json\n"])
 def test_follow_retries_protocol_errors_silently(monkeypatch, tmp_path, response):
     path = tmp_path / "broker.sock"

@@ -291,9 +291,9 @@ before editing `## Unreleased`.
   dashboard and `jailbee ls`
   ([#146](https://github.com/VRTFinland/jailbee/issues/146)). A follower announces
   each id only once across reconnects within its process; a new follower still
-  announces the unread backlog. Successful broker destruction of a child settles
-  only its obsolete `idle` notices, and notification excerpts end at word
-  boundaries ([#166](https://github.com/VRTFinland/jailbee/issues/166)).
+  announces the unread backlog. Notification excerpts prefer word boundaries,
+  retaining a hard-cut preview when the first word exceeds the limit
+  ([#166](https://github.com/VRTFinland/jailbee/issues/166)).
 - Web dashboard: `jailbee remote web serve` (alias `jailbee serve`) runs a
   host-side, read-only browser dashboard, included in every install
   ([#109](https://github.com/VRTFinland/jailbee/issues/109)). The front page
@@ -415,6 +415,10 @@ before editing `## Unreleased`.
 
 ### Changed
 
+- Successful broker destruction of a child marks read only the unread,
+  broker-generated `idle` notices snapshotted for that child before destruction.
+  Other messages, children and orchestrators are unaffected
+  ([#166](https://github.com/VRTFinland/jailbee/issues/166)).
 - Host-wide agent instructions start with a five-line JailBee preamble pointing
   to the container and child skills. Service, network and GitHub guidance lives
   in the container skill, including service descriptions, live host status and

@@ -25,13 +25,15 @@ def render_event(event: dict[str, Any]) -> str | None:
         return f"JailBee inbox: your orchestration grant changed{detail}{hint}"
     if kind != "message":
         return None
-    item = event["item"]
+    raw_item = event.get("item")
+    item = raw_item if isinstance(raw_item, dict) else {}
     ident = clean_c0c1(str(item.get("id", "")))
     sender = clean_c0c1(str(item.get("from", "")))
     item_kind = clean_c0c1(str(item.get("kind", item.get("state", ""))))
-    excerpt = textwrap.shorten(
-        clean_c0c1(str(item.get("body", item.get("detail", "")))), width=80, placeholder="…"
-    )
+    text = clean_c0c1(str(item.get("body", item.get("detail", ""))))
+    excerpt = textwrap.shorten(text, width=80, placeholder="…")
+    if excerpt == "…" and len(text) > 80:
+        excerpt = text[:79] + "…"
     return (
         f"JailBee inbox: {ident} from {sender} ({item_kind}): {excerpt} "
         f"— read it with: jailbee inbox read {ident}"
