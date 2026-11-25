@@ -2,10 +2,10 @@
    (an overlay of the content colour, about 8 % on hover and 10 % pressed; none
    in e-ink, through the tokens) and the keyboard focus ring. No shadows and
    no ripple. Imported unscoped by each primitive; Vite bundles it once. */
-.state-layer {
+.ui-state-layer {
     position: relative;
 }
-.state-layer::before {
+.ui-state-layer::before {
     content: "";
     position: absolute;
     inset: 0;
@@ -15,13 +15,13 @@
     pointer-events: none;
     transition: opacity var(--md-motion-duration) var(--md-motion-easing);
 }
-.state-layer:hover:not(:disabled)::before {
+.ui-state-layer:hover:not(:disabled)::before {
     opacity: var(--md-state-hover-opacity);
 }
-.state-layer:active:not(:disabled)::before {
+.ui-state-layer:active:not(:disabled)::before {
     opacity: var(--md-state-pressed-opacity);
 }
-.focus-ring:focus-visible {
+.ui-focus-ring:focus-visible {
     outline: var(--md-focus-ring-width) solid var(--md-primary);
     outline-offset: var(--md-focus-ring-offset);
 }

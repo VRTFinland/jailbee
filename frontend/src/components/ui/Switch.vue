@@ -17,7 +17,7 @@ function toggle(): void {
 <template>
     <button type="button" role="switch" class="switch" :aria-checked="modelValue ? 'true' : 'false'"
         :aria-label="label" :disabled="disabled" @click="toggle">
-        <span class="switch-track"><span class="switch-handle state-layer"></span></span>
+        <span class="switch-track"><span class="switch-handle ui-state-layer"></span></span>
     </button>
 </template>
 
@@ -78,11 +78,11 @@ function toggle(): void {
     background: var(--md-on-primary);
 }
 /* The state layer is a halo around the handle, as in Material 3. */
-.switch-handle.state-layer::before {
+.switch-handle.ui-state-layer::before {
     inset: calc(var(--md-space-12) - var(--md-space-24));
     background: var(--md-on-surface);
 }
-.switch[aria-checked="true"] .switch-handle.state-layer::before {
+.switch[aria-checked="true"] .switch-handle.ui-state-layer::before {
     background: var(--md-primary);
 }
 .switch:hover:not(:disabled) .switch-handle::before {

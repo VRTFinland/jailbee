@@ -15,7 +15,7 @@ defineEmits<{click: [event: MouseEvent]}>()
 </script>
 
 <template>
-    <button :type="type" class="button state-layer focus-ring" :data-variant="variant" :disabled="disabled"
+    <button :type="type" class="button ui-state-layer ui-focus-ring" :data-variant="variant" :disabled="disabled"
         @click="$emit('click', $event)">
         <Icon v-if="icon" :name="icon" size="small" />
         <span class="button-label"><slot /></span>
