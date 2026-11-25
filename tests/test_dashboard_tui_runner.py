@@ -54,13 +54,18 @@ async def _confirm_modal(pilot: Any, app: Any) -> None:
     await pilot.pause()
 
 
-def test_confirm_waits_for_mount_and_preset_focus(mocker, tmp_path):
-    """A current screen can still be mounting, with Yes temporarily focused."""
+def test_quit_driver_waits_for_mounted_question_before_exiting(mocker, tmp_path):
+    """Pin the real runner's current-but-still-mounting question before quit."""
     app = make_app(mocker, [_group(tmp_path)])
+    app.threaded_actions = True
+    app.action_runner = drunner.run_action
+    spawn = Spawns([_prompt(default=False, destructive=True)])
+    app.action_spawn = spawn
 
     async def main():
         mounting = asyncio.Event()
         release = asyncio.Event()
+        exiting = asyncio.Event()
         mount = pm.ConfirmModal.on_mount
 
         async def held_mount(modal):
@@ -70,19 +75,27 @@ def test_confirm_waits_for_mount_and_preset_focus(mocker, tmp_path):
 
         mocker.patch.object(pm.ConfirmModal, "on_mount", held_mount)
         async with app.run_test() as pilot:
-            modal = pm.ConfirmModal(_prompt(default=False, destructive=True))
-            app.push_screen(modal)
+            app.run_actions([drunner.ActionRun(["merge", "alpha-x"], tmp_path)], lambda _: None)
             await mounting.wait()
-            waiting = asyncio.create_task(_confirm_modal(pilot, app))
+
+            async def quit_when_ready():
+                await _confirm_modal(pilot, app)
+                exiting.set()
+                app.exit()
+
+            quitting = asyncio.create_task(quit_when_ready())
             try:
                 await asyncio.sleep(0)
-                assert not waiting.done(), "a current modal is not necessarily ready"
+                assert not exiting.is_set(), "quit must not tear down a mounting question"
+                assert not quitting.done()
             finally:
                 release.set()
-                await waiting
-            assert app.focused is modal.query_one("#no", Button)
+                await quitting
 
     asyncio.run(asyncio.wait_for(main(), _RUN_SECONDS))
+    assert isinstance(spawn.child.answers[0], Cancel)
+    spawn.child._thread.join(_JOIN_SECONDS)
+    assert not spawn.child._thread.is_alive()
 
 
 def _drive(
