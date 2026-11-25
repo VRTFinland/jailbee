@@ -16,9 +16,9 @@ from jailbee.tui import error_plain, info_plain, success, warn_plain
 
 if TYPE_CHECKING:
     from jailbee.config import Config
+    from jailbee.dashboard.model import RepoGroup
     from jailbee.incus import Incus
     from jailbee.lifecycle import ContainerInfo
-    from jailbee.dashboard.model import RepoGroup
 
 
 def _state_path() -> Path:
@@ -72,7 +72,8 @@ def resumable_repos(groups: list[RepoGroup]) -> list[str]:
         return []
     names = state.containers.keys() | state.stopping.keys()
     return sorted(
-        g.prefix for g in groups
+        g.prefix
+        for g in groups
         if g.repo_root is not None and any(c.name in names for c in g.containers)
     )
 
@@ -142,12 +143,13 @@ def remove(name: str) -> None:
 def _configs(cfg: Config, failures: dict[Path, str] | None = None) -> dict[str, Config]:
     from jailbee.config import ConfigError, load_repo_config
     from jailbee.dashboard.model import registered_repo_roots
-
     from jailbee.remote_ssh.repo_scope import scope_for_session
     from jailbee.remote_ssh.session import is_remote_session
 
     scope = scope_for_session() if is_remote_session() else None
-    configs = {cfg.container_prefix: cfg} if scope is None or scope.allows(cfg.container_prefix) else {}
+    configs = (
+        {cfg.container_prefix: cfg} if scope is None or scope.allows(cfg.container_prefix) else {}
+    )
     for root in registered_repo_roots():
         if root == cfg.repo_root:
             continue
@@ -164,7 +166,9 @@ def _configs(cfg: Config, failures: dict[Path, str] | None = None) -> dict[str, 
     return configs
 
 
-def _session_containers(cfg: Config, incus: Incus, configs: dict[str, Config]) -> list[ContainerInfo]:
+def _session_containers(
+    cfg: Config, incus: Incus, configs: dict[str, Config]
+) -> list[ContainerInfo]:
     from jailbee.lifecycle import list_containers
     from jailbee.remote_ssh.session import is_remote_session
 
@@ -292,7 +296,9 @@ def _resume(
         entries, pending = state.containers, state.pending
         # Remote callers must not prune excluded or orphan entries, even when
         # those instances disappeared. A local resume owns that housekeeping.
-        for name in ((entries.keys() | state.stopping.keys()) - by_name.keys()) if not remote else ():
+        for name in (
+            ((entries.keys() | state.stopping.keys()) - by_name.keys()) if not remote else ()
+        ):
             info_plain(f"Dropping {name}: container no longer exists.")
             entries.pop(name, None)
             pending.discard(name)

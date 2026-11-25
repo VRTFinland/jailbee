@@ -125,7 +125,11 @@ def test_snapshot_carries_only_existing_resumable_repositories(mocker):
     assert isinstance(first, Snapshot)
     assert first.resumable_repos == []
 
-    path.write_text(json.dumps({"version": 1, "containers": {"alpha-x": "/a", "lost-x": "/lost", "gone-x": "/gone"}}))
+    path.write_text(
+        json.dumps(
+            {"version": 1, "containers": {"alpha-x": "/a", "lost-x": "/lost", "gone-x": "/gone"}}
+        )
+    )
     saved = g.tick(active=True, refresh=True, roots=[])
     assert isinstance(saved, Snapshot)
     assert saved.resumable_repos == ["alpha"]

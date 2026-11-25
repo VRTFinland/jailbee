@@ -138,12 +138,18 @@ def test_web_global_actions_omit_terminal_only_entries_and_top_level_settings():
     ]
 
 
-@pytest.mark.parametrize("repos, expected", [((), False), (("secret",), False), (("public",), True)])
+@pytest.mark.parametrize(
+    "repos, expected", [((), False), (("secret",), False), (("public",), True)]
+)
 @pytest.mark.parametrize("transport", ["ssh", "web"])
 def test_resume_is_offered_only_for_an_eligible_saved_repo(repos, expected, transport):
     policy = RemoteSSHConfig(commands={"mode": "full"}, excluded_repos=["secret"])
     actions = menus.global_menu_actions(policy, transport=transport, resumable_repos=repos)
-    assert ("Resume…", "global-resume") in actions if expected else ("Resume…", "global-resume") not in actions
+    assert (
+        ("Resume…", "global-resume") in actions
+        if expected
+        else ("Resume…", "global-resume") not in actions
+    )
     assert ("Stop all…", "global-stop-all") in actions
 
 
@@ -176,12 +182,15 @@ def test_open_terminal_menu_tracks_resume_set_changes(mocker):
     from tests.dashboard_pilot import FakeStateClient
 
     client = FakeStateClient([])
+
     def saved(app):
         client.resumable_repos = ["alpha"]
         client.seq += 1
+
     def resumed(app):
         client.resumable_repos = []
         client.seq += 1
+
     run = drive(mocker, ["g", saved, resumed], [], client=client)
     assert "global-resume" not in {v for _, v in run.trace[1].overlay.actions}
     assert "global-resume" in {v for _, v in run.trace[2].overlay.actions}

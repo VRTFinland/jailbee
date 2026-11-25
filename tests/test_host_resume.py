@@ -587,14 +587,29 @@ def test_remote_stop_all_leaves_excluded_repos_and_orphans_running(host, monkeyp
 
 
 @pytest.mark.parametrize("transport", ["ssh", "web"])
-def test_remote_resume_preserves_excluded_orphan_and_vanished_entries(host, mocker, monkeypatch, transport):
+def test_remote_resume_preserves_excluded_orphan_and_vanished_entries(
+    host, mocker, monkeypatch, transport
+):
     cfg, other, incus, _ = host
     monkeypatch.setenv("JAILBEE_REMOTE_TRANSPORT", transport)
     monkeypatch.setenv("JAILBEE_REMOTE_EXCLUDED_REPOS", '["two"]')
-    retained = {"two-child": str(other.repo_root), "lost-work": "/lost", "two-gone": str(other.repo_root)}
+    retained = {
+        "two-child": str(other.repo_root),
+        "lost-work": "/lost",
+        "two-gone": str(other.repo_root),
+    }
     path = state_dir() / "resume-set.json"
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({"version": 1, "containers": retained | {"one-off": str(cfg.repo_root)}, "pending": ["two-child"], "stopping": {"two-child": str(other.repo_root)}}))
+    path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "containers": retained | {"one-off": str(cfg.repo_root)},
+                "pending": ["two-child"],
+                "stopping": {"two-child": str(other.repo_root)},
+            }
+        )
+    )
     incus.list_containers.return_value.append(
         {"name": "lost-work", "status": "Stopped", "profiles": ["lost-base"]}
     )

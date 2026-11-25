@@ -3776,7 +3776,9 @@ class DashboardSession:
         menu = self.overlay
         if isinstance(menu, GlobalMenuState):
             actions = global_menu_actions(
-                self.ssh_policy, transport=self.transport, remote=self.remote,
+                self.ssh_policy,
+                transport=self.transport,
+                remote=self.remote,
                 resumable_repos=self.resumable_repos,
             )
             if actions != menu.actions:
@@ -4226,7 +4228,9 @@ class DashboardSession:
             self.overlay = GlobalMenuState(
                 list(
                     global_menu_actions(
-                        self.ssh_policy, transport=self.transport, remote=self.remote,
+                        self.ssh_policy,
+                        transport=self.transport,
+                        remote=self.remote,
                         resumable_repos=self.resumable_repos,
                     )
                 )
