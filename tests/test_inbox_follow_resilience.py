@@ -67,10 +67,60 @@ def test_follow_recovers_after_role_refusal_and_disconnect(monkeypatch, tmp_path
     monkeypatch.setattr(socket_cli.time, "sleep", sleep)
     result = CliRunner().invoke(container_cmd.inbox_app, ["follow"])
     assert isinstance(result.exception, StopFollowingError)
-    assert result.output.count("JailBee inbox: m1 from kid (note): hello") == 2
+    assert result.output.count("JailBee inbox: m1 from kid (note): hello") == 1
     assert "no role" not in result.output
     assert pauses == [0.5, 1, 0.5, 0.5]
     assert thread is not None
+    thread.join(timeout=1)
+    assert not thread.is_alive()
+
+
+def test_reconnects_announce_each_id_once_but_a_new_follower_replays_backlog(monkeypatch, tmp_path):
+    path = tmp_path / "broker.sock"
+    monkeypatch.setenv("JAILBEE_ORCHESTRATION_SOCKET", str(path))
+    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    server.bind(str(path))
+    server.listen()
+
+    def serve():
+        with server:
+            for _ in range(2):
+                for ids in (("m1",), ("m1", "m2"), ("m1", "m2")):
+                    conn, _ = server.accept()
+                    with conn, conn.makefile("rb") as reader:
+                        assert wire.decode_request(wire.read_line(reader)).op == "follow"
+                        for ident in ids:
+                            conn.sendall(
+                                wire.encode_response(
+                                    wire.ok(
+                                        {
+                                            "kind": "message",
+                                            "item": {
+                                                "id": ident,
+                                                "from": "kid",
+                                                "kind": "note",
+                                                "body": "hi",
+                                            },
+                                        }
+                                    )
+                                )
+                            )
+
+    thread = threading.Thread(target=serve, daemon=True)
+    thread.start()
+    pauses = []
+
+    def sleep(seconds):
+        pauses.append(seconds)
+        if len(pauses) == 3:
+            raise StopFollowingError
+
+    monkeypatch.setattr(socket_cli.time, "sleep", sleep)
+    for _ in range(2):
+        pauses.clear()
+        result = CliRunner().invoke(container_cmd.inbox_app, ["follow"])
+        assert isinstance(result.exception, StopFollowingError)
+        assert [line.split()[2] for line in result.output.splitlines()] == ["m1", "m2"]
     thread.join(timeout=1)
     assert not thread.is_alive()
 

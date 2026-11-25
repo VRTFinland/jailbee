@@ -289,7 +289,11 @@ before editing `## Unreleased`.
   not a background job in the AGENT column: an idle session whose only
   background processes are inbox waiters reads idle, not `shell`, in every
   dashboard and `jailbee ls`
-  ([#146](https://github.com/VRTFinland/jailbee/issues/146)).
+  ([#146](https://github.com/VRTFinland/jailbee/issues/146)). A follower announces
+  each id only once across reconnects within its process; a new follower still
+  announces the unread backlog. Successful broker destruction of a child settles
+  only its obsolete `idle` notices, and notification excerpts end at word
+  boundaries ([#166](https://github.com/VRTFinland/jailbee/issues/166)).
 - Web dashboard: `jailbee remote web serve` (alias `jailbee serve`) runs a
   host-side, read-only browser dashboard, included in every install
   ([#109](https://github.com/VRTFinland/jailbee/issues/109)). The front page

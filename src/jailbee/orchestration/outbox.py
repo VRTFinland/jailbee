@@ -190,6 +190,48 @@ def deliver(
     return "parked"
 
 
+def settle_child_idle(
+    root: Path,
+    recipient_full: str,
+    child: str,
+    *,
+    recipient_uuid: str | None,
+    now: datetime,
+    pending_names: frozenset[str],
+    ids: frozenset[str],
+) -> None:
+    """A destroyed child can no longer act on its waiting-for-input notices."""
+    from jailbee.orchestration.store import BrokerStore, store_path
+
+    if not recipient_uuid:
+        return
+    BrokerStore(store_path(root)).ack_child_idle(
+        recipient_uuid, child, ids=ids, now=now.timestamp()
+    )
+    for path in pending_dir(root, recipient_full).glob("*.json"):
+        if path.name not in pending_names or not _deliverable(path):
+            continue
+        try:
+            pending = load_pending(path)
+        except ValueError:
+            continue  # The normal spool flush quarantines malformed entries.
+        item = pending.item
+        if (
+            pending.recipient_uuid == recipient_uuid
+            and not pending.acked
+            and item.get("type") == "message"
+            and item.get("kind") == "idle"
+            and item.get("from") == child
+        ):
+            save_pending(
+                path,
+                item,
+                recipient_uuid=recipient_uuid,
+                completed=pending.completed,
+                acked=True,
+            )
+
+
 def acknowledge_delivery(
     root: Path,
     recipient_full: str,

@@ -1534,10 +1534,19 @@ def _handle_destroy_locked(ctx: ActionContext, m: Manifest) -> Outcome:
         reason = destroy_guard(ctx, child)
         if reason is not None:
             return refused(reason)
+    from jailbee.orchestration import idle_cleanup
+
+    try:
+        cleanup = idle_cleanup.prepare(ctx, child)
+    except OSError as exc:
+        return refused(f"could not prepare idle cleanup: {exc}")
     try:
         lifecycle.destroy_container(ctx.cfg, ctx.incus, child.full, force=True)
     except Exception as e:
+        if cleanup is not None:
+            cleanup.unlink(missing_ok=True)
         return refused(f"child `{child.short}` could not be destroyed: {e}")
+    idle_cleanup.settle(ctx.root, cleanup)
     # Parked messages were for this instance; a recreated namesake must not get them.
     purge_pending(ctx.root, child.full)
     from jailbee.orchestration.watch import cancel

@@ -106,6 +106,7 @@ def cmd_read(ident: str, *, keep: bool = False) -> int:
 
 
 def cmd_follow() -> int:
+    announced: set[str] = set()
     backoff = 0.5
     while True:
         try:
@@ -113,9 +114,14 @@ def cmd_follow() -> int:
                 client.retry_for = 0
                 for event in client.follow():
                     backoff = 0.5
+                    ident = event["item"]["id"] if event.get("kind") == "message" else None
+                    if ident is not None and ident in announced:
+                        continue
                     line = follow_render.render_event(event)
                     if line is not None:
                         print(line, flush=True)
+                        if ident is not None:
+                            announced.add(ident)
         except (BrokerError, BrokerUnreachable, OSError):
             pass
         time.sleep(backoff)

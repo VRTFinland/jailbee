@@ -1,4 +1,26 @@
+import pytest
+
 from jailbee.inbox.follow_render import render_event
+
+
+@pytest.mark.parametrize(
+    ("body", "excerpt"),
+    [
+        ("alpha " * 12 + "waiting-for-input forever", "alpha " * 11 + "alpha…"),
+        (
+            "[jailbee] child `proj-kid` has been waiting for input for 30m; last message was done",
+            "[jailbee] child `proj-kid` has been waiting for input for 30m; last message was…",
+        ),
+        ("x" * 100, "…"),
+    ],
+)
+def test_message_excerpt_never_cuts_a_word(body: str, excerpt: str) -> None:
+    assert render_event(
+        {
+            "kind": "message",
+            "item": {"id": "m1", "from": "kid", "kind": "idle", "body": body},
+        }
+    ) == (f"JailBee inbox: m1 from kid (idle): {excerpt} — read it with: jailbee inbox read m1")
 
 
 def test_grant_changed_renders_the_diff_and_where_to_look() -> None:
