@@ -1217,7 +1217,8 @@ same command `apps run` documents above, with the container passed as its
 entry set `top_level: true`, so it launches correctly either way.
 
 A row's actions are its menu's letters; most work in the table without
-Enter. `g` / F10 / the title's left-edge ☰ opens Global: Stop all…, Resume…,
+Enter: `g` opens Git → on a container or the Agent picker on a repo row.
+F10 / the title's left-edge ☰ opens Global: Stop all…, Resume…,
 Accounts (`A`), Notifications (`Q`), Global config (`E`), Settings (F2), Help, Quit.
 Stop all and Resume run `jailbee stop --all` / `jailbee resume` through the
 action runner, with CLI questions as modals and results in Notifications; no
@@ -1234,7 +1235,7 @@ boot marker is probed on refresh. Stale interrupted-stop entries for running
 containers do not count as saved work. An unreadable journal offers local-only
 Resume so the command can report the error. Remote policy hides disallowed commands and
 limits stop/resume to visible repositories. Escape or
-an outside click closes it. `Enter`, then `g` still opens `Git →` (repo: Agent).
+an outside click closes it.
 With a container highlighted, `l` opens `Lifecycle →`, `t`
 attaches tmux, `s` opens a shell (or starts a stopped container), `p` opens
 `PR →`, `a` `Launch →`, `w` `Network →`, `f` forks, `R` renames, and so on; the

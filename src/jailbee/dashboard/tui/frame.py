@@ -122,7 +122,7 @@ def queue_badge(counts: QueueCounts, *, accent: str, frame: int = 0) -> Text:
 _MENU_LETTERS_NOTE = (
     "A container's or repo's actions are its menu's letters, and they work here "
     "without Enter (l Lifecycle, …); Enter shows the whole list. "
-    "g/F10 or ☰ opens Global; Enter then g opens Git (repo: Agent). A letter "
+    "F10 or ☰ opens Global; g opens Git (repo: Agent). A letter "
     "does nothing when its entry is not offered for the highlighted row: a stopped "
     "container has no tmux or shell, and orphan rows are view-only."
 )
@@ -171,7 +171,7 @@ def help_lines() -> list[str]:
         "Egress panel: a adds, r removes a scoped override; Esc backs to its menu.",
         "Accounts panel: Enter acts on a login or group, n creates a group.",
         "Repo menu: Apply config…, Diagnostics →, Prune stale containers…",
-        "Global menu (g/F10 or ☰): Stop all…, Resume…, Accounts, Notifications,",
+        "Global menu (F10 or ☰): Stop all…, Resume…, Accounts, Notifications,",
         "  Global config, Settings, Help, Quit. Stop all/Resume use CLI prompt modals.",
         "Container menu: Snapshots…, Mounts…, autostart status/cancel.",
         "Mouse: click selects; Ctrl-click marks; double- or right-click opens the menu;",

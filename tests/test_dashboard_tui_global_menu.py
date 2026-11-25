@@ -11,7 +11,16 @@ from jailbee.dashboard.tui.menu_state import GlobalMenuState
 from tests.dashboard_pilot import Click, drive
 
 
-@pytest.mark.parametrize("opener", ["g", "f10", Click(Hit("global-menu"))])
+def test_help_advertises_only_f10_and_click_for_the_global_menu(mocker):
+    run = drive(mocker, ["h"], [], screens=True, size=(200, 200))
+    help_text = run.screens[1]
+    assert "F10" in help_text and "open the global menu (also ☰)" in help_text
+    assert "Global menu (F10 or ☰)" in help_text
+    assert "g/F10" not in help_text and "g / F10" not in help_text
+    assert "g opens Git (repo: Agent)" in help_text
+
+
+@pytest.mark.parametrize("opener", ["f10", Click(Hit("global-menu"))])
 def test_global_menu_opens_without_a_selection_and_closes_on_escape(mocker, opener):
     run = drive(mocker, [opener, "escape"], [])
     assert isinstance(run.trace[1].overlay, GlobalMenuState)
@@ -24,9 +33,32 @@ def test_global_menu_outside_click_closes_it(mocker, tmp_path):
     from tests.dashboard_fixtures import ci
 
     group = RepoGroup("alpha", str(tmp_path), None, [ci("alpha-x", "alpha")])
-    run = drive(mocker, ["g", Click(Hit("row", ("alpha-x",)))], [group])
+    run = drive(mocker, ["f10", Click(Hit("row", ("alpha-x",)))], [group])
     assert run.last.overlay is None
     assert run.last.selected == Row("container", "alpha-x")
+
+
+def test_g_on_container_row_opens_git_submenu(mocker, tmp_path):
+    from jailbee.dashboard.model import RepoGroup, Row
+    from tests.dashboard_fixtures import ci
+
+    group = RepoGroup("alpha", str(tmp_path), None, [ci("alpha-x", "alpha")])
+    run = drive(mocker, ["j", "g"], [group])
+    assert run.last.selected == Row("container", "alpha-x")
+    assert run.natives[2].level == "Git →"
+
+
+def test_g_on_repo_row_runs_the_agent_picker(mocker, tmp_path):
+    from jailbee.dashboard.tui import session as tsession
+    from tests.dashboard_fixtures import cfg_group
+
+    group = cfg_group(tmp_path)
+    child = mocker.patch.object(tsession.subprocess, "run", return_value=mocker.Mock(returncode=0))
+    run = drive(mocker, ["g"], [group])
+    assert run.last.overlay is None
+    child.assert_called_once_with(
+        ["jailbee", "agent", "use", "--config", str(group.config_path)], check=False, cwd=tmp_path
+    )
 
 
 def test_git_accelerator_still_works_inside_container_menu(mocker, tmp_path):
@@ -51,7 +83,7 @@ def test_global_entries_do_what_their_existing_shortcuts_do(mocker, tmp_path, in
     direct = drive(mocker, [shortcut], [group])
     direct_calls = child.call_args_list[:]
     child.reset_mock()
-    menu = drive(mocker, ["g", Pick(index)], [group])
+    menu = drive(mocker, ["f10", Pick(index)], [group])
     assert menu.trace[2].overlay == direct.trace[1].overlay
     assert child.call_args_list == direct_calls
 
@@ -59,7 +91,7 @@ def test_global_entries_do_what_their_existing_shortcuts_do(mocker, tmp_path, in
 def test_quit_entry_exits_instead_of_only_closing_the_menu(mocker):
     from tests.dashboard_pilot import Pick
 
-    run = drive(mocker, ["g", Pick(6)], [])
+    run = drive(mocker, ["f10", Pick(6)], [])
     assert run.steps_taken == 2
     assert run.app.quit_requested
 
@@ -73,7 +105,7 @@ def test_existing_shortcuts_select_global_entries(mocker, tmp_path, key):
     group = RepoGroup("alpha", str(tmp_path), None, [])
     fake_accounts_cli(mocker)
     child = mocker.patch.object(tsession.subprocess, "run", return_value=mocker.Mock(returncode=0))
-    run = drive(mocker, ["g", key], [group])
+    run = drive(mocker, ["f10", key], [group])
     overlay = run.trace[2].overlay
     if key == "A":
         assert isinstance(overlay, tsession.da.AccountsState)
@@ -92,7 +124,7 @@ def test_existing_shortcuts_select_global_entries(mocker, tmp_path, key):
 
 def test_restrictive_ssh_menu_hides_disallowed_commands_on_the_pilot(mocker):
     policy = RemoteSSHConfig(commands={"mode": "allowlist", "allow": ["version"]})
-    run = drive(mocker, ["g"], [], transport="ssh", remote=True, ssh_policy=policy, screens=True)
+    run = drive(mocker, ["f10"], [], transport="ssh", remote=True, ssh_policy=policy, screens=True)
     assert [item[0] for item in run.trace[1].overlay.actions] == [
         "Notifications",
         "Settings",
@@ -110,7 +142,7 @@ def test_ssh_menu_omits_terminal_config_editor_even_when_command_policy_allows_i
     policy = RemoteSSHConfig(restrict_host=False, commands={"mode": "full"})
     client = FakeStateClient([])
     client.resumable_repos = ["public"]
-    run = drive(mocker, ["g"], [], remote=True, transport="ssh", ssh_policy=policy, client=client)
+    run = drive(mocker, ["f10"], [], remote=True, transport="ssh", ssh_policy=policy, client=client)
     verbs = [item[1] for item in run.trace[1].overlay.actions]
     assert "global-stop-all" in verbs
     assert "global-resume" in verbs
@@ -120,7 +152,7 @@ def test_ssh_menu_omits_terminal_config_editor_even_when_command_policy_allows_i
 def test_remote_terminal_without_ssh_transport_hides_and_refuses_config_editor(mocker):
     from jailbee.dashboard.tui.session import REMOTE_CONFIG_EDIT_NOTE
 
-    run = drive(mocker, ["g", "escape", "E"], [], remote=True)
+    run = drive(mocker, ["f10", "escape", "E"], [], remote=True)
     assert "global-config-edit-global" not in [item[1] for item in run.trace[1].overlay.actions]
     assert run.last.notice == REMOTE_CONFIG_EDIT_NOTE
 
@@ -191,7 +223,7 @@ def test_terminal_menu_uses_resumable_snapshot_fact(mocker, repos, expected):
 
     client = FakeStateClient([])
     client.resumable_repos = list(repos)
-    run = drive(mocker, ["g"], [], client=client)
+    run = drive(mocker, ["f10"], [], client=client)
     verbs = {verb for _, verb in run.trace[1].overlay.actions}
     assert ("global-resume" in verbs) == expected
 
@@ -209,7 +241,7 @@ def test_ssh_terminal_menu_uses_only_allowed_resume_candidates(mocker):
 
     run = drive(
         mocker,
-        ["g", only_excluded],
+        ["f10", only_excluded],
         [],
         client=client,
         transport="ssh",
@@ -233,7 +265,7 @@ def test_open_terminal_menu_tracks_resume_set_changes(mocker):
         client.resumable_repos = []
         client.seq += 1
 
-    run = drive(mocker, ["g", saved, resumed], [], client=client)
+    run = drive(mocker, ["f10", saved, resumed], [], client=client)
     assert "global-resume" not in {v for _, v in run.trace[1].overlay.actions}
     assert "global-resume" in {v for _, v in run.trace[2].overlay.actions}
     assert "global-resume" not in {v for _, v in run.trace[3].overlay.actions}

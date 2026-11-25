@@ -2068,13 +2068,8 @@ def _assert_every_key_is_fixed(menu: tmenu.MenuState | tmenu.RepoMenuState) -> N
             preferred = tmenu._preferred_menu_key(item)
             assert preferred is not None, f"{item} has no fixed key"
             assert key == preferred, f"{item} lost {preferred!r} to a neighbour in {group}"
-            # `g` is Global at the table, Git/Agent inside an opened row menu.
             # The repo menu's `n` is also the table's new-container action.
-            if (
-                group is None
-                and key != "g"
-                and not (isinstance(menu, tmenu.RepoMenuState) and key == "n")
-            ):
+            if group is None and not (isinstance(menu, tmenu.RepoMenuState) and key == "n"):
                 assert key not in _table_keys(), f"{item}: {key!r} is a table key"
 
 
@@ -4177,10 +4172,10 @@ def test_parse_key_maps_arrows_and_letters():
 
 
 def test_parse_key_leaves_a_containers_action_letters_to_its_menu():
-    """Row accelerators reach the menu, except g reserved for Global in the table."""
-    for letter in "tsicpPudDGlwfbxRaomN":
+    """Row accelerators reach the menu without a table binding intercepting them."""
+    for letter in "tsicpPudDgGlwfbxRaomN":
         assert tkeys.parse_key(letter) == "", letter
-    assert tkeys.parse_key("g") == "global-menu"
+    assert tkeys.parse_key("f10") == "global-menu"
     assert tkeys.parse_key("h") == "help"
     assert tkeys.parse_key("question_mark") == "help"
 
