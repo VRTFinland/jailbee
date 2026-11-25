@@ -58,6 +58,40 @@ def test_gallery_shows_every_theme_and_profile_after_login(logged_in: Page) -> N
     )
 
 
+def test_bundled_icons_render_at_token_sizes_and_turn_black_in_eink(logged_in: Page) -> None:
+    page = logged_in
+    _open_gallery(page)
+    for name in PANELS:
+        panel = page.get_by_role("region", name=name, exact=True)
+        icons = panel.get_by_role("img")
+        expect(icons).to_have_count(25)
+        for icon in icons.all():
+            expect(icon).to_be_visible()
+            # A real vector with painted geometry, not a missing font glyph or external image.
+            assert icon.locator("path").evaluate("el => el.getBBox().width > 0")
+        assert icons.first.evaluate("el => el.getBoundingClientRect().width") == 24
+        assert icons.first.evaluate("el => el.getBoundingClientRect().height") == 24
+        if "E-ink theme" in name or "e-ink profile" in name:
+            for icon in icons.all():
+                expect(icon.locator("path")).to_have_css("fill", "rgb(0, 0, 0)")
+
+    sizes = page.get_by_role("region", name="Light theme, normal profile").get_by_label(
+        "Icon sizes", exact=True
+    )
+    assert sizes.locator("svg").evaluate_all(
+        "els => els.map(el => el.getBoundingClientRect().width)"
+    ) == [16, 24, 32]
+    assert sizes.locator("svg").evaluate_all(
+        "els => els.map(el => el.getBoundingClientRect().height)"
+    ) == [16, 24, 32]
+
+    license_link = page.get_by_role("link", name="Material Symbols licence", exact=True).first
+    response = page.request.get(license_link.get_attribute("href") or "")
+    assert response.ok
+    assert "Apache License" in response.text()
+    assert "Version 2.0, January 2004" in response.text()
+
+
 def test_gallery_is_not_reachable_without_login(server: E2EServer, page: Page) -> None:
     page.goto(f"{server.url}#/ui")
     expect(page.get_by_label("PIN")).to_be_visible()

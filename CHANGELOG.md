@@ -12,8 +12,8 @@ before editing `## Unreleased`.
 
 - The web dashboard has a design system: Material 3 colours from one blue seed in
   both the light and dark themes (status colours readable at WCAG AA), the bundled
-  Inter typeface, brief transitions that stop under reduced motion and in the
-  e-ink profile, and a `/ui` gallery page behind login
+  Inter typeface and Material Symbols vector icons, brief transitions that stop
+  under reduced motion and in the e-ink profile, and a `/ui` gallery page behind login
   ([#167](https://github.com/VRTFinland/jailbee/issues/167)).
 - Web dashboard reader improvements: compact breadcrumb title bars and session details,
   an in-context settings overlay, configurable e-ink page controls and page step,
