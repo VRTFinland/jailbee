@@ -9,8 +9,8 @@ from typing import TypedDict, cast
 import pytest
 from playwright.sync_api import Page, expect
 
-from tests.web_fakes import container, repo_group, snapshot_of
 from jailbee.orchestration.view import ChildView
+from tests.web_fakes import container, repo_group, snapshot_of
 from tests_e2e.server import E2EServer
 from tests_e2e.test_session_reading import TITLE, open_transcript, wait_for_scroll_settled
 
@@ -88,14 +88,21 @@ def test_list_page_turns_reserve_the_visible_title_boundary(
     page = logged_in
     page.set_viewport_size({"width": 800, "height": 600})
     parent = container("work-orch", repo="work")
-    children = [container(f"work-task-{i:02}", repo="work",
-        child=ChildView(parent.name, "working", (), False, ())) for i in range(60)]
+    children = [
+        container(
+            f"work-task-{i:02}", repo="work", child=ChildView(parent.name, "working", (), False, ())
+        )
+        for i in range(60)
+    ]
     server.push(snapshot_of(repo_group("work", parent, *children)))
-    page.evaluate("""visible => {
+    page.evaluate(
+        """visible => {
         localStorage.setItem('jailbee.displayProfile', 'eink');
         localStorage.setItem('jailbee.showTitleBar', visible ? '1' : '0');
         localStorage.setItem('jailbee.pageStep', '100');
-    }""", visible)
+    }""",
+        visible,
+    )
     path = {"front": "/", "repo": "/repos/work", "container": "/containers/work-orch"}[view]
     page.goto(f"{server.url}/#{path}")
     page.reload()
@@ -123,8 +130,8 @@ def test_hidden_session_title_keeps_page_turns_contiguous(
     open_paged_transcript(page, make_server, tmp_path, 100)
     page.evaluate("localStorage.setItem('jailbee.showTitleBar', '0')")
     page.reload()
-    expect(page.locator('.title-bar')).to_have_count(0)
-    expect(page.locator('.entry.assistant')).to_have_count(24)
+    expect(page.locator(".title-bar")).to_have_count(0)
+    expect(page.locator(".entry.assistant")).to_have_count(24)
     page.evaluate("window.scrollTo(0, 0)")
     wait_for_scroll_settled(page)
     before = reading_area(page)

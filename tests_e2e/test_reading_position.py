@@ -1,14 +1,19 @@
 """Remember transcript entries across reloads and typography changes."""
 
 import json
-
 from collections.abc import Callable
 from pathlib import Path
 
 from playwright.sync_api import Page, expect
 
 from tests_e2e.server import E2EServer
-from tests_e2e.test_session_reading import SESSION, TITLE, open_transcript, record, wait_for_scroll_settled
+from tests_e2e.test_session_reading import (
+    SESSION,
+    TITLE,
+    open_transcript,
+    record,
+    wait_for_scroll_settled,
+)
 
 
 def assert_at_transcript_end(page: Page) -> None:
@@ -25,32 +30,49 @@ def test_restores_tool_call_below_title_bar(
 ) -> None:
     server, transcript = open_transcript(page, make_server, tmp_path)
     tool = {
-        "uuid": "remembered-tool", "sessionId": SESSION, "type": "assistant",
+        "uuid": "remembered-tool",
+        "sessionId": SESSION,
+        "type": "assistant",
         "timestamp": "2026-11-02T10:00:00.000Z",
-        "message": {"role": "assistant", "model": "test-model", "content": [
-            {"type": "tool_use", "id": "read-position", "name": "Read", "input": {"file_path": "/work/repo/file.py"}}
-        ]},
+        "message": {
+            "role": "assistant",
+            "model": "test-model",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "read-position",
+                    "name": "Read",
+                    "input": {"file_path": "/work/repo/file.py"},
+                }
+            ],
+        },
     }
     with transcript.open("a") as stream:
         stream.write(json.dumps(tool) + "\n")
         stream.write(record(26, "assistant", "After the tool.\n\n" * 100))
     server.watches.open[-1].fire()
-    call = page.locator('.tool-call[id]')
+    call = page.locator(".tool-call[id]")
     expect(call).to_have_count(1)
     call_id = call.get_attribute("id")
     # Position the tool as the first entry at the readable top, independently
     # of the scroll-margin rule used by restoration.
-    call.evaluate("""el => window.scrollTo(0, window.scrollY +
-        el.getBoundingClientRect().top - document.querySelector('.title-bar').getBoundingClientRect().bottom)""")
+    call.evaluate("""el => {
+        const top = document.querySelector('.title-bar').getBoundingClientRect().bottom;
+        window.scrollTo(0, window.scrollY + el.getBoundingClientRect().top - top);
+    }""")
     wait_for_scroll_settled(page)
     page.evaluate("window.dispatchEvent(new Event('pagehide'))")
     page.reload()
     expect(page.get_by_role("heading", name=TITLE, exact=True)).to_be_visible()
-    page.wait_for_function("""id => {
+    page.wait_for_function(
+        """id => {
         const call = document.getElementById(id);
         const bar = document.querySelector('.title-bar');
-        return call && bar && Math.abs(call.getBoundingClientRect().top - bar.getBoundingClientRect().bottom) <= 2;
-    }""", arg=call_id)
+        return call && bar && Math.abs(call.getBoundingClientRect().top -
+            bar.getBoundingClientRect().bottom) <= 2;
+    }""",
+        arg=call_id,
+    )
 
 
 def test_reloads_at_actual_transcript_end_with_follow_enabled(
