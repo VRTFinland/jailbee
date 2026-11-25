@@ -1,8 +1,8 @@
 <script setup lang="ts">
 // Holds the dashboard socket open on every signed-in page (so a deep link or
 // reload of any view is live), and closed on public pages such as login.
-import {computed, onBeforeUnmount, onMounted, ref, watch} from "vue"
-import QuickSettings from "./components/QuickSettings.vue"
+import {nextTick, onBeforeUnmount, onMounted, provide, ref, watch} from "vue"
+import SettingsPanel from "./components/SettingsPanel.vue"
 import {fetchServerMode, getToken} from "./api"
 import {useRoute, useRouter} from "vue-router"
 import {useDashboard} from "./dashboard"
@@ -11,11 +11,81 @@ import {rememberResumePath, takeResumePath} from "./router"
 const route = useRoute()
 const router = useRouter()
 const dashboard = useDashboard()
-const settingsContext = computed(() => {
-    if (route.name === "front" || route.name === "repo") return "containers"
-    if (route.name === "session" || route.name === "subagent") return "session"
-    return null
+const settingsOpen = ref(false)
+const settingsDialog = ref<HTMLElement | null>(null)
+let settingsTrigger: HTMLElement | null = null
+let scrollRestoration: ScrollRestoration | null = null
+let restorationFrame: number | undefined
+function keepReaderScroll() {
+    if (restorationFrame !== undefined) cancelAnimationFrame(restorationFrame)
+    restorationFrame = undefined
+    scrollRestoration ??= history.scrollRestoration
+    history.scrollRestoration = "manual"
+}
+function releaseReaderScroll() {
+    restorationFrame = requestAnimationFrame(() => {
+        if (scrollRestoration !== null) history.scrollRestoration = scrollRestoration
+        scrollRestoration = null
+        restorationFrame = undefined
+    })
+}
+
+function showSettings(trigger: HTMLElement | null) {
+    if (settingsOpen.value) return
+    settingsTrigger = trigger
+    keepReaderScroll()
+    if (history.state?.jailbeeSettings !== route.fullPath) {
+        history.pushState({...history.state, jailbeeSettings: route.fullPath}, "", location.href)
+    }
+    settingsOpen.value = true
+    void nextTick(() => settingsDialog.value?.focus({preventScroll: true}))
+}
+provide("open-settings", showSettings)
+function dismissSettings() {
+    if (settingsOpen.value) history.back()
+}
+function onPopState() {
+    const open = history.state?.jailbeeSettings === route.fullPath
+    if (open === settingsOpen.value) return
+    settingsOpen.value = open
+    if (open) keepReaderScroll()
+    else releaseReaderScroll()
+    void nextTick(() => {
+        if (open) settingsDialog.value?.focus({preventScroll: true})
+        else {
+            const trigger = settingsTrigger?.isConnected ? settingsTrigger
+                : document.querySelector<HTMLElement>('[aria-label="Quick settings"][aria-haspopup]')
+            trigger?.focus({preventScroll: true})
+        }
+    })
+}
+function settingsKey(event: KeyboardEvent) {
+    if (!settingsOpen.value) return
+    event.stopImmediatePropagation()
+    if (event.key === "Escape") {
+        event.preventDefault()
+        event.stopImmediatePropagation()
+        dismissSettings()
+    } else if (event.key === "Tab") {
+        const controls = Array.from(settingsDialog.value?.querySelectorAll<HTMLElement>("button:not(:disabled), input:not(:disabled), select:not(:disabled), a[href]") ?? [])
+        const first = controls[0], last = controls[controls.length - 1]
+        if (event.shiftKey && (document.activeElement === first || document.activeElement === settingsDialog.value)) {
+            event.preventDefault()
+            last?.focus()
+        } else if (!event.shiftKey && document.activeElement === last) {
+            event.preventDefault()
+            first?.focus()
+        }
+    }
+}
+watch(() => route.fullPath, () => {
+    if (settingsOpen.value) {
+        settingsOpen.value = false
+        releaseReaderScroll()
+        settingsTrigger = null
+    }
 })
+
 
 dashboard?.onUnauthorized(() => {
     takeResumePath()
@@ -89,6 +159,8 @@ async function checkMode() {
     }
 }
 onMounted(() => {
+    window.addEventListener("popstate", onPopState)
+    window.addEventListener("keydown", settingsKey, true)
     modeTimer = setInterval(() => {
         void checkMode()
     }, 2_000)
@@ -96,6 +168,10 @@ onMounted(() => {
     document.addEventListener("visibilitychange", checkMode)
 })
 onBeforeUnmount(() => {
+    if (restorationFrame !== undefined) cancelAnimationFrame(restorationFrame)
+    if (scrollRestoration !== null) history.scrollRestoration = scrollRestoration
+    window.removeEventListener("popstate", onPopState)
+    window.removeEventListener("keydown", settingsKey, true)
     clearInterval(modeTimer)
     window.removeEventListener("online", checkMode)
     document.removeEventListener("visibilitychange", checkMode)
@@ -110,12 +186,25 @@ onBeforeUnmount(() => {
         <p role="alert">This page is out of date; reload.</p>
         <button type="button" @click="reload">Reload</button>
     </aside>
-    <QuickSettings :context="settingsContext" />
     <!-- Route-specific documents must reload and release their live follow on navigation. -->
-    <router-view :key="route.path" />
+    <div :inert="settingsOpen || undefined"><router-view :key="route.path" /></div>
+    <div v-if="settingsOpen" class="settings-backdrop" @click.self="dismissSettings">
+        <section ref="settingsDialog" class="settings-dialog" role="dialog" aria-label="Settings" aria-modal="true" tabindex="-1">
+            <header class="settings-header"><h2>Settings</h2><button type="button" aria-label="Close settings" @click="dismissSettings">&times;</button></header>
+            <SettingsPanel />
+        </section>
+    </div>
 </template>
 
 <style scoped>
+.settings-backdrop { position: fixed; inset: 0; z-index: 100; background: transparent; }
+.settings-dialog { position: absolute; right: 0; top: 0; bottom: 0; width: min(36rem, 100%); overflow-y: auto; background: var(--surface); color: var(--text); border-left: 1px solid var(--border-strong); }
+.settings-header { display: flex; align-items: center; justify-content: space-between; padding: var(--space-3); border-bottom: 1px solid var(--border); }
+.settings-header h2 { margin: 0; font-size: 1.25rem; }
+.settings-header button { min-width: 44px; min-height: 44px; font: inherit; }
+:root[data-profile="eink"] .settings-backdrop { background: transparent; }
+:root[data-profile="eink"] .settings-dialog { box-shadow: none; border: 1px solid var(--border-strong); }
+@media (max-width: 600px) { .settings-dialog { top: auto; width: 100%; height: 92%; border: 1px solid var(--border-strong); } }
 .outdated {
     position: sticky;
     top: 0;

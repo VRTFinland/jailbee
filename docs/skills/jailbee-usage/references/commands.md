@@ -449,15 +449,24 @@ Transcripts follow live entries at the end (opt-in on e-ink). Scrolling up,
 including keyboard or touch momentum, stops follow; reaching the end by hand
 restores it. Answer-start jumps leave long replies in place to read, and only
 jumps reaching the transcript end resume follow.
-The left-edge ☰ (Quick settings) menu is available on every page, with live body/code
+The right-edge ⋮ (Quick settings) menu is available on every page, with live body/code
 font-size steppers and an Auto / Light / Dark / E-ink theme cycler. Its Settings
-link opens the full settings page; both edit the same per-device localStorage
-preferences without Save. Session/subagent menus add Follow new messages (normal
+link opens an overlay (drawer on wide screens, bottom sheet on phones); Escape,
+× or browser Back closes it without leaving the current transcript. `/settings`
+remains available as a direct page. Both edit per-device preferences without Save. Session/subagent menus add Follow new messages (normal
 on by default, e-ink opt-in), Show thinking and Agent context; container pages add
 no contextual controls. Escape or an outside click closes the menu and restores
 focus to its icon; Escape on the native Agent context select is left to that control.
 Navigation closes the menu without restoring icon focus. Short screens paginate whole menu rows with up/down buttons,
 PageUp/PageDown (also n/m on e-ink), never a scrolling popover; e-ink has no shadow.
+Breadcrumbs link to parent views; session menus and title tooltips expose the
+agent, models and session ID. E-ink Page controls offers Indicator (default), Side
+buttons and Bar; Page step offers 100, 90, 75, 66 or 50 percent, with an overlap
+marker on forward turns. Edge zones, n/m and the bottom guard remain available.
+Jump to… or `j` lists prompts and links to Start, Latest answer and End; the
+indicator also opens it. Reading position is remembered per transcript on the
+device, including subagents. Show title bar hides the bar while leaving a floating
+⋮ and parent navigation available.
 The front page and repository menus have three container filters: All,
 Running (Incus state Running), and Active (the terminal dashboard's non-grey
 agent marks, including idle sessions with an event less than 30 minutes old,

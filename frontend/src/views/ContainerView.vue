@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import TitleBar from "../components/TitleBar.vue"
 import {computed, nextTick, ref, watch} from "vue"
 import {useRoute, useRouter} from "vue-router"
 import {apiFetch, Unauthorized} from "../api"
@@ -7,7 +8,8 @@ import {useDashboard} from "../dashboard"
 import {usePager} from "../composables/usePager"
 import type {ContainerSessionHistory, ContainerSessionList} from "../protocol"
 
-const pager = usePager()
+const readableTop = ref(0)
+const pager = usePager(() => readableTop.value)
 const route = useRoute()
 const router = useRouter()
 const name = computed(() => String(route.params.name))
@@ -120,10 +122,7 @@ watch([name, historyPage, historyQuery], async ([selected, page, query], previou
 
 <template>
     <div class="page">
-        <header class="bar">
-            <router-link class="back" :to="{name: 'front'}">&larr; Repositories</router-link>
-            <h1>{{ name }}</h1>
-        </header>
+        <TitleBar @readable-top="readableTop = $event" :title="name" :crumbs="[{label: 'JailBee', to: {name: 'front'}}]" />
         <p v-if="info?.child" class="parent">
             Child of <router-link v-if="info.child.orchestrator" :to="{name: 'container', params: {name: info.child.orchestrator}}">{{ info.child.orchestrator_short_name }}</router-link><span v-else>{{ info.child.orchestrator_short_name }}</span>
             · {{ info.child.state }}<template v-if="info.child.runner"> · {{ info.child.runner }}</template>

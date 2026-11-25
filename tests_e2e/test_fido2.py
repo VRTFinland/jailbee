@@ -210,7 +210,7 @@ def test_registered_security_key_updates_its_counter_and_refuses_a_clone(
         page.get_by_role("button", name="Use security key", exact=True).click()
 
         expect(page.get_by_role("button", name="Log out")).to_be_visible()
-        expect(page.get_by_role("banner")).to_contain_text(DERIVED_DEVICE)
+        expect(page.locator(".bar")).to_contain_text(DERIVED_DEVICE)
         expect(page.get_by_text("No repositories.", exact=True)).to_be_visible()
         (key,) = auth_admin.list_fido2_keys(server.engine)
         assert key.last_used_at is not None

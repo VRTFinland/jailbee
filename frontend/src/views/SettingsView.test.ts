@@ -13,7 +13,7 @@ describe("SettingsView", () => {
     })
 
     it("switching the theme sets data-theme on the document", async () => {
-        const wrapper = mount(SettingsView, {global: {stubs: {RouterLink: true}}})
+        const wrapper = mount(SettingsView, {global: {stubs: {RouterLink: true, QuickSettings: true}}})
         await wrapper.get("input[name=theme][value=dark]").setValue(true)
         expect(document.documentElement.dataset.theme).toBe("dark")
         await wrapper.get("input[name=theme][value=eink]").setValue(true)
@@ -21,7 +21,7 @@ describe("SettingsView", () => {
     })
 
     it("defaults Agent context to hidden and stores the choice", async () => {
-        const wrapper = mount(SettingsView, {global: {stubs: {RouterLink: true}}})
+        const wrapper = mount(SettingsView, {global: {stubs: {RouterLink: true, QuickSettings: true}}})
         expect((wrapper.get("select.agent-context").element as HTMLSelectElement).value).toBe("hidden")
         await wrapper.get("select.agent-context").setValue("collapsed")
         expect(settings.agentContext).toBe("collapsed")
@@ -29,8 +29,22 @@ describe("SettingsView", () => {
         await wrapper.get("select.agent-context").setValue("hidden")
     })
 
+    it("offers page step percentages only for e-ink and remembers the selection", async () => {
+        const wrapper = mount(SettingsView, {global: {stubs: {RouterLink: true, QuickSettings: true}}})
+        expect(wrapper.find("select.page-step").exists()).toBe(false)
+        await wrapper.get("input[name=profile][value=eink]").setValue(true)
+        const select = wrapper.get("select.page-step")
+        expect(select.findAll("option").map(option => option.text())).toEqual(["100 %", "90 %", "75 %", "66 %", "50 %"])
+        expect((select.element as HTMLSelectElement).value).toBe("100")
+        await select.setValue("75")
+        expect(settings.pageStep).toBe(75)
+        expect(readItem("jailbee.pageStep")).toBe("75")
+        reloadSettings()
+        expect(settings.pageStep).toBe(75)
+    })
+
     it("edits font sizes and the thinking toggle", async () => {
-        const wrapper = mount(SettingsView, {global: {stubs: {RouterLink: true}}})
+        const wrapper = mount(SettingsView, {global: {stubs: {RouterLink: true, QuickSettings: true}}})
         await wrapper.get("input.body-size").setValue("19")
         await wrapper.get("input.code-size").setValue("13")
         await wrapper.get("input.show-thinking").setValue(true)
@@ -40,7 +54,7 @@ describe("SettingsView", () => {
     })
 
     it("chooses the display profile independently of the theme", async () => {
-        const wrapper = mount(SettingsView, {global: {stubs: {RouterLink: true}}})
+        const wrapper = mount(SettingsView, {global: {stubs: {RouterLink: true, QuickSettings: true}}})
         await wrapper.get("input[name=profile][value=eink]").setValue(true)
         expect(document.documentElement.dataset.profile).toBe("eink")
         await wrapper.get("input[name=theme][value=dark]").setValue(true)
@@ -64,7 +78,7 @@ describe("SettingsView", () => {
 
         it("prefills the current name and has no product-name placeholder", async () => {
             stubSessionFetch("Firefox on Linux")
-            const wrapper = mount(SettingsView, {global: {stubs: {RouterLink: true}}})
+            const wrapper = mount(SettingsView, {global: {stubs: {RouterLink: true, QuickSettings: true}}})
             await flushPromises()
             const input = wrapper.get("input[name=device]")
             expect((input.element as HTMLInputElement).value).toBe("Firefox on Linux")
@@ -76,7 +90,7 @@ describe("SettingsView", () => {
             const dashboard = new Dashboard((): SocketLike => ({start() {}, stop() {}, send() {}}))
             dashboard.state.device = "Firefox on Linux"
             const wrapper = mount(SettingsView, {
-                global: {stubs: {RouterLink: true}, provide: {[DASHBOARD]: dashboard}},
+                global: {stubs: {RouterLink: true, QuickSettings: true}, provide: {[DASHBOARD]: dashboard}},
             })
             await flushPromises()
 
@@ -92,7 +106,7 @@ describe("SettingsView", () => {
 
         it("refuses an empty name without calling the server", async () => {
             const fetchMock = stubSessionFetch("x")
-            const wrapper = mount(SettingsView, {global: {stubs: {RouterLink: true}}})
+            const wrapper = mount(SettingsView, {global: {stubs: {RouterLink: true, QuickSettings: true}}})
             await flushPromises()
             await wrapper.get("input[name=device]").setValue("   ")
             await wrapper.get("form.rename").trigger("submit")

@@ -9,13 +9,13 @@ import pytest
 from playwright.sync_api import Page, expect
 
 from tests.web_fakes import container, repo_group, snapshot_of
-from tests_e2e.flows import open_quick_settings, open_settings, reveal_setting
+from tests_e2e.flows import open_quick_settings, open_settings_overlay, reveal_setting
 from tests_e2e.server import E2EServer
 from tests_e2e.test_session_reading import open_transcript, record, wait_for_scroll_settled
 
 
 @pytest.mark.parametrize("width", [1280, 390], ids=["desktop", "phone"])
-def test_hamburger_is_at_left_edge_and_does_not_overlap_title(logged_in: Page, width: int) -> None:
+def test_menu_is_at_right_edge_and_does_not_overlap_title(logged_in: Page, width: int) -> None:
     page = logged_in
     page.set_viewport_size({"width": width, "height": 600})
     icon = page.get_by_role("button", name="Quick settings", exact=True)
@@ -24,13 +24,17 @@ def test_hamburger_is_at_left_edge_and_does_not_overlap_title(logged_in: Page, w
     icon_box = icon.bounding_box()
     heading_box = heading.bounding_box()
     assert icon_box is not None and heading_box is not None
-    assert icon_box["x"] < 24
-    assert icon_box["x"] + icon_box["width"] <= heading_box["x"]
+    assert icon_box["x"] + icon_box["width"] <= width
+    assert heading_box["x"] + heading_box["width"] <= icon_box["x"]
+    bar_box = page.locator(".title-bar").bounding_box()
+    assert bar_box is not None
+    assert bar_box["height"] <= 44
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
     open_quick_settings(page)
     panel = page.get_by_role("dialog", name="Quick settings")
     panel_box = panel.bounding_box()
     assert panel_box is not None
-    assert panel_box["x"] == icon_box["x"]
+    assert panel_box["x"] + panel_box["width"] == icon_box["x"] + icon_box["width"]
     assert panel_box["x"] + panel_box["width"] <= width
 
 
@@ -43,9 +47,10 @@ def test_menu_context_paging_and_live_preferences(
     server, _transcript = open_transcript(page, make_server, tmp_path)
     server.push(snapshot_of(repo_group("work", container("work-main", "work"))))
     if profile == "eink":
-        open_settings(page)
+        open_settings_overlay(page)
         page.get_by_role("radio", name="E-ink (page turns, no animation, slow refresh)").check()
-        page.go_back()
+        page.get_by_role("button", name="Close settings").click()
+        expect(page.get_by_role("dialog", name="Settings")).to_have_count(0)
     icon = page.get_by_role("button", name="Quick settings", exact=True)
     open_quick_settings(page)
     panel = page.get_by_role("dialog", name="Quick settings")
@@ -78,11 +83,13 @@ def test_menu_context_paging_and_live_preferences(
         assert panel.evaluate("el => el.scrollHeight === el.clientHeight")
     page.keyboard.press("Escape")
     expect(icon).to_be_focused()
-    open_settings(page)
+    open_settings_overlay(page)
     expect(page.get_by_role("slider", name="Body:")).to_have_value("17")
     expect(page.get_by_role("checkbox", name="Show thinking")).to_be_checked()
     expect(page.get_by_role("combobox", name="Agent context")).to_have_value("collapsed")
     page.get_by_role("radio", name="Dark", exact=True).check()
+    page.get_by_role("button", name="Close settings").click()
+    expect(page.get_by_role("dialog", name="Settings")).to_have_count(0)
     open_quick_settings(page)
     expect(panel.get_by_role("button", name="Theme: Dark", exact=True)).to_be_visible()
     # Outside click dismisses and returns focus without moving the document.
@@ -113,12 +120,14 @@ def test_large_font_menu_pages_fit_above_the_bottom_guard(
 ) -> None:
     page = logged_in
     page.set_viewport_size({"width": 390, "height": height})
-    open_settings(page)
+    open_settings_overlay(page)
     size = page.get_by_role("slider", name="Body:")
     size.focus()
     size.press("End")
     if profile == "eink":
         page.get_by_role("radio", name="E-ink (page turns, no animation, slow refresh)").check()
+    page.get_by_role("button", name="Close settings").click()
+    expect(page.get_by_role("dialog", name="Settings")).to_have_count(0)
     open_quick_settings(page)
     panel = page.get_by_role("dialog", name="Quick settings")
     while True:
@@ -155,7 +164,7 @@ def test_small_viewport_pages_show_every_context_row_in_order(
     expected_rows += (
         ["All", "Running", "Active"]
         if page_context == "containers"
-        else ["Follow new messages", "Show thinking", "Agent context"]
+        else ["Jump to…", "Follow new messages", "Show thinking", "Agent context"]
     )
     expected_rows.append("Settings")
     seen: list[str] = []
@@ -176,6 +185,12 @@ def test_small_viewport_pages_show_every_context_row_in_order(
             break
         next_page.click()
         assert panel.evaluate("el => el.getBoundingClientRect().bottom <= innerHeight - 32")
+    if page_context == "session":
+        assert seen[0].startswith("Session")
+        assert "claude" in seen[0]
+        assert "test-model" in seen[0]
+        assert "33333333-3333-4333-8333-333333333333" in seen[0]
+        seen = seen[1:]
     assert seen == expected_rows
     assert panel.evaluate("el => el.scrollHeight === el.clientHeight")
 
@@ -235,7 +250,7 @@ def test_resizing_menu_clamps_pages_and_keeps_all_rows_reachable(
 
 
 @pytest.mark.parametrize("public_page", ["login", "setup"])
-def test_quick_settings_icon_does_not_overlap_public_page_content(
+def test_public_page_content_has_no_quick_settings_overlap(
     page: Page, make_server: Callable[..., E2EServer], public_page: str
 ) -> None:
     server = make_server(setup=public_page == "setup")
@@ -254,8 +269,11 @@ def test_quick_settings_icon_does_not_overlap_public_page_content(
     expect(page.locator("main input").first).to_be_visible()
     page.evaluate("window.scrollTo(0, 0)")
 
+    expect(page.locator('.quick-trigger')).to_have_count(0)
     overlaps = page.evaluate("""() => {
-        const icon = document.querySelector('.quick-trigger').getBoundingClientRect();
+        const trigger = document.querySelector('.quick-trigger');
+        if (!trigger) return false;
+        const icon = trigger.getBoundingClientRect();
         return [...document.querySelectorAll('main h1, main input, main button')].some(element => {
             const rect = element.getBoundingClientRect();
             return rect.width > 0 && rect.height > 0

@@ -1,10 +1,12 @@
 <script setup lang="ts">
+import TitleBar from "../components/TitleBar.vue"
 // One agent session as a readable document. Every `html` field is rendered
 // and sanitised by the server; it is inserted as is.
-import {computed, nextTick, onBeforeUnmount, onMounted, ref, watch} from "vue"
+import {computed, nextTick, onBeforeUnmount, onMounted, provide, ref, watch} from "vue"
 import {useRoute, useRouter} from "vue-router"
 import {apiFetch, Unauthorized} from "../api"
 import PageNav from "../components/PageNav.vue"
+import JumpPanel from "../components/JumpPanel.vue"
 import ToolCall from "../components/ToolCall.vue"
 import {readableBottom} from "../composables/readableBottom"
 import {usePager} from "../composables/usePager"
@@ -17,8 +19,9 @@ import type {
     TranscriptView,
 } from "../protocol"
 import {settings} from "../settings"
+import {readPosition, writePosition} from "../readingPosition"
+import {readItem, writeItem} from "../storage"
 
-const header = ref<HTMLElement | null>(null)
 // The sticky header's bottom edge: below an app banner, not just its height.
 const readableTop = ref(0)
 const transcriptEl = ref<HTMLElement | null>(null)
@@ -33,6 +36,21 @@ const pager = usePager(
 const eink = computed(() => settings.displayProfile === "eink")
 /** E-ink: live entries wait here until the reader taps the notice. */
 const pending = ref<RenderedEntry[]>([])
+const jumpPanelOpen = ref(false)
+const jumpOrigin = ref<HTMLElement | null>(null)
+function openJump(origin: HTMLElement | null = document.activeElement as HTMLElement | null) {
+    if (jumpPanelOpen.value) return
+    jumpOrigin.value = origin
+    jumpPanelOpen.value = true
+}
+provide("open-jump", openJump)
+function jumpKey(event: KeyboardEvent) {
+    const target = event.target
+    if (event.key !== "j" || event.ctrlKey || event.metaKey || event.altKey ||
+        (target instanceof HTMLElement && (target.isContentEditable || !!target.closest('input, textarea, select, [contenteditable="true"]')))) return
+    event.preventDefault()
+    openJump()
+}
 
 const route = useRoute()
 const router = useRouter()
@@ -52,6 +70,12 @@ const sessionRef = computed(() => ({
 const transcript = ref<TranscriptView | null>(null)
 const error = ref<string | null>(null)
 const thinking = computed(() => settings.showThinking)
+const parentTitle = ref("Parent session")
+const crumbs = computed(() => [
+    {label: "JailBee", to: {name: "front"}},
+    {label: prefix.value, to: {name: "repo", params: {prefix: prefix.value}}},
+    ...(agentId.value === null ? [] : [{label: parentTitle.value, to: {name: "session", params: sessionRef.value}}]),
+])
 const title = computed(() => transcript.value?.title || (agentId.value === null ? "Untitled session" : "Subagent"))
 
 /** Tool results and subagent refs, by the call they belong to. */
@@ -117,8 +141,6 @@ const jumpLabel = computed(() => jumpAction.value === null ? null : {
 }[jumpAction.value])
 
 function measureVisibility() {
-    const headerRect = header.value?.getBoundingClientRect()
-    readableTop.value = headerRect ? Math.max(0, headerRect.bottom) : 0
     const content = transcriptEl.value?.getBoundingClientRect()
     atTranscriptEnd.value = !!content && content.bottom <= readableBottom() + 1
     if (atTranscriptEnd.value && pending.value.length === 0) unseen.value = null
@@ -133,8 +155,26 @@ function measureVisibility() {
     answerAhead.value = rect.top >= readableBottom()
 }
 
+const positionStore = {getItem: readItem, setItem: writeItem}
+const positionKey = [prefix.value, agent.value, sessionId.value, ...(agentId.value === null ? [] : [agentId.value])]
+let positionTimer: ReturnType<typeof setTimeout> | undefined
+let positionReady = false
+
+function savePosition() {
+    if (!positionReady || !transcriptEl.value) return
+    measureVisibility()
+    const entry = Array.from(transcriptEl.value.querySelectorAll<HTMLElement>("[id^='entry-']"))
+        .find(el => el.getBoundingClientRect().top >= readableTop.value - 1)
+    writePosition(positionStore, positionKey, {entryId: entry ? entry.id.slice(6) : null, atEnd: atTranscriptEnd.value})
+}
+function schedulePosition() {
+    if (positionTimer !== undefined) return
+    positionTimer = setTimeout(() => { positionTimer = undefined; savePosition() }, 250)
+}
+
 function onScroll() {
     measureVisibility()
+    if (positionReady) schedulePosition()
     if (!programmaticScroll) {
         if (atTranscriptEnd.value) following.value = true
         else if (window.scrollY < lastScrollY) following.value = false
@@ -180,23 +220,28 @@ function markScrollKey(event: KeyboardEvent) {
 
 watch(shown, () => void nextTick(measureVisibility))
 watch(eink, () => void nextTick(measureVisibility))
+watch(() => settings.showTitleBar, () => void nextTick(measureVisibility))
 
 let layoutObserver: ResizeObserver | null = null
 onMounted(() => {
     window.addEventListener("scroll", onScroll, {passive: true})
+    window.addEventListener("pagehide", savePosition)
     window.addEventListener("wheel", markScrollIntent, {passive: true})
     window.addEventListener("touchmove", markScrollIntent, {passive: true})
     window.addEventListener("pointerdown", markScrollIntent, {passive: true})
     window.addEventListener("click", markScrollIntent, {capture: true})
     window.addEventListener("keydown", markScrollKey)
+    window.addEventListener("keydown", jumpKey)
     window.addEventListener("resize", measureVisibility)
     if (typeof ResizeObserver !== "undefined") {
         layoutObserver = new ResizeObserver(measureVisibility)
         layoutObserver.observe(document.body)
-        if (header.value) layoutObserver.observe(header.value)
     }
 })
 onBeforeUnmount(() => {
+    if (positionTimer !== undefined) clearTimeout(positionTimer)
+    savePosition()
+    window.removeEventListener("pagehide", savePosition)
     window.removeEventListener("scroll", onScroll)
     window.removeEventListener("wheel", markScrollIntent)
     window.removeEventListener("touchmove", markScrollIntent)
@@ -204,6 +249,7 @@ onBeforeUnmount(() => {
     window.removeEventListener("click", markScrollIntent, {capture: true})
     finishProgrammaticScroll()
     window.removeEventListener("keydown", markScrollKey)
+    window.removeEventListener("keydown", jumpKey)
     window.removeEventListener("resize", measureVisibility)
     layoutObserver?.disconnect()
 })
@@ -291,14 +337,26 @@ onBeforeUnmount(() => {
     unfollow = null
 })
 
-async function jump() {
+function selectJump(target: string) {
+    jumpPanelOpen.value = false
+    void jump(target as "start" | "latest" | "end" | `entry:${string}`)
+}
+
+async function jump(destination: "auto" | "latest" | "end" | "start" | `entry:${string}` = "auto") {
     following.value = false
     const firstUnseen = unseen.value
-    const target = firstUnseen
+    const autoTarget = firstUnseen
         ? (firstUnseen.kind === "assistant" ? firstUnseen.id : null)
         : (jumpAction.value === "answer" ? latestAnswer.value : null)
-    await applyPending()
-    unseen.value = null
+    if (destination === "auto" || destination === "latest" || destination === "end") {
+        await applyPending()
+        unseen.value = null
+    }
+    if (destination === "start") {
+        scrollProgrammatically(() => eink.value ? pager.goToElement(transcriptEl.value!) : window.scrollTo(0, 0))
+        return
+    }
+    const target = destination === "auto" ? autoTarget : destination === "latest" ? latestAnswer.value : destination.startsWith("entry:") ? destination.slice(6) : null
     const el = target === null ? null : document.getElementById(entryDomId(target))
     if (el) {
         // A short answer's start already exposes the transcript end. Arm follow
@@ -368,6 +426,22 @@ async function load() {
         await nextTick()
         pager.measure()
         measureVisibility()
+        if (!positionReady) {
+            const remembered = readPosition(positionStore, positionKey)
+            const hash = route.hash ? route.hash.slice(1) : null
+            const targetId = hash ?? remembered?.entryId ?? null
+            const target = targetId ? document.getElementById(hash ? targetId : entryDomId(targetId)) : null
+            if (hash) {
+                if (target) scrollProgrammatically(() => eink.value ? pager.goToElement(target) : target.scrollIntoView({block: "start"}))
+            } else if (remembered?.atEnd && autoFollow.value) {
+                scrollToEnd()
+            } else if (remembered) {
+                if (target) scrollProgrammatically(() => eink.value ? pager.goToElement(target) : target.scrollIntoView({block: "start"}))
+                else window.scrollTo(0, 0)
+            }
+            positionReady = true
+        }
+        measureVisibility()
         following.value = atTranscriptEnd.value
         lastScrollY = window.scrollY
     } catch (e) {
@@ -381,7 +455,13 @@ async function load() {
     }
 }
 
-onMounted(load)
+onMounted(() => {
+    void load()
+    if (agentId.value !== null) {
+        const path = [prefix.value, "sessions", agent.value, sessionId.value].map(encodeURIComponent).join("/")
+        void apiFetch<TranscriptView>(`/api/repos/${path}?meta=hidden`).then(view => { parentTitle.value = view.title || "Untitled session" }).catch(() => {})
+    }
+})
 // Changing Agent context re-reads the transcript and resubscribes with the new mode.
 watch(
     () => settings.agentContext,
@@ -396,30 +476,8 @@ watch(
 
 <template>
     <div class="page" :style="{'--session-readable-top': `${readableTop}px`}">
-        <header ref="header" class="session-header">
-            <div class="bar">
-            <router-link
-                v-if="agentId !== null"
-                class="back back-to-session"
-                :to="{name: 'session', params: sessionRef}"
-            >
-                &larr; Parent session
-            </router-link>
-            <router-link v-else class="back" :to="{name: 'repo', params: {prefix}}">
-                &larr; {{ prefix }}
-            </router-link>
-            </div>
-            <template v-if="transcript">
-                <h1 :title="title">{{ title }}</h1>
-                <p class="session-meta muted">
-                    <span>{{ transcript.agent }}</span>
-                    <span v-if="transcript.models.length" class="mono" :title="transcript.models.join(', ')">{{
-                        transcript.models.join(", ")
-                    }}</span>
-                </p>
-            </template>
-            <p v-if="dashboard && !dashboard.state.connected" class="notice">Connecting…</p>
-        </header>
+        <TitleBar @readable-top="readableTop = $event" :title="title" :crumbs="crumbs" context="session" :session="transcript ? {agent: transcript.agent, models: transcript.models, id: transcript.session_id} : null" />
+        <p v-if="dashboard && !dashboard.state.connected" class="notice">Connecting…</p>
         <p v-if="error" class="notice">{{ error }}</p>
         <p v-else-if="transcript === null" class="muted">Loading…</p>
         <template v-else>
@@ -503,12 +561,13 @@ watch(
                 type="button"
                 class="jump-latest"
                 :class="{'new-messages': pending.length > 0 || unseen !== null}"
-                @click="jump"
+                @click="jump()"
             >
                 {{ jumpLabel }}
             </button>
         </template>
-        <PageNav :pager="pager" />
+        <PageNav :pager="pager" jump-enabled @jump="openJump()" />
+        <JumpPanel v-if="jumpPanelOpen" :entries="shown" :origin="jumpOrigin" @close="jumpPanelOpen = false" @select="selectJump" />
     </div>
 </template>
 
@@ -585,9 +644,11 @@ h1 {
 .muted {
     color: var(--muted);
 }
+.entry, .tool-call[id] {
+    scroll-margin-top: var(--session-readable-top, 0px);
+}
 .entry {
     margin: var(--space-4) 0;
-    scroll-margin-top: var(--session-readable-top, 0px);
 }
 .entry.user {
     padding: var(--space-2) var(--space-3);

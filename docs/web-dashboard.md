@@ -71,7 +71,7 @@ coloured edge and a phase label, and a Stopped container is dimmed. The e-ink
 theme has no colour, so phases differ by edge style (dashed, dotted, double,
 heavy) and the label, and a Stopped row is drawn without top, right and bottom edges instead of a fade.
 
-The left-edge **☰** (Quick settings) menu filters front-page and repository container lists
+The right-edge **⋮** (Quick settings) menu filters front-page and repository container lists
 by **All**, **Running** (Incus state Running), or **Active** (a non-grey
 agent marker in the terminal dashboard: busy, waiting, shell, API errors, or
 idle with a real event less than 30 minutes old). Recent-idle membership is
@@ -429,7 +429,7 @@ allowed, so the current dashboard only reads.
 
 ## Themes and display profile
 
-Open **Quick settings** from the **☰** menu at the left edge of the title bar on any page.
+Open **Quick settings** from the **⋮** menu at the right edge of the title bar on any page.
 Body and code font-size steppers apply immediately; the theme button cycles
 **Auto / Light / Dark / E-ink**. Auto follows the device's colour scheme, including
 changes while the page is open. Theme colours and display profile remain independent.
@@ -438,8 +438,10 @@ menus offer **Follow new messages**, **Show thinking**, and **Agent context**.
 Container pages have no contextual section. Follow edits the preference for the
 current display profile: on by default for normal displays, opt-in for e-ink.
 
-**Settings** at the end of the menu opens the full `/settings` page for less
-frequent choices, including display profile and the login session's name.
+**Settings** opens a drawer on wide screens or a bottom sheet on phones without
+leaving the current view. Close it with ×, Escape or browser Back; the transcript
+and live follow remain in place. A direct `/settings` link still opens the settings
+page. Settings include display profile and the login session's name.
 Both surfaces edit one live settings store; display choices need no Save and are
 stored in per-device localStorage (in memory when storage is blocked). Existing
 container filter preferences are preserved. Escape, the icon, or a click outside
@@ -475,11 +477,12 @@ visible transcript entries are held behind a counted **2 new messages ↓** butt
 you tap it, revealing them and moving to the first new answer or the end. **Follow new messages on e-ink** in Settings opts into automatic follow at
 the transcript's end, using the pager's last content page rather than continuous
 scrolling. It is off by default and remembered on this device. The front page refreshes every
-minute, or immediately when you tap **Refresh**. The front-page header wraps
-its controls on narrow screens, including with the e-ink profile's side margins.
+minute, or immediately when you tap **Refresh**.
 
-Session transcripts keep their title, agent/model context and connection notice
-in a compact header while you read. One context-aware button handles navigation:
+Session transcripts keep their title in a compact sticky breadcrumb bar while you
+read. The title tooltip and the menu's Session section show the agent, all models
+and session ID. Breadcrumb links return to the repository or parent session.
+One context-aware button handles navigation:
 
 - At the transcript's end, the button is hidden. In the normal display profile,
   arriving entries keep that end in view unless **Follow new messages** is off;
@@ -497,12 +500,26 @@ in a compact header while you read. One context-aware button handles navigation:
   end: jumping to a long answer's start leaves you there to read. E-ink keeps
   the new entries held until this tap.
 
-A truncated title keeps its full text as a tooltip and accessible heading name.
+A truncated title retains its accessible heading name.
 Page turns reserve the header, bottom controls and device safe-area inset, even
 on short landscape screens. A partial keyboard or system scroll stays on its
 current page so Next never skips unread text. Answer jumps start a new page at
 the reply, with subsequent page turns continuing from there; end jumps stop on
 the last content page, not in the blank space reserved for short answer jumps.
+
+The e-ink **Page controls** setting selects Indicator (the default), Side buttons,
+or Bar. Edge tap zones and the n/m keys remain available in every mode, and the
+bottom guard protects the device gesture area. **Page step** selects 100, 90,
+75, 66 or 50 percent of the readable height; overlapping forward turns briefly
+mark the previous page boundary with a hairline.
+
+**Jump to…** in the menu or the `j` key opens a list of user prompts, with links
+to Start, Latest answer and End. In Indicator mode, the page indicator opens it
+too. Reading position is remembered per transcript on this device, including
+subagents, and restored by entry even after changing font size. An explicit
+jump takes precedence. A session left at its live end returns there when follow
+is enabled. **Show title bar** can hide the bar for more reading space; the
+floating ⋮ remains available and offers a way back to the parent.
 
 ## Install as an app
 
@@ -555,3 +572,5 @@ cannot be embedded in another page.
 Keep authentication on behind a proxy. Every request the server sees comes
 from the proxy, which is why [source addresses are never trusted](security.md#web-dashboard-authentication).
 An SSH tunnel (`ssh -L 8910:127.0.0.1:8910 host`) works the same way.
+
+The compact title bar provides breadcrumb links to parent views. In a transcript, the title tooltip and the Session section of Quick settings show the agent, models and session ID.

@@ -51,7 +51,9 @@ def test_hierarchy_links_counts_and_live_renesting(
         "link", name="second", exact=True
     ).click()
     expect(page.get_by_role("heading", name=second.name, exact=True)).to_be_visible()
-    page.get_by_role("link", name="Repositories").click()
+    page.get_by_role("navigation", name="Breadcrumb").get_by_role(
+        "link", name="JailBee", exact=True
+    ).click()
     page.locator(".repo-heading").get_by_role("link", name="work", exact=True).click()
     expect(page.locator("li.nested")).to_have_count(2)
     server.push(snapshot_of(repo_group("work", second, parent)))
@@ -84,7 +86,9 @@ def test_cross_repo_counts_and_missing_parent_labels_agree_across_views(
     expect(page.locator(".parent")).not_to_contain_text("orchestrator not listed")
     server.push(snapshot_of(repo_group("alpha"), repo_group("beta", child)))
     expect(page.locator(".parent")).to_contain_text("orchestrator not listed")
-    page.get_by_role("link", name="Repositories").click()
+    page.get_by_role("navigation", name="Breadcrumb").get_by_role(
+        "link", name="JailBee", exact=True
+    ).click()
     expect(child_row).to_contain_text("orchestrator not listed")
     page.locator('[data-repo="beta"] .repo-heading a').click()
     expect(child_row).to_contain_text("orchestrator not listed")
@@ -139,6 +143,7 @@ def test_related_container_navigation_resets_eink_page_and_scroll(
     page.get_by_role("group", name="Display profile", exact=True).get_by_label(
         re.compile("E-ink")
     ).check()
+    page.get_by_label("Page controls", exact=True).select_option("bar")
     page.get_by_role("link", name="JailBee", exact=False).last.click()
     parent = container("work-orch", repo="work")
     children = [
@@ -163,15 +168,15 @@ def test_related_container_navigation_resets_eink_page_and_scroll(
     page.get_by_role("navigation", name="Pages").get_by_role(
         "button", name=re.compile("Next")
     ).click()
-    expect(page.locator(".page-indicator")).to_contain_text("Page 2 /")
+    expect(page.locator(".page-indicator")).to_contain_text("2 /")
     page.get_by_role("region", name="Children").get_by_role(
         "link", name="task-20", exact=True
     ).click()
     expect(page.get_by_role("heading", name=selected.name, exact=True)).to_have_count(1)
-    expect(page.locator(".page-indicator")).to_contain_text("Page 1 /")
+    expect(page.locator(".page-indicator")).to_contain_text("1 /")
     page.wait_for_function("window.scrollY === 0")
     expect(page.get_by_role("heading", name="Children (40)")).to_be_visible()
     page.locator(".parent a").click()
     expect(page.get_by_role("heading", name=parent.name, exact=True)).to_be_visible()
-    expect(page.locator(".page-indicator")).to_contain_text("Page 1 /")
+    expect(page.locator(".page-indicator")).to_contain_text("1 /")
     page.wait_for_function("window.scrollY === 0")

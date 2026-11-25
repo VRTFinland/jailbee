@@ -81,6 +81,7 @@ def test_eink_page_turns_hold_new_messages_and_refresh_snapshot(
     page.get_by_role("group", name="Display profile", exact=True).get_by_role(
         "radio", name=re.compile("E-ink")
     ).check()
+    page.get_by_label("Page controls", exact=True).select_option("bar")
     page.get_by_role("link", name="JailBee", exact=False).last.click()
 
     # A real websocket frame is the delivery barrier; no timer or store access.
@@ -103,14 +104,14 @@ def test_eink_page_turns_hold_new_messages_and_refresh_snapshot(
     open_session(page)
     pages = page.get_by_role("navigation", name="Pages", exact=True)
     indicator = pages.locator(".page-indicator")
-    expect(indicator).to_have_text(re.compile(r"Page 1 / [2-9]\d*"))
+    expect(indicator).to_have_text(re.compile(r"1 / [2-9]\d*"))
     expect(pages.get_by_role("button", name=re.compile("Prev"))).to_be_disabled()
     start = page.evaluate("window.scrollY")
     pages.get_by_role("button", name=re.compile("Next")).click()
-    expect(indicator).to_have_text(re.compile(r"Page 2 / \d+"))
+    expect(indicator).to_have_text(re.compile(r"2 / \d+"))
     assert page.evaluate("window.scrollY") > start
     pages.get_by_role("button", name=re.compile("Prev")).click()
-    expect(indicator).to_have_text(re.compile(r"Page 1 / \d+"))
+    expect(indicator).to_have_text(re.compile(r"1 / \d+"))
     assert page.evaluate("window.scrollY") == start
 
     total = int(indicator.inner_text().split("/")[1])
@@ -121,12 +122,12 @@ def test_eink_page_turns_hold_new_messages_and_refresh_snapshot(
         page.evaluate(
             "() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))"
         )
-        expect(indicator).to_have_text(f"Page {number} / {total}")
+        expect(indicator).to_have_text(f"{number} / {total}")
     expect(next_page).to_be_disabled()
     expect(page.get_by_text("Reading paragraph 39.", exact=True)).to_be_in_viewport()
     for number in range(total - 1, 0, -1):
         pages.get_by_role("button", name=re.compile("Prev")).click()
-        expect(indicator).to_have_text(f"Page {number} / {total}")
+        expect(indicator).to_have_text(f"{number} / {total}")
     assert page.evaluate("window.scrollY") == start
 
     append_entry(server, path, "Held reply one.")
@@ -142,9 +143,7 @@ def test_eink_page_turns_hold_new_messages_and_refresh_snapshot(
     expect(page.get_by_text("Held reply one.", exact=True)).to_have_count(1)
     expect(page.get_by_text("Held reply two.", exact=True)).to_have_count(1)
     first = page.get_by_text("Held reply one.", exact=True).locator("xpath=ancestor::section")
-    header_bottom = page.locator(".session-header").evaluate(
-        "el => el.getBoundingClientRect().bottom"
-    )
+    header_bottom = page.locator(".title-bar").evaluate("el => el.getBoundingClientRect().bottom")
     assert abs(first.evaluate("el => el.getBoundingClientRect().top") - header_bottom) <= 1
 
 

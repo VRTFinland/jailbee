@@ -10,6 +10,10 @@ before editing `## Unreleased`.
 
 ### Added
 
+- Web dashboard reader improvements: compact breadcrumb title bars and session details,
+  an in-context settings overlay, configurable e-ink page controls and page step,
+  prompt navigation, remembered reading position, and an optional title bar.
+
 - `agents.models` and `agents.model_policy` describe user-defined model aliases
   and selection rules, with field-level repo overrides. In any container,
   `jailbee agent models [--json]` reads this guidance live through the broker;
@@ -57,7 +61,6 @@ before editing `## Unreleased`.
   Remote SSH and web command policy permit stop-all and
   resume within visible repositories, leaving excluded repos, orphans and their
   saved entries untouched; remote policy hides disallowed entries.
-  The web dashboard's quick settings menu sits at the title bar's left edge (☰)
   ([#149](https://github.com/VRTFinland/jailbee/issues/149)).
 - `jailbee --version` and `jailbee version` include the source commit when
   known, with `-dirty` for uncommitted source changes. Editable installs read

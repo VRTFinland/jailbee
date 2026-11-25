@@ -1,5 +1,5 @@
 import {enableAutoUnmount, flushPromises, mount} from "@vue/test-utils"
-import {afterEach, describe, expect, it, vi} from "vitest"
+import {afterEach, beforeEach, describe, expect, it, vi} from "vitest"
 import {createMemoryHistory} from "vue-router"
 import {setToken} from "../api"
 import type {TranscriptView} from "../protocol"
@@ -80,9 +80,12 @@ async function mountSession(fetchMock: ReturnType<typeof vi.fn<typeof fetch>>) {
     return {wrapper, router}
 }
 
+beforeEach(() => removeItem("jailbee.readingPositions"))
+
 afterEach(() => {
     removeItem("jailbee.showThinking")
-    updateSettings({displayProfile: "normal", showThinking: false, agentContext: "hidden"})
+    removeItem("jailbee.readingPositions")
+    updateSettings({displayProfile: "normal", showThinking: false, agentContext: "hidden", pageControls: "indicator"})
     vi.unstubAllGlobals()
     vi.restoreAllMocks()
     if (originalScrollIntoView) Object.defineProperty(Element.prototype, "scrollIntoView", originalScrollIntoView)
@@ -91,13 +94,54 @@ afterEach(() => {
 })
 
 describe("SessionView", () => {
+    it("opens jump from the session menu and indicator, but not while typing", async () => {
+        updateSettings({displayProfile: "eink"})
+        const {wrapper} = await mountSession(vi.fn().mockResolvedValue(jsonResponse(200, transcript)))
+        const input = document.createElement("input")
+        document.body.append(input)
+        input.dispatchEvent(new KeyboardEvent("keydown", {key: "j", bubbles: true}))
+        await wrapper.vm.$nextTick()
+        expect(wrapper.find('[aria-label="Jump to"]').exists()).toBe(false)
+        await wrapper.get('[aria-label="Quick settings"]').trigger("click")
+        await wrapper.get('[data-action="jump"]').trigger("click")
+        expect(wrapper.find('[aria-label="Jump to"]').exists()).toBe(true)
+        await wrapper.get('[aria-label="Jump to"] button').trigger("click")
+        await wrapper.get('button.page-indicator').trigger("click")
+        expect(wrapper.find('[aria-label="Jump to"]').exists()).toBe(true)
+        input.remove()
+    })
+
+    it("jumps to a selected prompt and latest answer", async () => {
+        const scrolled: string[] = []
+        Element.prototype.scrollIntoView = vi.fn(function (this: Element) { scrolled.push(this.id) })
+        const {wrapper} = await mountSession(vi.fn().mockResolvedValue(jsonResponse(200, transcript)))
+        window.dispatchEvent(new KeyboardEvent("keydown", {key: "j"}))
+        await wrapper.vm.$nextTick()
+        await wrapper.findAll('[aria-label="Jump to"] button').find(button => button.text() === "Fix it")!.trigger("click")
+        await flushPromises()
+        expect(scrolled).toEqual(["entry-u1"])
+        window.dispatchEvent(new KeyboardEvent("keydown", {key: "j"}))
+        await wrapper.vm.$nextTick()
+        await wrapper.findAll('[aria-label="Jump to"] button').find(button => button.text() === "Latest answer")!.trigger("click")
+        await flushPromises()
+        expect(scrolled).toEqual(["entry-u1", "entry-a2"])
+    })
+
+    it("opens a jump panel listing only user prompts in order", async () => {
+        const view = {...transcript, entries: [...transcript.entries, {kind: "user" as const, id: "u3", timestamp: null, html: "<p>Next question</p>", meta: false, label: null, expandable: false}]}
+        const {wrapper} = await mountSession(vi.fn().mockResolvedValue(jsonResponse(200, view)))
+        window.dispatchEvent(new KeyboardEvent("keydown", {key: "j"}))
+        await wrapper.vm.$nextTick()
+        const panel = wrapper.get('[role="dialog"][aria-label="Jump to"]')
+        expect(panel.findAll("button").map(button => button.text())).toEqual(["Close", "Start", "Latest answer", "End", "Fix it", "Next question"])
+    })
     it("fetches the session and renders prompts and answers with their models", async () => {
         const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, transcript))
         const {wrapper} = await mountSession(fetchMock)
 
         expect(fetchMock.mock.calls[0][0]).toBe("/api/repos/alpha/sessions/claude/s-1?meta=hidden")
         expect(wrapper.get("h1").text()).toBe("Fix the login bug")
-        expect(wrapper.get("h1").attributes("title")).toBe("Fix the login bug")
+        expect(wrapper.get("h1").attributes("title")).toContain("Session ID: s-1")
         const answers = wrapper.findAll(".entry.assistant")
         expect(answers).toHaveLength(2)
         expect(answers[0].html()).toContain("<h2>Plan</h2>")
@@ -202,7 +246,7 @@ describe("SessionView", () => {
     })
 
     it.each(["normal", "eink"] as const)("treats a reply behind the measured bottom guard as hidden (%s)", async (displayProfile) => {
-        updateSettings({displayProfile})
+        updateSettings({displayProfile, pageControls: "bar"})
         vi.spyOn(window, "innerHeight", "get").mockReturnValue(800)
         const guard = document.createElement("div")
         guard.className = "bottom-guard"
@@ -236,7 +280,7 @@ describe("SessionView", () => {
         })
         const {wrapper} = await mountSession(vi.fn().mockResolvedValue(jsonResponse(200, transcript)))
         expect(wrapper.get("header h1").text()).toBe("Fix the login bug")
-        expect(wrapper.get("header .session-meta").text()).toContain("claude-opus-5-5")
+        expect(wrapper.get("header h1").attributes("title")).toContain("claude-opus-5-5")
         expect(wrapper.find(".jump-latest").exists()).toBe(true)
 
         answerTop = 130
@@ -254,7 +298,7 @@ describe("SessionView", () => {
         const {wrapper, router} = await mountSession(
             vi.fn().mockResolvedValue(jsonResponse(200, transcript)),
         )
-        await wrapper.get("a.back").trigger("click")
+        await wrapper.get('a[href="/repos/alpha"]').trigger("click")
         await flushPromises()
         expect(router.currentRoute.value.name).toBe("repo")
         expect(router.currentRoute.value.params.prefix).toBe("alpha")

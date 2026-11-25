@@ -36,7 +36,7 @@ async function mountAt(path: string) {
     const router = createAppRouter(createMemoryHistory())
     await router.push(path)
     await router.isReady()
-    const wrapper = mount(App, {global: {plugins: [router], provide: {[DASHBOARD]: dashboard}}})
+    const wrapper = mount(App, {attachTo: document.body, global: {plugins: [router], provide: {[DASHBOARD]: dashboard}}})
     mounted.push(wrapper)
     await flushPromises()
     return {wrapper, router, dashboard, sockets}
@@ -59,7 +59,13 @@ describe("App", () => {
         await icon().trigger("click")
         await wrapper.get('[aria-label="Increase body font size"]').trigger("click")
         await wrapper.get('[aria-label="Active"]').trigger("click")
-        await wrapper.get('.quick-panel a').trigger("click")
+        await wrapper.get('.quick-panel button.settings-action').trigger("click")
+        await flushPromises()
+        expect(router.currentRoute.value.name).toBe("front")
+        expect(wrapper.find('[role="dialog"][aria-label="Settings"]').exists()).toBe(true)
+        await wrapper.get('[aria-label="Close settings"]').trigger("click")
+        await flushPromises()
+        await router.push('/settings')
         await flushPromises()
         expect(router.currentRoute.value.name).toBe("settings")
         expect(wrapper.find(".quick-panel").exists()).toBe(false)
@@ -77,6 +83,81 @@ describe("App", () => {
         await flushPromises()
         await icon().trigger("click")
         expect(wrapper.find('[aria-label="Show thinking"]').exists()).toBe(true)
+    })
+
+    it("traps focus in settings and restores the menu trigger on close", async () => {
+        setToken("tok")
+        const {wrapper} = await mountAt("/")
+        const trigger = wrapper.get('[aria-label="Quick settings"][aria-haspopup]')
+        await trigger.trigger("click")
+        await wrapper.get('.settings-action').trigger("click")
+        await flushPromises()
+        const dialog = wrapper.get('[role="dialog"][aria-label="Settings"]')
+        expect(document.activeElement).toBe(dialog.element)
+        await dialog.trigger("keydown", {key: "Tab", shiftKey: true})
+        expect(dialog.element.contains(document.activeElement)).toBe(true)
+        await wrapper.get('[aria-label="Close settings"]').trigger("click")
+        await new Promise(resolve => setTimeout(resolve, 20))
+        await flushPromises()
+        expect(wrapper.find('[role="dialog"][aria-label="Settings"]').exists()).toBe(false)
+    })
+
+    it("reopens settings on Forward and closes it with one history step after reopening", async () => {
+        setToken("tok")
+        history.replaceState({}, "")
+        const {wrapper, router} = await mountAt("/")
+        const dialog = () => wrapper.find('[role="dialog"][aria-label="Settings"]')
+        const open = async () => {
+            await wrapper.get('[aria-label="Quick settings"][aria-haspopup]').trigger("click")
+            await wrapper.get('.settings-action').trigger("click")
+            await flushPromises()
+        }
+        const traverse = async (direction: "back" | "forward") => {
+            const popped = new Promise(resolve => window.addEventListener("popstate", resolve, {once: true}))
+            history[direction]()
+            await popped
+            await flushPromises()
+        }
+        history.scrollRestoration = "auto"
+        await open()
+        expect(history.scrollRestoration).toBe("manual")
+        expect(dialog().exists()).toBe(true)
+        await traverse("back")
+        expect(dialog().exists()).toBe(false)
+        await traverse("forward")
+        expect(dialog().exists()).toBe(true)
+        const closed = new Promise(resolve => window.addEventListener("popstate", resolve, {once: true}))
+        await wrapper.get('[aria-label="Close settings"]').trigger("click")
+        await closed
+        await flushPromises()
+        expect(dialog().exists()).toBe(false)
+        await open()
+        const reopenedClose = new Promise(resolve => window.addEventListener("popstate", resolve, {once: true}))
+        await wrapper.get('[aria-label="Close settings"]').trigger("click")
+        await reopenedClose
+        await flushPromises()
+        expect(dialog().exists()).toBe(false)
+        expect(router.currentRoute.value.name).toBe("front")
+    })
+
+    it("returns focus to the current menu after the title bar is toggled in settings", async () => {
+        reloadSettings()
+        settings.showTitleBar = true
+        setToken("tok")
+        history.replaceState({}, "")
+        const {wrapper} = await mountAt("/")
+        await wrapper.get('[aria-label="Quick settings"][aria-haspopup]').trigger("click")
+        await wrapper.get('.settings-action').trigger("click")
+        await flushPromises()
+        const toggle = wrapper.findAll('input[type="checkbox"]').find(input => input.element.closest("label")?.textContent?.includes("Show title bar"))!
+        await toggle.setValue(false)
+        const closed = new Promise(resolve => window.addEventListener("popstate", resolve, {once: true}))
+        await wrapper.get('[aria-label="Close settings"]').trigger("click")
+        await closed
+        await flushPromises()
+        expect(wrapper.find('.title-bar').exists()).toBe(false)
+        expect(document.activeElement).toBe(wrapper.get('[aria-label="Quick settings"][aria-haspopup]').element)
+        settings.showTitleBar = true
     })
 
     it("opens the dashboard socket on a deep link to a signed-in page", async () => {

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Callable
 from pathlib import Path
 
@@ -46,7 +47,7 @@ def open_transcript(
     transcript.write_text(
         record(0, "user", TITLE)
         + "".join(
-            record(i, "assistant", f"Reply {i}\n\n" + "A readable paragraph.\n\n" * 16)
+            record(i, "assistant", f"Reply {i}\n\n" + "A readable paragraph.\n\n" * 24)
             for i in range(1, 25)
         )
     )
@@ -75,9 +76,48 @@ def assert_latest_starts_below_header(page: Page) -> None:
     page.wait_for_function("""() => {
         const replies = document.querySelectorAll('.entry.assistant');
         const reply = replies[replies.length - 1].getBoundingClientRect();
-        const header = document.querySelector('.session-header').getBoundingClientRect();
+        const header = document.querySelector('.title-bar').getBoundingClientRect();
         return Math.abs(reply.top - header.bottom) <= 2;
     }""")
+
+
+@pytest.mark.parametrize("profile", ["normal", "eink"])
+def test_jump_panel_prompt_anchor_and_end_follow(
+    page: Page, make_server: Callable[..., E2EServer], tmp_path: Path, profile: str
+) -> None:
+    page.set_viewport_size({"width": 390, "height": 800})
+    server, transcript = open_transcript(page, make_server, tmp_path)
+    page.evaluate(
+        """profile => {
+        localStorage.setItem('jailbee.displayProfile', profile);
+        localStorage.setItem('jailbee.einkFollow', '1');
+    }""",
+        profile,
+    )
+    page.reload()
+    expect(page.get_by_role("heading", name=TITLE, exact=True)).to_be_visible()
+    page.keyboard.press("j")
+    panel = page.get_by_role("dialog", name="Jump to")
+    expect(panel).to_be_visible()
+    panel.get_by_role("button", name=TITLE, exact=True).click()
+    page.wait_for_function("""() => {
+        const prompt = document.querySelector('.entry.user').getBoundingClientRect();
+        const header = document.querySelector('.title-bar').getBoundingClientRect();
+        return Math.abs(prompt.top - header.bottom) <= 2;
+    }""")
+    if profile == "eink":
+        page.keyboard.press("m")
+        page.wait_for_function("() => window.scrollY > 100")
+        page.get_by_role("button", name="Jump to page").click()
+    else:
+        page.get_by_role("button", name="Quick settings").click()
+        page.get_by_role("button", name="Jump to…").click()
+    panel.get_by_role("button", name="End", exact=True).click()
+    wait_for_scroll_settled(page)
+    with transcript.open("a") as stream:
+        stream.write(record(25, "assistant", "Jump end follows this."))
+    server.watches.open[-1].fire()
+    expect(page.get_by_text("Jump end follows this.", exact=True)).to_be_in_viewport()
 
 
 @pytest.mark.parametrize("width", [1280, 390], ids=["desktop", "phone"])
@@ -88,12 +128,15 @@ def test_latest_answer_and_sticky_title_follow_the_readable_area(
     page.set_viewport_size({"width": width, "height": 800})
     server, transcript = open_transcript(page, make_server, tmp_path)
     if profile == "eink":
-        page.evaluate("localStorage.setItem('jailbee.displayProfile', 'eink')")
+        page.evaluate(
+            "localStorage.setItem('jailbee.displayProfile', 'eink'); "
+            "localStorage.setItem('jailbee.pageControls', 'bar')"
+        )
         page.reload()
         expect(page.get_by_role("heading", name=TITLE, exact=True)).to_be_visible()
     latest = page.get_by_role("button", name="Latest answer")
     title = page.get_by_role("heading", name=TITLE, exact=True)
-    expect(title).to_have_attribute("title", TITLE)
+    expect(title).to_have_attribute("title", re.compile(r"Agent:.*Models:.*Session ID:", re.S))
     expect(latest).to_be_visible()
 
     latest.click()
@@ -101,7 +144,7 @@ def test_latest_answer_and_sticky_title_follow_the_readable_area(
     expect(page.get_by_text("Reply 24", exact=True)).to_be_in_viewport()
     assert_latest_starts_below_header(page)
     expect(title).to_be_in_viewport()
-    assert page.locator(".session-header").evaluate("el => el.getBoundingClientRect().top") == 0
+    assert page.locator(".title-bar").evaluate("el => el.getBoundingClientRect().top") == 0
 
     page.evaluate("window.scrollTo(0, 600)")
     expect(latest).to_be_visible()
@@ -141,6 +184,7 @@ def test_end_follow_and_new_messages_restore_follow(
     if profile == "eink":
         open_settings(page)
         page.get_by_role("radio", name="E-ink (page turns").check()
+        page.get_by_label("Page controls", exact=True).select_option("bar")
         page.get_by_role("checkbox", name="Follow new messages on e-ink").check()
         page.go_back()
         expect(page.get_by_role("heading", name=TITLE, exact=True)).to_be_visible()
@@ -301,14 +345,22 @@ def test_eink_default_holds_new_entries_even_at_the_end(
 def test_partial_keyboard_scroll_keeps_the_current_eink_page(
     page: Page, make_server: Callable[..., E2EServer], tmp_path: Path
 ) -> None:
+    # This tests the origin grid, not a grid anchored at a restored entry.
+    page.add_init_script("localStorage.removeItem('jailbee.readingPositions')")
     open_transcript(page, make_server, tmp_path)
-    page.evaluate("localStorage.setItem('jailbee.displayProfile', 'eink')")
+    page.evaluate(
+        "localStorage.setItem('jailbee.displayProfile', 'eink'); "
+        "localStorage.setItem('jailbee.pageControls', 'bar')"
+    )
     page.reload()
     expect(page.get_by_role("heading", name=TITLE, exact=True)).to_be_visible()
-    expect(page.locator(".page-indicator")).to_contain_text("Page 1 /")
+    # Position memory may resume a later entry; this test starts a fresh grid.
+    page.evaluate("window.scrollTo(0, 0)")
+    wait_for_scroll_settled(page)
+    expect(page.locator(".page-indicator")).to_contain_text("1 /")
     readable = page.locator(".page-nav").evaluate(
         "el => el.getBoundingClientRect().top - "
-        "document.querySelector('.session-header').getBoundingClientRect().bottom"
+        "document.querySelector('.title-bar').getBoundingClientRect().bottom"
     )
     # Sync point: the scroll has landed and its handler has run (scroll events
     # fire before the next animation frame's callbacks).
@@ -322,10 +374,10 @@ def test_partial_keyboard_scroll_keeps_the_current_eink_page(
         }""",
         readable,
     )
-    expect(page.locator(".page-indicator")).to_contain_text("Page 1 /")
+    expect(page.locator(".page-indicator")).to_contain_text("1 /")
     readable = page.locator(".page-nav").evaluate(
         "el => Math.floor(el.getBoundingClientRect().top - "
-        "document.querySelector('.session-header').getBoundingClientRect().bottom)"
+        "document.querySelector('.title-bar').getBoundingClientRect().bottom)"
     )
     page.get_by_role("button", name="Next", exact=False).last.click()
     page.wait_for_function("height => Math.abs(window.scrollY - height) <= 1", arg=readable)
@@ -336,7 +388,10 @@ def test_short_landscape_page_turns_do_not_skip_text(
 ) -> None:
     page.set_viewport_size({"width": 640, "height": 320})
     open_transcript(page, make_server, tmp_path)
-    page.evaluate("localStorage.setItem('jailbee.displayProfile', 'eink')")
+    page.evaluate(
+        "localStorage.setItem('jailbee.displayProfile', 'eink'); "
+        "localStorage.setItem('jailbee.pageControls', 'bar')"
+    )
     page.reload()
     expect(page.get_by_role("heading", name=TITLE, exact=True)).to_be_visible()
     # A larger guard stands in for a device's nonzero safe-area inset.
@@ -346,11 +401,11 @@ def test_short_landscape_page_turns_do_not_skip_text(
         before = page.evaluate("window.scrollY")
         readable = page.locator(".page-nav").evaluate(
             "el => el.getBoundingClientRect().top - "
-            "document.querySelector('.session-header').getBoundingClientRect().bottom"
+            "document.querySelector('.title-bar').getBoundingClientRect().bottom"
         )
-        assert 0 < readable < 100
+        assert 0 < readable < 320
         next_page.click()
-        expect(page.locator(".page-indicator")).not_to_have_text("Page 1 / 1")
+        expect(page.locator(".page-indicator")).not_to_have_text("1 / 1")
         page.wait_for_function("previous => window.scrollY > previous", arg=before)
         moved = page.evaluate("window.scrollY") - before
         assert 0 < moved <= readable + 1
@@ -365,7 +420,10 @@ def test_out_of_date_banner_leaves_the_session_title_bar_visible(
     open_transcript(page, make_server, tmp_path)
     if profile == "eink":
         # Applied by the reload below.
-        page.evaluate("localStorage.setItem('jailbee.displayProfile', 'eink')")
+        page.evaluate(
+            "localStorage.setItem('jailbee.displayProfile', 'eink'); "
+            "localStorage.setItem('jailbee.pageControls', 'bar')"
+        )
     stale = False
     links: list[tuple[WebSocketRoute, WebSocketRoute]] = []
     hellos: list[str] = []
@@ -413,7 +471,7 @@ def test_out_of_date_banner_leaves_the_session_title_bar_visible(
 
     title_bar_clear = """() => {
         const banner = document.querySelector('.outdated').getBoundingClientRect();
-        const header = document.querySelector('.session-header').getBoundingClientRect();
+        const header = document.querySelector('.title-bar').getBoundingClientRect();
         return header.top >= banner.bottom - 0.5;
     }"""
     page.wait_for_function(title_bar_clear)
@@ -427,7 +485,7 @@ def test_out_of_date_banner_leaves_the_session_title_bar_visible(
         before = page.evaluate("window.scrollY")
         readable = page.locator(".page-nav").evaluate(
             "el => el.getBoundingClientRect().top - "
-            "document.querySelector('.session-header').getBoundingClientRect().bottom"
+            "document.querySelector('.title-bar').getBoundingClientRect().bottom"
         )
         page.get_by_role("button", name="Previous", exact=False).last.click()
         page.wait_for_function("previous => window.scrollY < previous", arg=before)
