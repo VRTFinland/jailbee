@@ -56,7 +56,9 @@ def test_every_md_token_belongs_to_a_family_the_guide_names() -> None:
     exact, prefixes = _families(_guide())
     tokens = _md_tokens()
     assert tokens, "no --md-* tokens found"
-    uncovered = sorted(t for t in tokens if t not in exact and not any(t.startswith(p) for p in prefixes))
+    uncovered = sorted(
+        t for t in tokens if t not in exact and not any(t.startswith(p) for p in prefixes)
+    )
     assert not uncovered, f"{GUIDE_PATH} names no token family for: {uncovered}"
 
 
@@ -69,7 +71,10 @@ def test_every_family_the_guide_names_exists() -> None:
     exact -= COUNTEREXAMPLES
     tokens = _md_tokens()
     assert not COUNTEREXAMPLES & tokens, "a counterexample token now exists"
-    stale = sorted({e for e in exact if e not in tokens} | {p + "*" for p in prefixes if not any(t.startswith(p) for t in tokens)})
+    stale = sorted(
+        {e for e in exact if e not in tokens}
+        | {p + "*" for p in prefixes if not any(t.startswith(p) for t in tokens)}
+    )
     assert not stale, f"{GUIDE_PATH} names tokens tokens.css does not define: {stale}"
 
 
@@ -77,7 +82,7 @@ def test_the_guide_states_the_spacing_and_scoping_rules() -> None:
     text = _guide()
     for needle in (
         "--space-3",  # the never-by-index migration example
-        ':root[data-',  # the forbidden scoping form, named as such
+        ":root[data-",  # the forbidden scoping form, named as such
         '[data-profile="eink"]',
         "make web-e2e-snapshots",
         "npm run lint:styles",
