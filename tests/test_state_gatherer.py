@@ -117,8 +117,12 @@ def test_snapshot_carries_only_existing_resumable_repositories(mocker):
     path.parent.mkdir(parents=True, exist_ok=True)
     groups = [
         RepoGroup("alpha", "/a", None, [dataclasses.replace(_ci("alpha-x"), state="Stopped")]),
-        RepoGroup("beta", "/b", None, [dataclasses.replace(_ci("beta-x"), repo="beta", state="Stopped")]),
-        RepoGroup("lost", None, None, [dataclasses.replace(_ci("lost-x"), repo="lost", state="Stopped")]),
+        RepoGroup(
+            "beta", "/b", None, [dataclasses.replace(_ci("beta-x"), repo="beta", state="Stopped")]
+        ),
+        RepoGroup(
+            "lost", None, None, [dataclasses.replace(_ci("lost-x"), repo="lost", state="Stopped")]
+        ),
     ]
     g = _gatherer(mocker, lambda *a, **k: groups, _Clock())
     first = g.tick(active=True, refresh=True, roots=[])

@@ -705,7 +705,9 @@ def test_remote_global_action_never_treats_orphan_placeholder_as_repo(
 
 
 @pytest.mark.parametrize("transport", ["ssh", "web"])
-def test_unrestricted_remote_stop_without_exclusions_still_skips_orphans(host, monkeypatch, transport):
+def test_unrestricted_remote_stop_without_exclusions_still_skips_orphans(
+    host, monkeypatch, transport
+):
     from jailbee.remote_ssh.session import child_environment
 
     cfg, other, incus, _ = host
@@ -722,13 +724,17 @@ def test_unrestricted_remote_stop_without_exclusions_still_skips_orphans(host, m
     assert result.exit_code == 0, result.output
     assert [c.args[0] for c in incus.stop.call_args_list] == ["one-work", "two-child", "one-mount"]
     assert recorded() == {
-        "one-work": str(cfg.repo_root), "two-child": str(other.repo_root), "one-mount": str(cfg.repo_root)
+        "one-work": str(cfg.repo_root),
+        "two-child": str(other.repo_root),
+        "one-mount": str(cfg.repo_root),
     }
     assert "lost-work" not in result.output
 
 
 @pytest.mark.parametrize("transport", ["ssh", "web"])
-def test_remote_resume_recovers_only_in_scope_interrupted_stops(host, mocker, monkeypatch, transport):
+def test_remote_resume_recovers_only_in_scope_interrupted_stops(
+    host, mocker, monkeypatch, transport
+):
     cfg, other, incus, _ = host
     register_host_repos(host)
     monkeypatch.setenv("JAILBEE_REMOTE_TRANSPORT", transport)
@@ -736,7 +742,11 @@ def test_remote_resume_recovers_only_in_scope_interrupted_stops(host, mocker, mo
     retained = {"two-child": str(other.repo_root), "lost-work": "/lost"}
     path = state_dir() / "resume-set.json"
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({"version": 1, "containers": {}, "stopping": retained | {"one-off": str(cfg.repo_root)}}))
+    path.write_text(
+        json.dumps(
+            {"version": 1, "containers": {}, "stopping": retained | {"one-off": str(cfg.repo_root)}}
+        )
+    )
     incus.list_containers.return_value.append(
         {"name": "lost-work", "status": "Stopped", "profiles": ["lost-base"]}
     )

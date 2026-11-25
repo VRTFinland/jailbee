@@ -208,8 +208,13 @@ def test_ssh_terminal_menu_uses_only_allowed_resume_candidates(mocker):
         client.seq += 1
 
     run = drive(
-        mocker, ["g", only_excluded], [], client=client,
-        transport="ssh", remote=True, ssh_policy=policy
+        mocker,
+        ["g", only_excluded],
+        [],
+        client=client,
+        transport="ssh",
+        remote=True,
+        ssh_policy=policy,
     )
     assert "global-resume" in {v for _, v in run.trace[1].overlay.actions}
     assert "global-resume" not in {v for _, v in run.trace[2].overlay.actions}
