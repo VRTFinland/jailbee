@@ -62,8 +62,8 @@ describe("GalleryView", () => {
             expect(switches.map((s) => [s.attributes("aria-checked"), s.attributes("disabled") !== undefined]))
                 .toEqual([["true", false], ["false", false], ["true", true], ["false", true], ["false", false]])
             expect(panel.findAll(".status-chip").map((c) => c.attributes("data-status"))).toEqual([
-                "running", "stopped", "booting", "autostart", "job", "failed",
-                "waiting", "busy", "idle", "shell", "error", "error",
+                "running", "frozen", "stopped", "booting", "autostart", "job", "failed",
+                "waiting", "busy", "idle", "shell", "error", "error", "unknown",
                 "running", "booting", "failed", // the list rows' trailing chips
             ])
             expect(panel.text()).toContain("API error: overloaded")

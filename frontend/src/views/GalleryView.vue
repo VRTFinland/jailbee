@@ -156,6 +156,7 @@ function typeStyle(token: string): Record<string, string> {
                         <div class="samples">
                             <StatusChip v-for="status in STATUS_NAMES" :key="status" :status="status" />
                             <StatusChip status="error" label="API error: overloaded" />
+                            <StatusChip status="unknown" label="Error" />
                         </div>
                     </div>
 

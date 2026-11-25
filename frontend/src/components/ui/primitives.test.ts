@@ -3,7 +3,7 @@ import {mount} from "@vue/test-utils"
 import Button from "./Button.vue"
 import IconButton from "./IconButton.vue"
 import Switch from "./Switch.vue"
-import StatusChip, {STATUS_NAMES} from "./StatusChip.vue"
+import StatusChip from "./StatusChip.vue"
 import ListRow from "./ListRow.vue"
 
 // The static UI primitives (#167 ticket 05): observable behaviour only. The
@@ -114,15 +114,8 @@ describe("Switch", () => {
 })
 
 describe("StatusChip", () => {
-    it("covers every container phase and agent state", () => {
-        expect([...STATUS_NAMES]).toEqual([
-            "running", "stopped", "booting", "autostart", "job", "failed",
-            "waiting", "busy", "idle", "shell", "error",
-        ])
-    })
-
     it.each([
-        ["running", "running"], ["stopped", "stopped"], ["booting", "booting"],
+        ["running", "running"], ["frozen", "frozen"], ["stopped", "stopped"], ["booting", "booting"],
         ["autostart", "autostart"], ["job", "job"], ["failed", "failed"],
         ["waiting", "waiting for you"], ["busy", "working"], ["idle", "idle"],
         ["shell", "shell"], ["error", "error"],

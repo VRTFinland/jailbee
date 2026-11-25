@@ -1,15 +1,17 @@
 <script lang="ts">
 import type {IconName} from "./material-symbols/paths"
 
-/** Container phases (Incus state and the dashboard core's row phase), then agent states. */
+/** Container phases (Incus state and the dashboard core's row phase), then
+ * agent states. Map wire values to these with `status.ts`, never by hand. */
 export const STATUS_NAMES = [
-    "running", "stopped", "booting", "autostart", "job", "failed",
+    "running", "frozen", "stopped", "booting", "autostart", "job", "failed",
     "waiting", "busy", "idle", "shell", "error",
 ] as const
 export type StatusName = (typeof STATUS_NAMES)[number]
 
 const STATUSES: Record<StatusName, {icon: IconName; text: string}> = {
     running: {icon: "running", text: "running"},
+    frozen: {icon: "idle", text: "frozen"},
     stopped: {icon: "stopped", text: "stopped"},
     booting: {icon: "booting", text: "booting"},
     autostart: {icon: "autostart", text: "autostart"},
@@ -26,19 +28,23 @@ const STATUSES: Record<StatusName, {icon: IconName; text: string}> = {
 <script setup lang="ts">
 // A tonal status chip (#167): an icon and words, never colour alone, so it
 // reads the same in e-ink, where every chip is black on white with a hairline.
+// A status this chip does not know (`unknown`, or a raw wire value that
+// slipped past `status.ts`) is a neutral chip with its words and no icon.
+import {computed} from "vue"
 import Icon from "./Icon.vue"
 
-defineProps<{
-    status: StatusName
+const props = defineProps<{
+    status: StatusName | "unknown"
     /** More specific wording, e.g. "API error: overloaded"; the icon and colour stay the status's. */
     label?: string
 }>()
+const known = computed(() => Object.hasOwn(STATUSES, props.status) ? STATUSES[props.status as StatusName] : null)
 </script>
 
 <template>
-    <span class="status-chip" :data-status="status"
-        ><Icon :name="STATUSES[status].icon" size="small" /><span class="status-chip-text">{{
-            label ?? STATUSES[status].text }}</span></span>
+    <span class="status-chip" :data-status="known ? status : 'unknown'"
+        ><Icon v-if="known" :name="known.icon" size="small" /><span class="status-chip-text">{{
+            label ?? known?.text ?? status }}</span></span>
 </template>
 
 <style scoped>
@@ -68,7 +74,8 @@ defineProps<{
     background: var(--md-primary-container);
     color: var(--md-on-primary-container);
 }
-.status-chip[data-status="stopped"] {
+.status-chip[data-status="stopped"],
+.status-chip[data-status="frozen"] {
     background: var(--md-surface-container-highest);
 }
 .status-chip[data-status="booting"] {
