@@ -3,6 +3,10 @@
 // checked against. Each panel scopes one theme and one display profile, so the
 // whole system is judged on one screen. Behind login; linked from no menu.
 // Later tickets add each UI primitive to every panel.
+import Icon from "../components/ui/Icon.vue"
+import {ICON_NAMES} from "../components/ui/material-symbols/paths"
+import iconLicence from "../components/ui/material-symbols/LICENSE?url&no-inline"
+import iconNotice from "../components/ui/material-symbols/NOTICE.md?url&no-inline"
 const THEMES = [
     {id: "light", label: "Light"},
     {id: "dark", label: "Dark"},
@@ -84,6 +88,25 @@ function typeStyle(token: string): Record<string, string> {
                         <p v-for="role in TYPE_ROLES" :key="role.token" class="type-sample" :style="typeStyle(role.token)">
                             {{ role.label }} <code class="swatch-name">--md-type-{{ role.token }}</code>
                         </p>
+                    </div>
+
+                    <div class="group">
+                        <h3 class="group-title">Icons</h3>
+                        <p class="swatch-name">
+                            <a :href="iconLicence">Material Symbols licence</a>
+                            · <a :href="iconNotice">Source and attribution</a>
+                        </p>
+                        <p class="swatch-item" role="group" aria-label="Icon sizes">
+                            <Icon v-for="size in (['small', 'medium', 'large'] as const)" :key="size"
+                                name="settings" :size="size" />
+                            <span class="swatch-name">small / medium / large</span>
+                        </p>
+                        <ul class="swatches">
+                            <li v-for="name in ICON_NAMES" :key="name" class="swatch-item">
+                                <Icon :name="name" :label="name" />
+                                <code class="swatch-name">{{ name }}</code>
+                            </li>
+                        </ul>
                     </div>
 
                     <div class="group">

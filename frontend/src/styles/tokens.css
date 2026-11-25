@@ -47,6 +47,11 @@
     --md-type-label-small-line-height: 1rem;
     --md-type-label-small-weight: 500;
 
+    /* Icon sizes: Material Symbols use a 24px optical size at the medium step. */
+    --md-icon-small: 1rem;
+    --md-icon-medium: 1.5rem;
+    --md-icon-large: 2rem;
+
     /* Shape scale. */
     --md-shape-none: 0;
     --md-shape-small: 8px;
@@ -327,8 +332,16 @@ body {
    profile; the blanket stop below skips a normal-profile scope inside an
    e-ink one (a gallery panel on an e-ink page). A browser without complex
    `:not()` drops the blanket stop; transitions on the token still stop. */
+[data-theme="light"],
+[data-theme="dark"] {
+    --md-icon-ink: initial;
+}
 [data-profile="eink"] {
     --md-motion-duration: 0ms;
+    --md-icon-ink: #000000;
+}
+[data-theme="eink"] {
+    --md-icon-ink: #000000;
 }
 [data-profile="normal"] {
     --md-motion-duration: 150ms;
