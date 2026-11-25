@@ -277,9 +277,15 @@ jb remote web disable
 The service exits and is restarted by systemd when the installed JailBee
 version changes, so an upgrade needs no manual restart.
 
-`open` creates a one-time link that works only from the same machine and
-logs that browser in without a PIN. It is the easy way to use the dashboard
-locally without turning authentication off.
+`open` creates a one-time link that logs that browser in without a PIN. It is
+the easy way to use the dashboard locally without turning authentication off.
+The link is valid for 60 seconds and works once, for whoever presents it
+first. It reaches the browser on its command line, where other accounts on the
+same host can read it, so `open` assumes a single-user host. That is JailBee's
+own assumption: driving Incus takes `incus-admin` membership, which is
+equivalent to root, so other people with shells on the host are not a
+boundary the dashboard defends. On a host shared with untrusted accounts, log
+in with a PIN, TOTP or a security key instead.
 
 ## Logging in
 
@@ -291,7 +297,7 @@ can be combined:
 | PIN | on by default | A new one-time PIN is printed by `serve` (to the journal under systemd). `jb remote web auth pin off` refuses PIN logins; at least one TOTP key must exist first. |
 | TOTP | `jb remote web auth totp add [--name NAME]` | Prints the secret and a QR code for an authenticator app. `totp ls` and `totp rm` manage keys. |
 | FIDO2 security key or passkey | `jb remote web auth fido2 setup` | See below. `fido2 ls` and `fido2 rm` manage keys. |
-| One-time link | `jb remote web open` | Localhost only, single use. |
+| One-time link | `jb remote web open` | Single use, valid 60 seconds; assumes a single-user host (see above). |
 
 A successful login gives the browser a session that slides for 30 days. The
 login page asks for nothing but the secret: the server names the session after
@@ -368,7 +374,8 @@ Logins, TOTP secrets and sessions live in the JailBee state database
 (`~/.local/state/jailbee/state.sqlite`). Its directory is kept `0700` and the
 database `0600` (each JailBee process tightens them when it first opens
 the database), so other local users cannot read
-the TOTP secrets.
+the TOTP secrets. This is defence in depth: JailBee assumes a single-user
+host (see `open` above).
 
 ### FIDO2 setup mode
 
