@@ -26,7 +26,9 @@ def test_menu_is_at_right_edge_and_does_not_overlap_title(logged_in: Page, width
     assert icon_box is not None and heading_box is not None
     assert icon_box["x"] + icon_box["width"] <= width
     assert heading_box["x"] + heading_box["width"] <= icon_box["x"]
-    assert page.locator(".title-bar").bounding_box()["height"] <= 44
+    bar_box = page.locator(".title-bar").bounding_box()
+    assert bar_box is not None
+    assert bar_box["height"] <= 44
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
     open_quick_settings(page)
     panel = page.get_by_role("dialog", name="Quick settings")

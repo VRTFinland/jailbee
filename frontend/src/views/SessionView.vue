@@ -125,7 +125,10 @@ const jumpLabel = computed(() => jumpAction.value === null ? null : {
 
 function measureVisibility() {
     const headerRect = header.value?.$el.getBoundingClientRect()
-    readableTop.value = headerRect ? Math.max(0, headerRect.bottom) : 0
+    const banner = document.querySelector<HTMLElement>(".outdated")
+    readableTop.value = settings.showTitleBar && headerRect
+        ? Math.max(0, headerRect.bottom)
+        : Math.max(0, banner?.getBoundingClientRect().bottom ?? 0)
     const content = transcriptEl.value?.getBoundingClientRect()
     atTranscriptEnd.value = !!content && content.bottom <= readableBottom() + 1
     if (atTranscriptEnd.value && pending.value.length === 0) unseen.value = null
