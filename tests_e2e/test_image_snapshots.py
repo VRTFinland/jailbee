@@ -104,19 +104,18 @@ def test_small_rasterisation_noise_is_allowed_but_broad_colour_drift_is_not(
         assert_image_matches(png("#fefefe"), reference=reference, output=output)
 
 
-@pytest.mark.parametrize("size", [(40, 40), (1000, 400)])
-@pytest.mark.parametrize("changed_pixels", [200, 201])
+@pytest.mark.parametrize("size", [(100, 100), (1000, 400)])
+@pytest.mark.parametrize("changed_pixels", [20, 21])
 def test_changed_pixel_budget_is_absolute_whatever_the_image_size(
     tmp_path: Path, size: tuple[int, int], changed_pixels: int
 ) -> None:
-    """One chip or icon recoloured is a few hundred pixels: it must fail in a
-    large capture as in a small one, so the budget is a pixel count, not a
-    fraction. The mean-error cap stays below its limit here (the large image),
-    or is the same verdict (the small one)."""
+    """A recoloured 16px icon is about 36 pixels: it must fail in a large
+    capture as in a small one, so the budget is a pixel count, not a fraction.
+    The mean error stays below its cap in both sizes."""
     reference, output = tmp_path / "sample.png", tmp_path / "evidence"
     reference.write_bytes(png("white", size))
     actual = with_changed_pixels(png("white", size), changed_pixels, (220, 220, 220))
-    if changed_pixels <= 200 and size == (1000, 400):
+    if changed_pixels <= 20:
         assert_image_matches(actual, reference=reference, output=output)
     else:
         with pytest.raises(AssertionError, match="Gallery differs"):

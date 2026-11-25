@@ -9,10 +9,11 @@ from PIL import Image, ImageChops, ImageStat
 
 # Chrome/FreeType versions can shade text edges differently. Ignore small
 # per-channel differences, but never allow a layout shift or a changed swatch.
-# The changed-pixel budget is a count, not a fraction: one recoloured chip or
-# icon (a few hundred pixels) fails in a large capture as in a small one.
+# The changed-pixel budget is a count, not a fraction: one recoloured chip
+# (about a thousand pixels) or small 16px icon (about 36) fails in a large
+# capture as in a small one.
 _CHANNEL_TOLERANCE = 24
-_MAX_CHANGED_PIXELS = 200
+_MAX_CHANGED_PIXELS = 20
 _MAX_MEAN_DIFFERENCE = 0.25
 
 
