@@ -22,7 +22,8 @@ before editing `## Unreleased`.
   colour in every theme, a `/ui` gallery page behind login with per-group
   screenshot regression checks across themes, display profiles and phone/desktop
   widths, and Stylelint enforcement of design tokens (colours, sizes, shadows and
-  motion) in browser tests with explicit migration-only exceptions
+  motion) in browser tests with explicit migration-only exceptions, and a design
+  guide for contributors and agents in `frontend/DESIGN.md`
   ([#167](https://github.com/VRTFinland/jailbee/issues/167)).
 - Web dashboard reader improvements: compact breadcrumb title bars and session details,
   an in-context settings overlay, configurable e-ink page controls and page step,

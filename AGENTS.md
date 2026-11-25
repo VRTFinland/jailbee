@@ -4,6 +4,7 @@
 for this repository: the architecture rules, the coding patterns, the test
 isolation contract, the commit and CHANGELOG conventions. **Read it before your
 first edit, in full.** It is ~270 lines and every section applies to you.
+For web dashboard UI work, also read [`frontend/DESIGN.md`](frontend/DESIGN.md).
 
 It is written for Claude Code. Where it names a tool or a behaviour you do not
 have, the corrections below win. Everything else in it holds unchanged.

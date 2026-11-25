@@ -139,6 +139,8 @@ A change to the browser app (`frontend/`) or the web server package
 (`src/jailbee/web/`) runs `make web-e2e` before it is done; the ordinary
 pytest suite does not cover the browser.
 
+Browser app UI work follows the design guide [`frontend/DESIGN.md`](frontend/DESIGN.md).
+
 ### Lint and type-check
 ```bash
 uv run ruff check src/ tests/        # lint
