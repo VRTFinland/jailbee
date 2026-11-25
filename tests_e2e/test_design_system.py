@@ -422,3 +422,24 @@ def test_linked_list_row_opens_from_anywhere_with_layer_and_focus_ring(logged_in
     child_row.click(position=_over_secondary(child_row))
     expect(page).to_have_url(re.compile(r"#/ui\?row=dev-ork-1$"))
 
+
+def test_disabled_switch_draws_no_hover_or_pressed_halo(logged_in: Page) -> None:
+    page = logged_in
+    _open_gallery(page)
+    panel = page.get_by_role("region", name="Light theme, normal profile", exact=True)
+    disabled = panel.get_by_role("switch", name="On, disabled", exact=True)
+    handle = disabled.locator(".switch-handle")
+    disabled.hover()
+    page.wait_for_timeout(200)
+    assert handle.evaluate(_LAYER_OPACITY) == "0"
+    page.mouse.down()
+    page.wait_for_timeout(200)
+    assert handle.evaluate(_LAYER_OPACITY) == "0"
+    page.mouse.up()
+    # The enabled switch still draws its halo.
+    enabled = panel.get_by_role("switch", name="On", exact=True)
+    enabled.hover()
+    page.wait_for_function(
+        "el => getComputedStyle(el, '::before').opacity === '0.08'",
+        arg=enabled.locator(".switch-handle").element_handle(),
+    )

@@ -17,11 +17,9 @@ function toggle(): void {
 <template>
     <button type="button" role="switch" class="switch" :aria-checked="modelValue ? 'true' : 'false'"
         :aria-label="label" :disabled="disabled" @click="toggle">
-        <span class="switch-track"><span class="switch-handle ui-state-layer"></span></span>
+        <span class="switch-track"><span class="switch-handle"></span></span>
     </button>
 </template>
-
-<style src="./state-layer.css"></style>
 
 <style scoped>
 /* The button is the 44px hit target; the track inside it is the Material 3
@@ -77,12 +75,21 @@ function toggle(): void {
     height: var(--md-space-24);
     background: var(--md-on-primary);
 }
-/* The state layer is a halo around the handle, as in Material 3. */
-.switch-handle.ui-state-layer::before {
+/* The state layer is a halo around the handle, as in Material 3. It is the
+   switch's own, not the shared .ui-state-layer: that one keys hover to the
+   element itself, and a span is never :disabled, so a disabled switch's
+   handle would light up. Here only an enabled switch's hover or press does. */
+.switch-handle::before {
+    content: "";
+    position: absolute;
     inset: calc(var(--md-space-12) - var(--md-space-24));
+    border-radius: inherit;
     background: var(--md-on-surface);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity var(--md-motion-duration) var(--md-motion-easing);
 }
-.switch[aria-checked="true"] .switch-handle.ui-state-layer::before {
+.switch[aria-checked="true"] .switch-handle::before {
     background: var(--md-primary);
 }
 .switch:hover:not(:disabled) .switch-handle::before {
