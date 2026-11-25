@@ -1,9 +1,9 @@
 export default {
-    // Permanent exemption: the scales and theme palettes define raw values here.
-    // Migration-only exceptions below are exact paths, never component globs.
-    // Remove each with its migration (tickets 08-13); ticket 14 removes the list.
+    // tokens.css is not ignored: an override below exempts its token
+    // declarations only. Migration-only exceptions below are exact paths, never
+    // component globs. Remove each with its migration (tickets 08-13); ticket 14
+    // removes the list.
     ignoreFiles: [
-        "src/styles/tokens.css",
         "src/App.vue", // 08: title bar and front page
         "src/components/RepoList.vue",
         "src/components/TitleBar.vue",
@@ -23,7 +23,20 @@ export default {
         "src/styles/highlight.css",
     ],
     plugins: ["./stylelint/design-tokens.mjs"],
-    overrides: [{files: ["**/*.vue"], customSyntax: "postcss-html"}],
+    overrides: [
+        {files: ["**/*.vue"], customSyntax: "postcss-html"},
+        {
+            // The scales and theme palettes define raw values here, and only
+            // custom property declarations (the tokens) may be in this file.
+            files: ["src/styles/tokens.css"],
+            rules: {
+                "jailbee/design-tokens": [true, {tokenFile: true}],
+                "color-no-hex": null,
+                "color-named": null,
+                "function-disallowed-list": null,
+            },
+        },
+    ],
     rules: {
         "jailbee/design-tokens": true,
         "color-no-hex": true,

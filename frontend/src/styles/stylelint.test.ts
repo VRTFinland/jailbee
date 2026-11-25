@@ -14,7 +14,9 @@ async function lintStyle(style: string, name = "NewComponent.vue") {
 const frontend = path.resolve(import.meta.dirname, "../..")
 const configFile = path.join(frontend, "stylelint.config.mjs")
 
-it("rejects raw colours, font sizes and shapes in an unlisted Vue component", async () => {
+const TOKEN_RULE = "jailbee/design-tokens"
+
+it("rejects raw colours, sizes, shapes, shadows and motion in an unlisted Vue component", async () => {
     const result = await stylelint.lint({
         cwd: frontend,
         configFile,
@@ -22,9 +24,28 @@ it("rejects raw colours, font sizes and shapes in an unlisted Vue component", as
     })
     expect(result.errored).toBe(true)
     const warnings = result.results.flatMap((file) => file.warnings)
-    for (const property of ["color", "font-size", "border-radius"]) {
-        expect(warnings.some((warning) => warning.text.includes(property))).toBe(true)
-    }
+    expect(warnings.some((warning) => warning.rule === "color-no-hex")).toBe(true)
+    const flagged = warnings.filter((warning) => warning.rule === TOKEN_RULE)
+        .map((warning) => /in "([^"]+)"/.exec(warning.text)?.[1])
+    expect(flagged.sort()).toEqual([
+        "border-radius", "box-shadow", "font-size", "height", "letter-spacing", "line-height",
+        "max-width", "min-height", "outline-offset", "transform", "transition", "width",
+    ])
+})
+
+it("exempts only token declarations in tokens.css; any other rule there fails", async () => {
+    const lint = (code: string) => stylelint.lint({
+        cwd: frontend, configFile, code, codeFilename: path.join(frontend, "src/styles/tokens.css"),
+    })
+    const tokens = await lint(`:root { --md-space-8: 8px; --md-primary: #3a5f94; color-scheme: light; }
+        @font-face { font-family: "Inter"; font-weight: 100 900; src: url("x.woff2"); }
+        @media (pointer: coarse) { :root { --md-target-row: 56px; } }`)
+    expect(tokens.results[0].warnings).toEqual([])
+    const rule = await lint(".notice { border: var(--md-hairline); padding: 8px; }")
+    expect(rule.results[0].warnings.map((warning) => [warning.rule, warning.text])).toEqual([
+        [TOKEN_RULE, expect.stringContaining('"border"')],
+        [TOKEN_RULE, expect.stringContaining('"padding"')],
+    ])
 })
 
 it("lints the real tree with only the explicitly exempted legacy files", async () => {
@@ -46,7 +67,7 @@ it("enforces standalone stylesheets and declarations inside media queries", asyn
         codeFilename: path.join(frontend, "src/styles/new-styles.css"),
     })
     expect(result.errored).toBe(true)
-    expect(result.results[0].warnings).toHaveLength(2)
+    expect(result.results[0].warnings.map((warning) => warning.rule).sort()).toEqual(["color-named", TOKEN_RULE])
 })
 
 it.each([
@@ -69,6 +90,23 @@ it.each([
     "--local-layer: 999; z-index: var(--local-layer);",
     "--local-space: 8px; padding: var(--local-space);",
     "--local-colour: red; color: var(--local-colour);",
+    "box-shadow: 0 1px 2px var(--md-outline);",
+    "box-shadow: inset 0 0 0 1px var(--md-hairline);",
+    "width: 320px;",
+    "height: 48px;",
+    "min-width: 10px;",
+    "max-height: calc(100vh - 64px);",
+    "line-height: 20px;",
+    "outline-offset: 4px;",
+    "letter-spacing: 0.5px;",
+    "transform: translateX(8px);",
+    "transform: translate(0, -4px) scale(1.1);",
+    "translate: 4px 0;",
+    "transition: opacity 200ms ease;",
+    "transition: opacity var(--md-motion-duration), transform .3s;",
+    "transition-duration: 0.2s;",
+    "transition-delay: 50ms;",
+    "animation: spin 1s linear infinite;",
 ])("rejects raw values in a new unlisted component: %s", async (declaration) => {
     expect((await lintStyle(declaration)).errored).toBe(true)
 })
@@ -85,6 +123,14 @@ it.each([
     "font: var(--md-type-body-medium-size) Inter;",
     "font: 500 var(--md-type-body-medium-size)/var(--md-type-body-medium-line-height) Inter;",
     "--local-space: var(--md-space-8); padding: var(--local-space);",
+    "box-shadow: none;",
+    "width: 1px; height: 2px; max-width: 100%; min-height: var(--md-target-min);",
+    "width: var(--md-switch-track-width); min-width: 0; max-width: min(100%, 40rem);",
+    "line-height: 1.5; line-height: var(--md-type-body-small-line-height); letter-spacing: normal;",
+    "outline-offset: var(--md-focus-ring-offset); outline-offset: -2px;",
+    "transform: translateY(calc(-1 * var(--md-space-4))) rotate(90deg); translate: var(--md-space-4) 0;",
+    "transition: opacity var(--md-motion-duration) var(--md-motion-easing); transition: none;",
+    "transition-duration: 0s; animation: none;",
 ])("accepts tokens, layout and hairline widths: %s", async (declaration) => {
     expect((await lintStyle(declaration)).errored).toBe(false)
 })

@@ -1,0 +1,108 @@
+/* Page-wide base rules (#167): element defaults, the bottom guard, the page
+   controls' placement and the motion stops. Linted like any component; the
+   values come from tokens.css. */
+
+[data-theme="eink"] a {
+    text-decoration: underline;
+}
+[data-theme="eink"] .notice {
+    border: 1px solid var(--md-hairline);
+}
+
+*,
+*::before,
+*::after {
+    box-sizing: border-box;
+}
+
+html {
+    font-size: var(--font-size-body);
+}
+
+html,
+body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-body);
+    line-height: 1.5;
+    -webkit-text-size-adjust: 100%;
+}
+
+code {
+    font-family: var(--font-mono);
+}
+
+button.link {
+    font: inherit;
+    background: none;
+    border: none;
+    color: var(--accent);
+    cursor: pointer;
+    padding: var(--space-2);
+}
+
+/* The guard itself: a fixed strip that swallows taps and holds no controls;
+   the page leaves room for it. Both display profiles. */
+body {
+    padding-bottom: var(--guard-bottom);
+}
+.bottom-guard {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: var(--guard-bottom);
+    background: var(--bg);
+    z-index: var(--md-layer-sticky);
+}
+
+/* Floating page controls and jump buttons share the bottom edge without
+   covering one another. */
+:root[data-profile="eink"]:not([data-page-controls="bar"]) .jump-latest {
+    right: calc(var(--space-2) + var(--page-controls-width) + var(--space-2));
+    max-width: calc(100vw - var(--page-controls-width) - 3 * var(--space-2));
+}
+
+/* Theme and profile scoping (#167): a theme or display-profile difference is
+   a token (custom properties inherit from the nearest `[data-theme]` or
+   `[data-profile]`, so a /ui gallery panel shows its own), or failing that a
+   rule `[data-profile="eink"] .x` / `[data-theme="eink"] .x` without `:root`.
+   Never `:root[data-…] .x`: no panel can scope it. `:root` stays only for what
+   exists once per page (body padding, the page controls and what is placed
+   around them). Exception: the generated `highlight.css` (Pygments) keys code
+   colours to the page's theme; the gallery shows no highlighted code. */
+
+/* E-ink never animates, nor does anything under reduced motion; edge tap
+   zones need margins clear of links. The motion token (tokens.css) follows
+   the nearest profile; the blanket stop below skips a normal-profile scope
+   inside an e-ink one (a gallery panel on an e-ink page). A browser without
+   complex `:not()` drops the blanket stop; transitions on the token still stop. */
+[data-profile="eink"],
+[data-profile="eink"] *:not([data-profile="normal"], [data-profile="eink"] [data-profile="normal"] *),
+[data-profile="eink"] *:not([data-profile="normal"], [data-profile="eink"] [data-profile="normal"] *)::before,
+[data-profile="eink"] *:not([data-profile="normal"], [data-profile="eink"] [data-profile="normal"] *)::after {
+    transition: none !important;
+    animation: none !important;
+    scroll-behavior: auto !important;
+}
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+        transition: none !important;
+        animation: none !important;
+        scroll-behavior: auto !important;
+    }
+}
+:root[data-profile="eink"] html,
+:root[data-profile="eink"] {
+    scroll-behavior: auto !important;
+}
+:root[data-profile="eink"] body {
+    padding-inline: var(--eink-page-inset);
+    padding-bottom: calc(var(--guard-bottom) + var(--page-nav-height) + var(--space-3));
+}
+:root[data-profile="eink"]:not([data-page-controls="bar"]) body {
+    padding-right: max(var(--eink-page-inset), calc(var(--page-controls-width) + var(--space-2) + var(--space-2)));
+}
