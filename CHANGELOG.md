@@ -45,7 +45,8 @@ before editing `## Unreleased`.
   destroyed containers are dropped and unavailable repository configs receive a
   recovery hint. The terminal dashboard offers both in a global menu (`g`, F10
   or the title's ☰), alongside Accounts, Notifications, Global config, Settings,
-  Help and Quit; remote policy hides disallowed entries
+  Help and Quit; remote policy hides disallowed entries.
+  The web dashboard's quick settings menu sits at the title bar's left edge (☰)
   ([#149](https://github.com/VRTFinland/jailbee/issues/149)).
 - `jailbee --version` and `jailbee version` include the source commit when
   known, with `-dirty` for uncommitted source changes. Editable installs read

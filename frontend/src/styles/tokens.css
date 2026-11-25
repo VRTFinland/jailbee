@@ -104,8 +104,8 @@ code {
     font-family: var(--font-mono);
 }
 
-/* Reserve the fixed quick-settings trigger without adding a second header. */
-#app .bar { padding-right: 3.5rem; }
+/* Reserve the left-edge menu trigger without adding a second header. */
+#app .bar { padding-left: calc(var(--quick-trigger-size) + 0.75rem); }
 
 button.link {
     font: inherit;

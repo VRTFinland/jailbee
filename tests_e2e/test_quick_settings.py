@@ -15,6 +15,26 @@ from tests_e2e.test_session_reading import open_transcript, record, wait_for_scr
 
 
 @pytest.mark.parametrize("width", [1280, 390], ids=["desktop", "phone"])
+def test_hamburger_is_at_left_edge_and_does_not_overlap_title(logged_in: Page, width: int) -> None:
+    page = logged_in
+    page.set_viewport_size({"width": width, "height": 600})
+    icon = page.get_by_role("button", name="Quick settings", exact=True)
+    heading = page.get_by_role("heading", name="JailBee", exact=True)
+    expect(icon).to_be_visible()
+    icon_box = icon.bounding_box()
+    heading_box = heading.bounding_box()
+    assert icon_box is not None and heading_box is not None
+    assert icon_box["x"] < 24
+    assert icon_box["x"] + icon_box["width"] <= heading_box["x"]
+    open_quick_settings(page)
+    panel = page.get_by_role("dialog", name="Quick settings")
+    panel_box = panel.bounding_box()
+    assert panel_box is not None
+    assert panel_box["x"] == icon_box["x"]
+    assert panel_box["x"] + panel_box["width"] <= width
+
+
+@pytest.mark.parametrize("width", [1280, 390], ids=["desktop", "phone"])
 @pytest.mark.parametrize("profile", ["normal", "eink"])
 def test_menu_context_paging_and_live_preferences(
     page: Page, make_server: Callable[..., E2EServer], tmp_path: Path, width: int, profile: str

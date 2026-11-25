@@ -109,6 +109,7 @@ from jailbee.dashboard.menus import (
     new_container_target,
     new_pr_container_argv,
     rename_argv,
+    terminal_config_edit_available,
     view_only_note,
 )
 from jailbee.dashboard.model import (
@@ -4213,7 +4214,11 @@ class DashboardSession:
             self.overlay = "help"
         elif key == "global-menu":
             self.overlay = GlobalMenuState(
-                list(global_menu_actions(self.ssh_policy, transport=self.transport))
+                list(
+                    global_menu_actions(
+                        self.ssh_policy, transport=self.transport, remote=self.remote
+                    )
+                )
             )
         elif key == "command":
             self.overlay = CommandState()
@@ -4225,7 +4230,9 @@ class DashboardSession:
             self.overlay = self.open_accounts()
         elif key == "queue":
             self.open_queue()
-        elif key in ("config-edit", "config-edit-global") and self.remote:
+        elif key in ("config-edit", "config-edit-global") and not terminal_config_edit_available(
+            remote=self.remote, transport=self.transport
+        ):
             self.set_notice(REMOTE_CONFIG_EDIT_NOTE)
         elif key in ("config-edit", "config-edit-global"):
             self.edit_config(global_layer=key == "config-edit-global")

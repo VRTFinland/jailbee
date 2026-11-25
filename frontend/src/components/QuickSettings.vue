@@ -171,11 +171,11 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.quick-settings { position: fixed; top: calc(var(--app-banner-height, 0px) + var(--quick-trigger-top)); right: 0.75rem; z-index: 40; }
+.quick-settings { position: fixed; top: calc(var(--app-banner-height, 0px) + var(--quick-trigger-top)); left: 0.75rem; z-index: 40; }
 .quick-trigger { position: relative; display: grid; place-items: center; width: var(--quick-trigger-size); height: var(--quick-trigger-size); color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
 .quick-trigger svg { width: 1.25rem; fill: none; stroke: currentColor; stroke-width: 2; }
 .quick-backdrop { position: fixed; inset: 0; background: rgb(0 0 0 / 20%); z-index: -1; }
-.quick-panel { position: absolute; top: 3rem; right: 0; width: min(22rem, calc(100vw - 2rem)); padding: 0.5rem; border: 1px solid var(--border-strong); border-radius: var(--radius); background: var(--surface); color: var(--text); box-shadow: 0 4px 16px rgb(0 0 0 / 20%); }
+.quick-panel { position: absolute; top: calc(var(--quick-trigger-size) + 0.25rem); left: 0; width: min(22rem, calc(100vw - 2rem)); padding: 0.5rem; border: 1px solid var(--border-strong); border-radius: var(--radius); background: var(--surface); color: var(--text); box-shadow: 0 4px 16px rgb(0 0 0 / 20%); }
 .menu-row { display: flex; align-items: center; gap: 0.5rem; box-sizing: border-box; width: 100%; min-height: 2.75rem; padding: 0.25rem 0.5rem; margin: 0; color: inherit; text-decoration: none; font: inherit; border: 0; background: transparent; text-align: left; }
 .menu-row[hidden], .menu-pages[hidden] { display: none; }
 .menu-row[aria-pressed="true"] { background: var(--notice-bg); outline: 2px solid var(--accent); outline-offset: -2px; }
