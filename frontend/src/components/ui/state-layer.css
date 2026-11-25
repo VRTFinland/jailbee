@@ -1,7 +1,9 @@
 /* Shared by the interactive UI primitives (#167): the Material 3 state layer
    (an overlay of the content colour, about 8 % on hover and 10 % pressed; none
    in e-ink, through the tokens) and the keyboard focus ring. No shadows and
-   no ripple. Imported unscoped by each primitive; Vite bundles it once. */
+   no ripple. Imported unscoped by each primitive that uses it (Button,
+   IconButton, a linked ListRow); Vite bundles it once. The `ui-` prefix keeps
+   these global classes apart from any view's own. */
 .ui-state-layer {
     position: relative;
 }

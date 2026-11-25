@@ -397,6 +397,19 @@ def test_linked_list_row_opens_from_anywhere_with_layer_and_focus_ring(logged_in
     page.wait_for_function(
         "el => getComputedStyle(el, '::before').opacity === '0.08'", arg=row.element_handle()
     )
+    # A trailing control is its own target: hovering it does not light the
+    # row, clicking it does not open the row; a chip beside it is part of the row.
+    actions = row.get_by_role("button", name="Actions for dev-ork", exact=True)
+    actions.hover()
+    page.wait_for_timeout(200)
+    assert row.evaluate(_LAYER_OPACITY) == "0"
+    actions.click()
+    expect(page).to_have_url(re.compile(r"#/ui$"))
+    row.locator(".status-chip").first.click(force=True)
+    expect(page).to_have_url(re.compile(r"#/ui\?row=dev-ork$"))
+    _open_gallery(page)
+    row, link = _linked_row(page, "dev-ork")
+
     # A click on the secondary line, not the title, still opens the route (the
     # gallery's sample rows link back to it: their names are no real containers).
     row.click(position=_over_secondary(row))

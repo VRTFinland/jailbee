@@ -194,6 +194,7 @@ function typeStyle(token: string): Record<string, string> {
                                 </dl>
                                 <template #trailing>
                                     <StatusChip v-for="chip in ORCHESTRATOR_CHIPS" :key="chip.status" v-bind="chip" />
+                                    <IconButton icon="menu" label="Actions for dev-ork" />
                                 </template>
                             </ListRow>
                             <ListRow title="dev-ork-1" secondary="child · codex" selected

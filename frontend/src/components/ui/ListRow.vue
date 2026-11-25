@@ -103,11 +103,16 @@ defineProps<{
     font-size: var(--md-type-body-small-size);
     line-height: var(--md-type-body-small-line-height);
 }
-/* Positioned after the link in source order, so they paint above its area. */
-.list-row-body :deep(a),
-.list-row-body :deep(button),
-.list-row-trailing {
+/* Controls in the body and trailing slots are their own targets: positioned
+   after the link in source order, they paint above its area, and hovering or
+   pressing one does not light the row. Text and chips beside them stay part
+   of the row's link. */
+.list-row-body :deep(:is(a, button, input, select, textarea, summary, label, [tabindex])),
+.list-row-trailing :deep(:is(a, button, input, select, textarea, summary, label, [tabindex])) {
     position: relative;
+}
+.list-row.linked:has(:is(.list-row-body, .list-row-trailing) :is(a, button, input, select, textarea, summary, label, [tabindex]):hover)::before {
+    opacity: 0;
 }
 .list-row-trailing {
     grid-column: 2;

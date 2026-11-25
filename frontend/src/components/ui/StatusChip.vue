@@ -11,6 +11,7 @@ export type StatusName = (typeof STATUS_NAMES)[number]
 
 const STATUSES: Record<StatusName, {icon: IconName; text: string}> = {
     running: {icon: "running", text: "running"},
+    // Incus freezes a container by pausing it: the pause icon, worded "frozen".
     frozen: {icon: "idle", text: "frozen"},
     stopped: {icon: "stopped", text: "stopped"},
     booting: {icon: "booting", text: "booting"},

@@ -62,7 +62,7 @@ describe("GalleryView", () => {
             expect(buttons.slice(-2).map((b) => [b.text(), b.find("svg").exists()]))
                 .toEqual([["New container", true], ["Settings", true]])
             const iconButtons = panel.findAll(".icon-button")
-            expect(iconButtons.map((b) => b.attributes("aria-label"))).toEqual(["Menu", "Close", "Settings (disabled)", "Actions for feat-reader-chrome"])
+            expect(iconButtons.map((b) => b.attributes("aria-label"))).toEqual(["Menu", "Close", "Settings (disabled)", "Actions for feat-reader-chrome", "Actions for dev-ork"])
             expect(iconButtons[2].attributes("disabled")).toBeDefined()
             const switches = panel.findAll('[role="switch"]')
             expect(switches.map((s) => [s.attributes("aria-checked"), s.attributes("disabled") !== undefined]))
