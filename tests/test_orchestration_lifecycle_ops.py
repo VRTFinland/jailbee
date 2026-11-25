@@ -409,6 +409,61 @@ def test_destroy_retries_idle_cleanup_after_io_failure(
     seams["destroy"].assert_called_once()
 
 
+@pytest.mark.parametrize("present_uuid", ["child-uuid", "replacement-uuid"])
+def test_retry_checks_child_identity_before_settling_snapshot(tmp_path, seams, present_uuid):
+    from jailbee.orchestration import idle_cleanup
+    from jailbee.orchestration.store import BrokerStore, store_path
+
+    rig = Rig(tmp_path, config={"volatile.uuid": "child-uuid"})
+    rig.sender.config["volatile.uuid"] = "orch-uuid"
+    st = BrokerStore(store_path(tmp_path))
+    st.insert_item(
+        "orch-uuid", rig.sender.full,
+        {"id": "idle", "type": "message", "kind": "idle", "from": "c1"}, now=1,
+    )
+    path = idle_cleanup.prepare(rig.ctx(), rig.child)
+    assert path is not None
+    st.insert_item(
+        "orch-uuid", rig.sender.full,
+        {"id": "later-idle", "type": "message", "kind": "idle", "from": "c1"}, now=2,
+    )
+    idle_cleanup.retry(tmp_path, {rig.child.full: present_uuid})
+    alive = present_uuid == "child-uuid"
+    assert path.exists() == alive
+    assert [item.id for item in st.unacked("orch-uuid")] == (
+        ["idle", "later-idle"] if alive else ["later-idle"]
+    )
+    seams["destroy"].assert_not_called()
+
+
+def test_tick_after_snapshot_crash_does_not_ack_a_living_child(tmp_path, seams):
+    from jailbee.orchestration import broker, broker_state, idle_cleanup
+    from jailbee.orchestration.journal import Journal
+    from jailbee.orchestration.store import BrokerStore, store_path
+
+    rig = Rig(tmp_path, config={"volatile.uuid": "child-uuid"})
+    rig.sender.config["volatile.uuid"] = "orch-uuid"
+    st = BrokerStore(store_path(tmp_path))
+    st.insert_item(
+        "orch-uuid", rig.sender.full,
+        {"id": "idle", "type": "message", "kind": "idle", "from": "c1"}, now=1,
+    )
+    path = idle_cleanup.prepare(rig.ctx(), rig.child)
+    assert path is not None
+    # The process dies after the durable snapshot but before the destroy call.
+    rig.incus.list_containers.return_value = [
+        {"name": child.full, "config": child.config, "status": "Stopped"}
+        for child in (rig.sender, rig.child)
+    ]
+    broker.tick(
+        rig.incus, root=tmp_path, journal=Journal(tmp_path), now=rig.ctx().now,
+        memory=broker_state.BrokerMemory(),
+    )
+    assert path.exists()
+    assert [item.id for item in st.unacked("orch-uuid")] == ["idle"]
+    seams["destroy"].assert_not_called()
+
+
 @pytest.mark.parametrize(
     "damage", ["json", "unreadable", "missing-field", "invalid-date", "invalid-ids"]
 )
