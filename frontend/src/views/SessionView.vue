@@ -46,7 +46,8 @@ function openJump(origin: HTMLElement | null = document.activeElement as HTMLEle
 provide("open-jump", openJump)
 function jumpKey(event: KeyboardEvent) {
     const target = event.target
-    if (event.key !== "j" || event.ctrlKey || event.metaKey || event.altKey ||
+    if (event.key !== "j" || event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey ||
+        document.querySelector('[role="dialog"], dialog[open]') ||
         (target instanceof HTMLElement && (target.isContentEditable || !!target.closest('input, textarea, select, [contenteditable="true"]')))) return
     event.preventDefault()
     openJump()

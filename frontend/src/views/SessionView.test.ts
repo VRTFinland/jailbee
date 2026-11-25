@@ -111,6 +111,16 @@ describe("SessionView", () => {
         input.remove()
     })
 
+    it("does not open jump over the quick settings dialog", async () => {
+        const {wrapper} = await mountSession(vi.fn().mockResolvedValue(jsonResponse(200, transcript)))
+        await wrapper.get('[aria-label="Quick settings"]').trigger("click")
+        expect(wrapper.findAll('[role="dialog"]')).toHaveLength(1)
+        document.activeElement?.dispatchEvent(new KeyboardEvent("keydown", {key: "j", bubbles: true}))
+        await wrapper.vm.$nextTick()
+        expect(wrapper.find('[aria-label="Jump to"]').exists()).toBe(false)
+        expect(wrapper.findAll('[role="dialog"]')).toHaveLength(1)
+    })
+
     it("jumps to a selected prompt and latest answer", async () => {
         const scrolled: string[] = []
         Element.prototype.scrollIntoView = vi.fn(function (this: Element) { scrolled.push(this.id) })
