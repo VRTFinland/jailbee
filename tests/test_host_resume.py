@@ -252,7 +252,9 @@ def test_resume_backfills_handled_boot_and_hides_upgrade_offer(host, mocker, mar
     incus.exec.return_value = marker
 
     def candidates():
-        return resumable_repos([RepoGroup("one", str(cfg.repo_root), None, list_containers(cfg, incus))])
+        return resumable_repos(
+            [RepoGroup("one", str(cfg.repo_root), None, list_containers(cfg, incus))]
+        )
 
     assert candidates() == ["one"]
     result = CliRunner().invoke(app, ["resume"])
@@ -341,10 +343,18 @@ def test_local_resume_prunes_vanished_handled_boots(host):
     incus.list_containers.return_value = incus.list_containers.return_value[:1]
     path = state_dir() / "resume-set.json"
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({
-        "version": 1, "containers": {},
-        "handled": {"gone-work": "2026-11-25T09:00:00Z", "one-work": "2026-11-25T09:00:00Z"},
-    }))
+    path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "containers": {},
+                "handled": {
+                    "gone-work": "2026-11-25T09:00:00Z",
+                    "one-work": "2026-11-25T09:00:00Z",
+                },
+            }
+        )
+    )
 
     result = CliRunner().invoke(app, ["resume"])
 

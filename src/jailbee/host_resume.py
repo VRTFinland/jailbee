@@ -104,7 +104,8 @@ def resumable_repos(groups: list[RepoGroup]) -> list[str | None]:
     saved = [
         g
         for g in groups
-        if g.prefix != ORPHAN_BASE_PREFIX and any(
+        if g.prefix != ORPHAN_BASE_PREFIX
+        and any(
             c.name in state.containers
             or (c.name in state.stopping and c.state != "Running")
             or (c.state == "Running" and _needs_setup(c, state))

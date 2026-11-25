@@ -47,10 +47,14 @@ def test_start_records_boot_decision_even_when_no_tmux_is_needed(mocker, make_cf
     incus = mocker.Mock(spec=Incus)
     mocker.patch("jailbee.cli._resolve_existing", return_value=(incus, "myrepo-work"))
     incus.exec.return_value = "recorded"
-    incus.list_containers.return_value = [{
-        "name": "myrepo-work", "status": "Running", "profiles": ["myrepo-base"],
-        "last_used_at": "2099-11-25T09:00:00Z",
-    }]
+    incus.list_containers.return_value = [
+        {
+            "name": "myrepo-work",
+            "status": "Running",
+            "profiles": ["myrepo-base"],
+            "last_used_at": "2099-11-25T09:00:00Z",
+        }
+    ]
 
     result = runner.invoke(
         app, ["start", "myrepo-work", "--no-background"] + (["--no-autostart"] if skip else [])
@@ -61,9 +65,12 @@ def test_start_records_boot_decision_even_when_no_tmux_is_needed(mocker, make_cf
     from jailbee.host_resume import resumable_repos
     from jailbee.lifecycle import list_containers
 
-    assert resumable_repos([
-        RepoGroup("myrepo", str(tmp_path), None, list_containers(cfg, incus, all_repos=True))
-    ]) == []
+    assert (
+        resumable_repos(
+            [RepoGroup("myrepo", str(tmp_path), None, list_containers(cfg, incus, all_repos=True))]
+        )
+        == []
+    )
     expected = "skipped" if skip else "handled"
     assert any(
         MARKER in " ".join(call.args[1]) and expected in " ".join(call.args[1])

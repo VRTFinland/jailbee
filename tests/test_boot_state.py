@@ -28,21 +28,29 @@ def test_record_writes_decision_under_run(mocker, decision):
 
 
 @pytest.mark.parametrize("decision", ["handled", "skipped"])
-def test_completed_boot_hides_resume_until_the_next_incus_start(mocker, make_cfg, tmp_path, decision):
+def test_completed_boot_hides_resume_until_the_next_incus_start(
+    mocker, make_cfg, tmp_path, decision
+):
     from jailbee.dashboard.model import RepoGroup
     from jailbee.host_resume import resumable_repos
     from jailbee.lifecycle import list_containers
 
     cfg = make_cfg(tmp_path, container_prefix="myrepo")
     incus = mocker.Mock(spec=Incus)
-    incus.list_containers.return_value = [{
-        "name": "myrepo-work", "status": "Running", "profiles": ["myrepo-base"],
-        "last_used_at": "2099-11-25T09:00:00.123456789Z",
-    }]
+    incus.list_containers.return_value = [
+        {
+            "name": "myrepo-work",
+            "status": "Running",
+            "profiles": ["myrepo-base"],
+            "last_used_at": "2099-11-25T09:00:00.123456789Z",
+        }
+    ]
     incus.exec.return_value = "recorded"
 
     def candidates():
-        return resumable_repos([RepoGroup("myrepo", str(tmp_path), None, list_containers(cfg, incus))])
+        return resumable_repos(
+            [RepoGroup("myrepo", str(tmp_path), None, list_containers(cfg, incus))]
+        )
 
     assert candidates() == ["myrepo"]
     assert record(incus, "myrepo-work", decision)

@@ -152,10 +152,15 @@ def test_handled_running_boot_does_not_offer_resume(mocker):
 
     path = state_dir() / "resume-set.json"
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({
-        "version": 1, "containers": {},
-        "handled": {"alpha-x": "2026-11-25T09:00:00Z"},
-    }))
+    path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "containers": {},
+                "handled": {"alpha-x": "2026-11-25T09:00:00Z"},
+            }
+        )
+    )
     container = dataclasses.replace(_ci("alpha-x"), start_identity="2026-11-25T09:00:00Z")
     groups = [RepoGroup("alpha", "/a", None, [container])]
     g = _gatherer(mocker, lambda *a, **k: groups, _Clock())
@@ -194,7 +199,9 @@ def test_orphan_placeholder_never_becomes_a_resume_repository(mocker):
     from jailbee.config import ORPHAN_BASE_PREFIX
 
     container = dataclasses.replace(_ci("placeholder-x"), start_identity="2099-11-25T09:00:00Z")
-    g = _gatherer(mocker, lambda *a, **k: [RepoGroup(ORPHAN_BASE_PREFIX, "/a", None, [container])], _Clock())
+    g = _gatherer(
+        mocker, lambda *a, **k: [RepoGroup(ORPHAN_BASE_PREFIX, "/a", None, [container])], _Clock()
+    )
     snapshot = g.tick(active=True, refresh=True, roots=[])
     assert isinstance(snapshot, Snapshot)
     assert snapshot.resumable_repos == []

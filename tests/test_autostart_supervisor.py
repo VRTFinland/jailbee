@@ -309,9 +309,13 @@ def test_detached_boot_is_completed_only_after_all_stages_succeed(
             events.append(" ".join(argv))
         return "recorded"
 
-    incus.list_containers.return_value = [{
-        "name": "c1", "status": "Running", "last_used_at": "2099-11-25T09:00:00Z",
-    }]
+    incus.list_containers.return_value = [
+        {
+            "name": "c1",
+            "status": "Running",
+            "last_used_at": "2099-11-25T09:00:00Z",
+        }
+    ]
 
     def stage(*args, **kwargs):
         events.append("stage")
