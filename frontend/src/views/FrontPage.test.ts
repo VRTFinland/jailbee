@@ -96,6 +96,14 @@ describe("FrontPage", () => {
         expect(wrapper.text()).toContain("Orchestrator · 1 child")
     })
 
+    it("does not show transcript metadata in the front page menu", async () => {
+        const {wrapper} = setup()
+        await wrapper.get('[aria-label="Quick settings"]').trigger("click")
+        expect(wrapper.get('[role="dialog"]').exists()).toBe(true)
+        expect(wrapper.find('[aria-label="Session"]').exists()).toBe(false)
+        wrapper.unmount()
+    })
+
     it("shows every snapshot at once in the normal profile", async () => {
         const {wrapper, push} = setup()
         push(viewWith("alpha-2", 2))

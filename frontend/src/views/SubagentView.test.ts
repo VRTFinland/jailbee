@@ -139,6 +139,18 @@ describe("subagent transcripts", () => {
         wrapper.unmount()
     })
 
+    it("shows the subagent metadata in its menu", async () => {
+        const {wrapper} = await mountAt(
+            "/repos/alpha/sessions/claude/s-1/subagents/a1b2c3",
+            vi.fn().mockResolvedValue(jsonResponse(200, child)),
+        )
+        await wrapper.get('[aria-label="Quick settings"]').trigger("click")
+        expect(wrapper.get('[aria-label="Session"]').text()).toContain("claude")
+        expect(wrapper.get('[aria-label="Session"]').text()).toContain("claude-haiku-5")
+        expect(wrapper.get('[aria-label="Session"]').text()).toContain("s-1")
+        wrapper.unmount()
+    })
+
     it("goes back to the parent session", async () => {
         const {wrapper, router} = await mountAt(
             "/repos/alpha/sessions/claude/s-1/subagents/a1b2c3",
