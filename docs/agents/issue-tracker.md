@@ -37,12 +37,9 @@ it). Never run `gh issue create|edit|comment|close|reopen` or a mutating
 
 ## Publishing
 
-- **Orchestrator with a grant**: if `jailbee inbox grant` reports that
-  `publish.issues` covers every pending issue action kind, or the project's
-  `owner/number` is covered by `publish.projects` for each project action, run
-  `jailbee inbox send publish --issue NAME.json --wait --until done` and read the
-  final `done`/`failed` status (plain `--wait` returns at `started`) for the created issue numbers. `started` is not
-  success; an uncertain result goes to the human, never an automatic retry.
+- **Orchestrator with a grant**: if `jailbee inbox grant` covers every pending
+  action, publish it yourself as the `jailbee-issue-management` skill
+  describes (its publish command and how to read the final status).
 - **Otherwise**: leave the manifest staged and tell the human to inspect and
   publish it on the host with `jb outbox <container>` / `jb outbox apply`.
 - **Child containers never publish**; they send the exact content to the
