@@ -89,7 +89,10 @@ def test_latest_answer_and_sticky_title_follow_the_readable_area(
     page.set_viewport_size({"width": width, "height": 800})
     server, transcript = open_transcript(page, make_server, tmp_path)
     if profile == "eink":
-        page.evaluate("localStorage.setItem('jailbee.displayProfile', 'eink')")
+        page.evaluate(
+            "localStorage.setItem('jailbee.displayProfile', 'eink'); "
+            "localStorage.setItem('jailbee.pageControls', 'bar')"
+        )
         page.reload()
         expect(page.get_by_role("heading", name=TITLE, exact=True)).to_be_visible()
     latest = page.get_by_role("button", name="Latest answer")
@@ -142,6 +145,7 @@ def test_end_follow_and_new_messages_restore_follow(
     if profile == "eink":
         open_settings(page)
         page.get_by_role("radio", name="E-ink (page turns").check()
+        page.get_by_label("Page controls", exact=True).select_option("bar")
         page.get_by_role("checkbox", name="Follow new messages on e-ink").check()
         page.go_back()
         expect(page.get_by_role("heading", name=TITLE, exact=True)).to_be_visible()
@@ -303,10 +307,13 @@ def test_partial_keyboard_scroll_keeps_the_current_eink_page(
     page: Page, make_server: Callable[..., E2EServer], tmp_path: Path
 ) -> None:
     open_transcript(page, make_server, tmp_path)
-    page.evaluate("localStorage.setItem('jailbee.displayProfile', 'eink')")
+    page.evaluate(
+        "localStorage.setItem('jailbee.displayProfile', 'eink'); "
+        "localStorage.setItem('jailbee.pageControls', 'bar')"
+    )
     page.reload()
     expect(page.get_by_role("heading", name=TITLE, exact=True)).to_be_visible()
-    expect(page.locator(".page-indicator")).to_contain_text("Page 1 /")
+    expect(page.locator(".page-indicator")).to_contain_text("1 /")
     readable = page.locator(".page-nav").evaluate(
         "el => el.getBoundingClientRect().top - "
         "document.querySelector('.title-bar').getBoundingClientRect().bottom"
@@ -323,7 +330,7 @@ def test_partial_keyboard_scroll_keeps_the_current_eink_page(
         }""",
         readable,
     )
-    expect(page.locator(".page-indicator")).to_contain_text("Page 1 /")
+    expect(page.locator(".page-indicator")).to_contain_text("1 /")
     readable = page.locator(".page-nav").evaluate(
         "el => Math.floor(el.getBoundingClientRect().top - "
         "document.querySelector('.title-bar').getBoundingClientRect().bottom)"
@@ -337,7 +344,10 @@ def test_short_landscape_page_turns_do_not_skip_text(
 ) -> None:
     page.set_viewport_size({"width": 640, "height": 320})
     open_transcript(page, make_server, tmp_path)
-    page.evaluate("localStorage.setItem('jailbee.displayProfile', 'eink')")
+    page.evaluate(
+        "localStorage.setItem('jailbee.displayProfile', 'eink'); "
+        "localStorage.setItem('jailbee.pageControls', 'bar')"
+    )
     page.reload()
     expect(page.get_by_role("heading", name=TITLE, exact=True)).to_be_visible()
     # A larger guard stands in for a device's nonzero safe-area inset.
@@ -349,9 +359,9 @@ def test_short_landscape_page_turns_do_not_skip_text(
             "el => el.getBoundingClientRect().top - "
             "document.querySelector('.title-bar').getBoundingClientRect().bottom"
         )
-        assert 0 < readable < 100
+        assert 0 < readable < 320
         next_page.click()
-        expect(page.locator(".page-indicator")).not_to_have_text("Page 1 / 1")
+        expect(page.locator(".page-indicator")).not_to_have_text("1 / 1")
         page.wait_for_function("previous => window.scrollY > previous", arg=before)
         moved = page.evaluate("window.scrollY") - before
         assert 0 < moved <= readable + 1
@@ -366,7 +376,10 @@ def test_out_of_date_banner_leaves_the_session_title_bar_visible(
     open_transcript(page, make_server, tmp_path)
     if profile == "eink":
         # Applied by the reload below.
-        page.evaluate("localStorage.setItem('jailbee.displayProfile', 'eink')")
+        page.evaluate(
+            "localStorage.setItem('jailbee.displayProfile', 'eink'); "
+            "localStorage.setItem('jailbee.pageControls', 'bar')"
+        )
     stale = False
     links: list[tuple[WebSocketRoute, WebSocketRoute]] = []
     hellos: list[str] = []

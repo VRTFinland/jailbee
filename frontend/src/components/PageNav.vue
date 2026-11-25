@@ -1,11 +1,18 @@
 <script setup lang="ts">
-// The e-ink profile's page-turn controls: edge tap zones, previous/next buttons
-// and a page indicator, in a bar above the bottom guard. Renders nothing in
-// the normal profile.
+// Floating e-ink controls or a thin bar, always above the bottom guard.
+import {computed, nextTick, watch} from "vue"
 import type {Pager} from "../composables/usePager"
 import {settings} from "../settings"
+import PageGuide from "./PageGuide.vue"
 
-defineProps<{pager: Pager}>()
+const props = defineProps<{pager: Pager}>()
+const percent = computed(() => Math.round(
+    (props.pager.page.value + 1) / props.pager.pageCount.value * 100,
+))
+watch(() => settings.pageControls, async () => {
+    await nextTick()
+    props.pager.measure()
+})
 </script>
 
 <template>
@@ -24,20 +31,18 @@ defineProps<{pager: Pager}>()
             tabindex="-1"
             @click="pager.next()"
         />
-        <nav class="page-nav" aria-label="Pages">
-            <button type="button" class="prev" :disabled="pager.page.value <= 0" @click="pager.prev()">
-                &larr; Prev
+        <PageGuide :pager="pager" />
+        <nav class="page-nav" :data-mode="settings.pageControls" aria-label="Pages">
+            <button v-if="settings.pageControls !== 'indicator'" type="button" class="prev"
+                aria-label="Previous page" :disabled="pager.page.value <= 0" @click="pager.prev()">
+                {{ settings.pageControls === 'side' ? '▲' : '‹' }}
             </button>
-            <span class="page-indicator"
-                >Page {{ pager.page.value + 1 }} / {{ pager.pageCount.value }}</span
-            >
-            <button
-                type="button"
-                class="next"
-                :disabled="pager.page.value >= pager.pageCount.value - 1"
-                @click="pager.next()"
-            >
-                Next &rarr;
+            <span class="page-indicator">{{ pager.page.value + 1 }} / {{ pager.pageCount.value }}</span>
+            <span v-if="settings.pageControls === 'bar'" class="page-percent">· {{ percent }} %</span>
+            <button v-if="settings.pageControls !== 'indicator'" type="button" class="next"
+                aria-label="Next page" :disabled="pager.page.value >= pager.pageCount.value - 1"
+                @click="pager.next()">
+                {{ settings.pageControls === 'side' ? '▼' : '›' }}
             </button>
         </nav>
     </template>
@@ -46,30 +51,62 @@ defineProps<{pager: Pager}>()
 <style scoped>
 .page-nav {
     position: fixed;
-    left: 0;
-    right: 0;
+    right: var(--space-2);
     bottom: var(--guard-bottom);
     z-index: 10;
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    gap: var(--space-3);
-    height: var(--page-nav-height);
-    padding: 0 var(--space-3);
+    justify-content: center;
     background: var(--bg);
-    border-top: 1px solid var(--border);
+    border: 1px solid var(--border);
+    font-size: 13px;
+    line-height: 1;
+    white-space: nowrap;
+}
+.page-nav[data-mode="indicator"] {
+    width: var(--page-controls-width);
+    height: 28px;
+    border-radius: var(--radius);
+}
+.page-nav[data-mode="side"] {
+    flex-direction: column;
+    width: var(--page-controls-width);
+    border: none;
+    outline: 1px solid var(--border);
+    outline-offset: -1px;
+}
+.page-nav[data-mode="side"] .page-indicator {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    height: 44px;
+    border-block: 1px solid var(--border);
+}
+.page-nav[data-mode="bar"] {
+    left: 0;
+    right: 0;
+    height: var(--page-nav-height);
+    gap: var(--space-2);
+    border-width: 1px 0 0;
 }
 .page-nav button {
-    min-width: 6rem;
-    min-height: 2.75rem;
+    width: 44px;
+    height: 44px;
+    flex-shrink: 0;
+    padding: 0;
     font: inherit;
     color: var(--text);
     background: var(--bg);
-    border: 2px solid var(--border-strong);
-    border-radius: var(--radius);
+    border: none;
+    cursor: pointer;
+}
+.page-nav[data-mode="bar"] button {
+    height: 100%;
 }
 .page-nav button:disabled {
-    opacity: 0.4;
+    color: var(--muted);
+    cursor: default;
 }
 .tap-zone {
     position: fixed;

@@ -29,7 +29,8 @@
     /* Bottom guard: nothing interactive in the lowest strip, so Android's
        gesture area and screen-edge swipes never trigger a control. */
     --guard-bottom: calc(32px + env(safe-area-inset-bottom, 0px));
-    --page-nav-height: 56px;
+    --page-nav-height: 0px;
+    --page-controls-width: 52px;
     --quick-trigger-size: 2.75rem;
     --quick-trigger-top: 0.5rem;
 }
@@ -130,9 +131,17 @@ body {
     z-index: 20;
 }
 
-/* E-ink profile: the screen repaints slowly, so nothing moves by itself. The
-   page-turn bar needs room under the content and the tap zones need side
-   margins clear of links. */
+/* Only the full-width bar reserves vertical reading space. Floating controls
+   and jump buttons share the bottom edge without covering one another. */
+:root[data-profile="eink"][data-page-controls="bar"] {
+    --page-nav-height: 26px;
+}
+:root[data-profile="eink"]:not([data-page-controls="bar"]) .jump-latest {
+    right: calc(var(--space-2) + var(--page-controls-width) + var(--space-2));
+    max-width: calc(100vw - var(--page-controls-width) - 3 * var(--space-2));
+}
+
+/* E-ink never animates; edge tap zones need margins clear of links. */
 :root[data-profile="eink"] *,
 :root[data-profile="eink"] *::before,
 :root[data-profile="eink"] *::after {
@@ -147,4 +156,7 @@ body {
 :root[data-profile="eink"] body {
     padding-inline: 8vw;
     padding-bottom: calc(var(--guard-bottom) + var(--page-nav-height) + var(--space-3));
+}
+:root[data-profile="eink"]:not([data-page-controls="bar"]) body {
+    padding-right: max(8vw, calc(var(--page-controls-width) + 2 * var(--space-2)));
 }

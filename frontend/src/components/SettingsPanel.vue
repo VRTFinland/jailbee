@@ -8,6 +8,9 @@ import type {MetaMode} from "../protocol"
 import {
     DISPLAY_PROFILES,
     FONT_SIZE_RANGE,
+    PAGE_CONTROLS,
+    PAGE_CONTROL_LABELS,
+    type PageControls,
     PAGE_STEPS,
     type PageStep,
     settings,
@@ -119,6 +122,13 @@ function number(event: Event): number {
 
         <fieldset v-if="settings.displayProfile === 'eink'">
             <legend>Page turns</legend>
+            <label class="choice">
+                Page controls
+                <select class="page-controls" :value="settings.pageControls"
+                    @change="updateSettings({pageControls: ($event.target as HTMLSelectElement).value as PageControls})">
+                    <option v-for="mode in PAGE_CONTROLS" :key="mode" :value="mode">{{ PAGE_CONTROL_LABELS[mode] }}</option>
+                </select>
+            </label>
             <label class="choice">
                 Page step
                 <select class="page-step" :value="settings.pageStep"
