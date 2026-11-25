@@ -945,6 +945,7 @@ def _restart_one(
         run_autostart,
     )
     from jailbee.autostart_profiles import profiled_config, resolve_profile
+    from jailbee.boot_state import current_start, record
     from jailbee.branch_config import effective_autostart_config
     from jailbee.hosts import sync_hosts
     from jailbee.lifecycle import (
@@ -952,8 +953,6 @@ def _restart_one(
         container_repo_dir,
         current_network_mode,
     )
-
-    from jailbee.boot_state import current_start, record
 
     boot_container(cfg, incus, name, restart=True)
     boot_identity = current_start(incus, name)
