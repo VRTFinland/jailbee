@@ -64,17 +64,16 @@ def _read_set() -> ResumeSet:
         raise ValueError(f"Cannot read {path}: {exc}") from exc
 
 
-def resumable_repos(groups: list[RepoGroup]) -> list[str]:
-    """Repos with an existing saved container, for the shared state snapshot."""
+def resumable_repos(groups: list[RepoGroup]) -> list[str | None]:
+    """Saved repos for the shared snapshot; None denotes local-only orphan entries."""
     try:
         state = _read_set()
     except (OSError, ValueError):
         return []
     names = state.containers.keys() | state.stopping.keys()
-    return sorted(
-        g.prefix
-        for g in groups
-        if g.repo_root is not None and any(c.name in names for c in g.containers)
+    saved = [g for g in groups if any(c.name in names for c in g.containers)]
+    return [g.prefix for g in saved if g.repo_root is not None] + (
+        [None] if any(g.repo_root is None for g in saved) else []
     )
 
 
@@ -143,14 +142,18 @@ def remove(name: str) -> None:
 def _configs(cfg: Config, failures: dict[Path, str] | None = None) -> dict[str, Config]:
     from jailbee.config import ConfigError, load_repo_config
     from jailbee.dashboard.model import registered_repo_roots
-    from jailbee.remote_ssh.repo_scope import scope_for_session
+    from jailbee.remote_ssh.repo_scope import registered_repos, scope_for_session
     from jailbee.remote_ssh.session import is_remote_session
 
     scope = scope_for_session() if is_remote_session() else None
     configs = (
         {cfg.container_prefix: cfg} if scope is None or scope.allows(cfg.container_prefix) else {}
     )
-    for root in registered_repo_roots():
+    roots = (
+        [repo.root for repo in registered_repos(scope=scope)]
+        if scope is not None else registered_repo_roots()
+    )
+    for root in roots:
         if root == cfg.repo_root:
             continue
         try:

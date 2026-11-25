@@ -53,6 +53,18 @@ def host(mocker, make_cfg, tmp_path):
     return cfg, other, incus, capture
 
 
+def register_host_repos(host):
+    from datetime import UTC, datetime
+    from sqlmodel import Session
+    from jailbee.db import get_engine
+    from jailbee.db.models import RegisteredRepo
+
+    with Session(get_engine()) as session:
+        for repo in host[:2]:
+            session.add(RegisteredRepo(container_prefix=repo.container_prefix, repo_root=str(repo.repo_root), registered_at=datetime.now(UTC)))
+        session.commit()
+
+
 def recorded():
     return json.loads((state_dir() / "resume-set.json").read_text())["containers"]
 
@@ -572,6 +584,7 @@ def test_host_lifecycle_excludes_service_containers(host, service):
 @pytest.mark.parametrize("transport", ["ssh", "web"])
 def test_remote_stop_all_leaves_excluded_repos_and_orphans_running(host, monkeypatch, transport):
     cfg, _, incus, _ = host
+    register_host_repos(host)
     monkeypatch.setenv("JAILBEE_REMOTE_TRANSPORT", transport)
     monkeypatch.setenv("JAILBEE_REMOTE_EXCLUDED_REPOS", '["two"]')
     incus.list_containers.return_value.append(
@@ -591,6 +604,7 @@ def test_remote_resume_preserves_excluded_orphan_and_vanished_entries(
     host, mocker, monkeypatch, transport
 ):
     cfg, other, incus, _ = host
+    register_host_repos(host)
     monkeypatch.setenv("JAILBEE_REMOTE_TRANSPORT", transport)
     monkeypatch.setenv("JAILBEE_REMOTE_EXCLUDED_REPOS", '["two"]')
     retained = {
@@ -627,6 +641,25 @@ def test_remote_resume_preserves_excluded_orphan_and_vanished_entries(
     assert journal["pending"] == ["two-child"]
     assert journal["stopping"] == {"two-child": str(other.repo_root)}
     assert {c.args[0] for c in incus.exec.call_args_list} <= {"one-work", "one-mount"}
+
+
+def test_remote_stop_does_not_load_or_report_an_excluded_broken_repository(host, mocker, monkeypatch):
+    from jailbee.config import ConfigError
+
+    cfg, other, _, _ = host
+    register_host_repos(host)
+    monkeypatch.setenv("JAILBEE_REMOTE_TRANSPORT", "ssh")
+    monkeypatch.setenv("JAILBEE_REMOTE_EXCLUDED_REPOS", '["two"]')
+    def load(root):
+        if root == other.repo_root:
+            raise ConfigError("private configuration is broken")
+        return cfg
+    loader = mocker.patch("jailbee.config.load_repo_config", side_effect=load)
+    result = CliRunner().invoke(app, ["stop", "--all", "--yes"])
+    assert result.exit_code == 0, result.output
+    assert str(other.repo_root) not in result.output
+    assert "private configuration" not in result.output
+    assert other.repo_root not in [c.args[0] for c in loader.call_args_list]
 
 
 def test_host_lifecycle_is_allowed_in_restricted_remote_sessions():

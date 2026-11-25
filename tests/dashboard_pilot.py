@@ -95,7 +95,7 @@ class FakeStateClient:
         self.groups = groups
         self.update = update
         self.system = system
-        self.resumable_repos: list[str] = []
+        self.resumable_repos: list[str | None] = []
         self.git_enabled = git_enabled
         self._status = status
         self.fail = fail

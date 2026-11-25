@@ -66,7 +66,8 @@ from jailbee.update_check import UpdateNotice
 # 39 adds AgentActivity.api_error (AgentApiError): the API error a session is stuck on.
 # 40 adds ContainerInfo.branch, the branch the container was created on.
 # 41 adds Snapshot.resumable_repos for scoped Resume menu visibility.
-PROTOCOL = 41
+# 42 includes local-only saved orphan entries in Snapshot.resumable_repos.
+PROTOCOL = 42
 
 
 class ProtocolError(ValueError):
@@ -119,8 +120,8 @@ class Snapshot:
     groups: list[RepoGroup]
     update: UpdateNotice | None = None
     system: SystemStatus | None = None
-    # Frontends apply their caller's repo scope before offering Resume.
-    resumable_repos: list[str] = field(default_factory=list)
+    # Frontends apply their caller's repo scope; None is a local-only orphan.
+    resumable_repos: list[str | None] = field(default_factory=list)
 
 
 @dataclass(frozen=True)

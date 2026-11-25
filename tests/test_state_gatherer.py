@@ -132,7 +132,7 @@ def test_snapshot_carries_only_existing_resumable_repositories(mocker):
     )
     saved = g.tick(active=True, refresh=True, roots=[])
     assert isinstance(saved, Snapshot)
-    assert saved.resumable_repos == ["alpha"]
+    assert saved.resumable_repos == ["alpha", None]
     assert decode(encode(saved)) == saved
 
     path.write_text(json.dumps({"version": 1, "containers": {}}))

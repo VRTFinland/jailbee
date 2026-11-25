@@ -153,6 +153,21 @@ def test_resume_is_offered_only_for_an_eligible_saved_repo(repos, expected, tran
     assert ("Stop all…", "global-stop-all") in actions
 
 
+@pytest.mark.parametrize("transport, expected", [("none", True), ("ssh", False), ("web", False)])
+def test_saved_orphan_is_offered_only_locally(transport, expected):
+    policy = RemoteSSHConfig(commands={"mode": "full"})
+    actions = menus.global_menu_actions(policy, transport=transport, resumable_repos=[None])
+    assert (("Resume…", "global-resume") in actions) == expected
+
+
+def test_inherited_scope_still_hides_resume_if_new_policy_allows_it(monkeypatch):
+    monkeypatch.setenv("JAILBEE_REMOTE_TRANSPORT", "ssh")
+    monkeypatch.setenv("JAILBEE_REMOTE_EXCLUDED_REPOS", '["secret"]')
+    policy = RemoteSSHConfig(commands={"mode": "full"})
+    actions = menus.global_menu_actions(policy, transport="ssh", resumable_repos=["secret"])
+    assert ("Resume…", "global-resume") not in actions
+
+
 def test_web_presentation_filters_terminal_entries_without_a_remote_policy():
     verbs = {verb for _, verb in menus.global_menu_actions(None, frontend="web")}
     assert not verbs & {"global-config-edit-global", "global-settings", "global-quit"}
