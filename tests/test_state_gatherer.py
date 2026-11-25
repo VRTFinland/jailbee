@@ -107,6 +107,36 @@ def test_tick_returns_numbered_snapshots_with_the_git_setting(mocker):
     assert g.tick(active=True, refresh=False, roots=[]) is None  # nothing due yet
 
 
+def test_snapshot_carries_only_existing_resumable_repositories(mocker):
+    import json
+
+    from jailbee.db import state_dir
+    from jailbee.state_service.protocol import decode, encode
+
+    path = state_dir() / "resume-set.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    groups = [
+        RepoGroup("alpha", "/a", None, [_ci("alpha-x")]),
+        RepoGroup("beta", "/b", None, [dataclasses.replace(_ci("beta-x"), repo="beta")]),
+        RepoGroup("lost", None, None, [dataclasses.replace(_ci("lost-x"), repo="lost")]),
+    ]
+    g = _gatherer(mocker, lambda *a, **k: groups, _Clock())
+    first = g.tick(active=True, refresh=True, roots=[])
+    assert isinstance(first, Snapshot)
+    assert first.resumable_repos == []
+
+    path.write_text(json.dumps({"version": 1, "containers": {"alpha-x": "/a", "lost-x": "/lost", "gone-x": "/gone"}}))
+    saved = g.tick(active=True, refresh=True, roots=[])
+    assert isinstance(saved, Snapshot)
+    assert saved.resumable_repos == ["alpha"]
+    assert decode(encode(saved)) == saved
+
+    path.write_text(json.dumps({"version": 1, "containers": {}}))
+    empty = g.tick(active=True, refresh=True, roots=[])
+    assert isinstance(empty, Snapshot)
+    assert empty.resumable_repos == []
+
+
 def test_a_base_gather_carries_the_last_git_status_forward(mocker):
     clock = _Clock()
     status = GitStatus("+1 -0", "clean", "0", "ok")

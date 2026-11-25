@@ -17,6 +17,8 @@ from jailbee.tui import error_plain, info_plain, success, warn_plain
 if TYPE_CHECKING:
     from jailbee.config import Config
     from jailbee.incus import Incus
+    from jailbee.lifecycle import ContainerInfo
+    from jailbee.dashboard.model import RepoGroup
 
 
 def _state_path() -> Path:
@@ -60,6 +62,19 @@ def _read_set() -> ResumeSet:
         return ResumeSet(dict(entries), set(pending), dict(stopping))
     except (ValueError, KeyError, TypeError) as exc:
         raise ValueError(f"Cannot read {path}: {exc}") from exc
+
+
+def resumable_repos(groups: list[RepoGroup]) -> list[str]:
+    """Repos with an existing saved container, for the shared state snapshot."""
+    try:
+        state = _read_set()
+    except (OSError, ValueError):
+        return []
+    names = state.containers.keys() | state.stopping.keys()
+    return sorted(
+        g.prefix for g in groups
+        if g.repo_root is not None and any(c.name in names for c in g.containers)
+    )
 
 
 def _write_set(state: ResumeSet) -> None:
@@ -128,7 +143,11 @@ def _configs(cfg: Config, failures: dict[Path, str] | None = None) -> dict[str, 
     from jailbee.config import ConfigError, load_repo_config
     from jailbee.dashboard.model import registered_repo_roots
 
-    configs = {cfg.container_prefix: cfg}
+    from jailbee.remote_ssh.repo_scope import scope_for_session
+    from jailbee.remote_ssh.session import is_remote_session
+
+    scope = scope_for_session() if is_remote_session() else None
+    configs = {cfg.container_prefix: cfg} if scope is None or scope.allows(cfg.container_prefix) else {}
     for root in registered_repo_roots():
         if root == cfg.repo_root:
             continue
@@ -140,8 +159,20 @@ def _configs(cfg: Config, failures: dict[Path, str] | None = None) -> dict[str, 
             else:
                 failures[root] = str(exc)
             continue
-        configs[other.container_prefix] = other
+        if scope is None or scope.allows(other.container_prefix):
+            configs[other.container_prefix] = other
     return configs
+
+
+def _session_containers(cfg: Config, incus: Incus, configs: dict[str, Config]) -> list[ContainerInfo]:
+    from jailbee.lifecycle import list_containers
+    from jailbee.remote_ssh.session import is_remote_session
+
+    containers = list_containers(cfg, incus, all_repos=True)
+    if is_remote_session():
+        # A profile alone does not authorize an orphan; require a loaded repo.
+        containers = [c for c in containers if c.repo in configs]
+    return containers
 
 
 def _live_job(cfg: Config, incus_name: str) -> bool:
@@ -172,13 +203,15 @@ def _stop_all(
     stop: Callable[[Config, Incus, str], None],
 ) -> bool:
     from jailbee import prompting
-    from jailbee.lifecycle import list_containers
+    from jailbee.remote_ssh.session import is_remote_session
 
-    containers = [c for c in list_containers(cfg, incus, all_repos=True) if c.state == "Running"]
+    configs = _configs(cfg)
+    containers = [c for c in _session_containers(cfg, incus, configs) if c.state == "Running"]
     if not containers:
         info_plain("No running JailBee containers to stop.")
         return True
-    detail = "Running JailBee containers across all repositories:\n" + "\n".join(
+    extent = "visible repositories" if is_remote_session() else "all repositories"
+    detail = f"Running JailBee containers across {extent}:\n" + "\n".join(
         f"  {c.name}" for c in containers
     )
     if yes:
@@ -190,7 +223,6 @@ def _stop_all(
     # Check persistence before stopping anything; preserve earlier batches.
     with _edit_set():
         pass
-    configs = _configs(cfg)
     ok = True
     for container in containers:
         try:
@@ -238,7 +270,7 @@ def _resume(
     import shlex
 
     from jailbee.config import load_repo_config
-    from jailbee.lifecycle import list_containers
+    from jailbee.remote_ssh.session import is_remote_session
     from jailbee.tmux import SESSION_NAME
 
     failures: dict[Path, str] = {}
@@ -253,21 +285,26 @@ def _resume(
         roots = {
             r.container_prefix: Path(r.repo_root) for r in session.exec(select(RegisteredRepo))
         }
-    containers = list_containers(cfg, incus, all_repos=True)
+    containers = _session_containers(cfg, incus, configs)
     by_name = {c.name: c for c in containers}
+    remote = is_remote_session()
     with _edit_set() as state:
         entries, pending = state.containers, state.pending
-        for name in (entries.keys() | state.stopping.keys()) - by_name.keys():
+        # Remote callers must not prune excluded or orphan entries, even when
+        # those instances disappeared. A local resume owns that housekeeping.
+        for name in ((entries.keys() | state.stopping.keys()) - by_name.keys()) if not remote else ():
             info_plain(f"Dropping {name}: container no longer exists.")
             entries.pop(name, None)
             pending.discard(name)
             state.stopping.pop(name, None)
         # Recover intent left by a process that died after stopping an instance.
         for name, root in list(state.stopping.items()):
+            if remote and name not in by_name:
+                continue
             if by_name[name].state != "Running":
                 entries.setdefault(name, root)
             del state.stopping[name]
-    candidates = dict.fromkeys(entries)
+    candidates = dict.fromkeys(name for name in entries if not remote or name in by_name)
     for running in containers:
         if running.state == "Running":
             candidates[running.name] = None

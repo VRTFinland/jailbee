@@ -615,6 +615,7 @@ class DashboardSession:
         self.git_enabled = snapshot.git_enabled
         self.update = None if transport != "none" else snapshot.update
         self.system = snapshot.system
+        self.resumable_repos = snapshot.resumable_repos
         self.groups: list[RepoGroup] = visible_repo_groups(
             self.all_groups, show_empty_repos=self.show_empty_repos, hidden_repos=self.hidden_repos
         )
@@ -650,6 +651,7 @@ class DashboardSession:
         self.git_enabled = snapshot.git_enabled
         self.update = None if (self.transport != "none") else snapshot.update
         self.system = snapshot.system
+        self.resumable_repos = snapshot.resumable_repos
         self.groups = visible_repo_groups(
             self.all_groups, show_empty_repos=self.show_empty_repos, hidden_repos=self.hidden_repos
         )
@@ -3772,6 +3774,14 @@ class DashboardSession:
         cursor (`MenuBox.show`).
         """
         menu = self.overlay
+        if isinstance(menu, GlobalMenuState):
+            actions = global_menu_actions(
+                self.ssh_policy, transport=self.transport, remote=self.remote,
+                resumable_repos=self.resumable_repos,
+            )
+            if actions != menu.actions:
+                self.overlay = replace(menu, actions=list(actions))
+            return
         if not isinstance(menu, MenuState):
             return
         fresh = open_menu(
@@ -4216,7 +4226,8 @@ class DashboardSession:
             self.overlay = GlobalMenuState(
                 list(
                     global_menu_actions(
-                        self.ssh_policy, transport=self.transport, remote=self.remote
+                        self.ssh_policy, transport=self.transport, remote=self.remote,
+                        resumable_repos=self.resumable_repos,
                     )
                 )
             )

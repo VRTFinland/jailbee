@@ -95,6 +95,7 @@ class FakeStateClient:
         self.groups = groups
         self.update = update
         self.system = system
+        self.resumable_repos: list[str] = []
         self.git_enabled = git_enabled
         self._status = status
         self.fail = fail
@@ -116,6 +117,7 @@ class FakeStateClient:
             self.groups,
             self.update,
             self.system,
+            self.resumable_repos,
         )
 
     def status(self):  # type: ignore[no-untyped-def]

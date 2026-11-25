@@ -279,7 +279,6 @@ _HOST_COMMANDS: frozenset[str] = frozenset(
         "init",
         "apply",
         "upgrade",
-        "resume",
         "base build",
         "base seed",
         "base prune",
@@ -531,6 +530,8 @@ _CONTAINER_COMMANDS = frozenset(
         "snapshot restore",
         "start",
         "stop",
+        # Aggregate lifecycle commands enforce the remote repo scope themselves.
+        "resume",
         "submodule pr push",
         "submodule pr bind",
         "submodule pr unbind",
@@ -595,8 +596,6 @@ _REMOTE_DENIED_PARAMS: dict[str, frozenset[str]] = {
     # capability. A dashboard command inside a console must not forge it.
     "dashboard": frozenset({"remote_policy_json"}),
     "new": frozenset({"mount"}),
-    # Host-wide shutdown must not escape the selected repository's policy.
-    "stop": frozenset({"all"}),
     "net egress add": frozenset({"repo"}),
     "net egress rm": frozenset({"repo"}),
     "pr push": frozenset({"web", "yes"}),
@@ -841,6 +840,7 @@ def policy_allows(
             "exec",
             "job ls",
             # Filtered to the visible repos inside the command itself.
+            "resume",
             "outbox sent ls",
             "outbox sent show",
             "outbox sent clear",

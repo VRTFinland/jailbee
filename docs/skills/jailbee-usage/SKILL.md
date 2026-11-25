@@ -59,7 +59,11 @@ the original shutdown unit and launcher markers; `jailbee apply` alone does not
 retrofit those. Unit tests cover the stop/start integration; a real-container
 restart check remains unverified in this environment. For a host reboot, use
 `jailbee stop --all` before it and `jailbee resume` afterwards: see
-[host-wide lifecycle](references/commands.md#host-reboot). Actual host reboot and
+[host-wide lifecycle](references/commands.md#host-reboot). Both commands work
+over remote SSH and web command policy within visible repositories only;
+excluded repos and orphans remain untouched, with their saved entries left for
+a local resume. Resume is offered in Global only for an eligible saved container.
+Actual host reboot and
 raw `incus stop` smoke tests remain unverified.
 
 ## Repository services
