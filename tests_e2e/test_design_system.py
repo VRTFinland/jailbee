@@ -80,7 +80,9 @@ def test_inter_is_served_by_the_app_and_no_other_host_is_contacted(
         "[...document.fonts].some((f) => f.family.replace(/\"/g, '') === 'Inter'"
         " && f.status === 'loaded')"
     )
-    assert page.evaluate("getComputedStyle(document.body).fontFamily").startswith(('"Inter"', "Inter"))
+    assert page.evaluate("getComputedStyle(document.body).fontFamily").startswith(
+        ('"Inter"', "Inter")
+    )
 
     origin = urlsplit(server.url).netloc
     fonts = [url for url in requests if url.endswith(".woff2")]
