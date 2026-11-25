@@ -236,7 +236,9 @@ before editing `## Unreleased`.
   A click on the badge, or `Q`, opens the queue, where an entry expands to its full output. A
   running entry shows its last output line in the list, an expanded one
   follows the output live, and an entry waiting on a question reads
-  "awaiting answer"; failed and awaiting entries count as needing attention,
+  "awaiting answer"; confirmation modals use compact "No" / "Yes" rows with a
+  full-width highlight, while destructive questions keep their red frame and title.
+  Failed and awaiting entries count as needing attention,
   and returning from a tmux hand-off opens the queue when any do. The list
   keeps its cursor on the same entry while output streams, a background action
   keeps running during a tmux hand-off, and an action whose worker crashes
@@ -409,10 +411,6 @@ before editing `## Unreleased`.
 
 ### Changed
 
-- Terminal dashboard prompt-channel confirmations use compact "No" / "Yes" rows
-  with a full-width selection highlight; destructive questions keep their red
-  frame and title without colouring "Yes"
-  ([#165](https://github.com/VRTFinland/jailbee/issues/165)).
 - Host-wide agent instructions start with a five-line JailBee preamble pointing
   to the container and child skills. Service, network and GitHub guidance lives
   in the container skill, including service descriptions, live host status and
