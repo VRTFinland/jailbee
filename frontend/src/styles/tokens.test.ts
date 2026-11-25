@@ -149,12 +149,25 @@ describe("design tokens", () => {
 
     it("keeps e-ink black on white", () => {
         const eink = RULES.filter((r) => r.selectors.includes('[data-theme="eink"]')).flatMap((r) => r.decls)
+        const OPACITIES = /^--md-(state|disabled)-/
         for (const [name] of eink) {
-            if (!name.startsWith("--md-")) continue
+            if (!name.startsWith("--md-") || OPACITIES.test(name)) continue
             expect(["#000000", "#ffffff"], name).toContain(resolve("eink", name).toLowerCase())
         }
+        // No tinted state layers and no greyed-out disabled controls.
+        expect(resolve("eink", "--md-state-hover-opacity")).toBe("0")
+        expect(resolve("eink", "--md-state-pressed-opacity")).toBe("0")
+        expect(resolve("eink", "--md-disabled-content-opacity")).toBe("1")
+        expect(resolve("eink", "--md-disabled-container-opacity")).toBe("0")
         expect(resolve("eink", "--bg")).toBe("#ffffff")
         expect(resolve("eink", "--text")).toBe("#000000")
+    })
+
+    it.each(["light", "dark"] as const)("gives %s the Material 3 state layers", (theme) => {
+        expect(resolve(theme, "--md-state-hover-opacity")).toBe("0.08")
+        expect(resolve(theme, "--md-state-pressed-opacity")).toBe("0.1")
+        expect(resolve(theme, "--md-disabled-content-opacity")).toBe("0.38")
+        expect(resolve(theme, "--md-disabled-container-opacity")).toBe("0.12")
     })
 
     it("derives light and dark from the same blue seed", () => {

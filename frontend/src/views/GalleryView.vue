@@ -2,8 +2,14 @@
 // The design system gallery (#167, `/ui`): the visual reference every view is
 // checked against. Each panel scopes one theme and one display profile, so the
 // whole system is judged on one screen. Behind login; linked from no menu.
-// Later tickets add each UI primitive to every panel.
+// Later tickets add the overlay primitives to every panel.
+import {reactive} from "vue"
+import Button from "../components/ui/Button.vue"
 import Icon from "../components/ui/Icon.vue"
+import IconButton from "../components/ui/IconButton.vue"
+import ListRow from "../components/ui/ListRow.vue"
+import StatusChip, {STATUS_NAMES} from "../components/ui/StatusChip.vue"
+import Switch from "../components/ui/Switch.vue"
 import {ICON_NAMES} from "../components/ui/material-symbols/paths"
 import iconLicence from "../components/ui/material-symbols/LICENSE?url&no-inline"
 import iconNotice from "../components/ui/material-symbols/NOTICE.md?url&no-inline"
@@ -42,6 +48,13 @@ const TYPE_ROLES = ["title", "body", "label"].flatMap((role) =>
         label: `${role[0].toUpperCase()}${role.slice(1)} ${size}`,
     })),
 )
+
+const BUTTON_VARIANTS = ["primary", "tonal", "text", "danger"] as const
+
+/** The one live sample switch of each panel, keyed by panel. */
+const followLive = reactive<Record<string, boolean>>(Object.fromEntries(
+    THEMES.flatMap((t) => PROFILES.map((p) => [`${t.id}-${p.id}`, false])),
+))
 
 const SHAPES = ["small", "medium", "large", "extra-large", "full"]
 
@@ -106,6 +119,61 @@ function typeStyle(token: string): Record<string, string> {
                                 <Icon :name="name" :label="name" />
                                 <code class="swatch-name">{{ name }}</code>
                             </li>
+                        </ul>
+                    </div>
+
+                    <div class="group">
+                        <h3 class="group-title">Buttons</h3>
+                        <div class="samples">
+                            <template v-for="variant in BUTTON_VARIANTS" :key="variant">
+                                <Button :variant="variant">{{ variant }}</Button>
+                                <Button :variant="variant" disabled>{{ variant }} disabled</Button>
+                            </template>
+                        </div>
+                        <div class="samples">
+                            <IconButton icon="menu" label="Menu" />
+                            <IconButton icon="close" label="Close" />
+                            <IconButton icon="settings" label="Settings (disabled)" disabled />
+                        </div>
+                    </div>
+
+                    <div class="group">
+                        <h3 class="group-title">Switches</h3>
+                        <div class="samples">
+                            <Switch :model-value="true" label="On" />
+                            <Switch :model-value="false" label="Off" />
+                            <Switch :model-value="true" label="On, disabled" disabled />
+                            <Switch :model-value="false" label="Off, disabled" disabled />
+                        </div>
+                    </div>
+
+                    <div class="group">
+                        <h3 class="group-title">Status chips</h3>
+                        <div class="samples">
+                            <StatusChip v-for="status in STATUS_NAMES" :key="status" :status="status" />
+                        </div>
+                    </div>
+
+                    <div class="group">
+                        <h3 class="group-title">List rows</h3>
+                        <ul class="rows">
+                            <ListRow title="dev-plan" secondary="waiting for you · 2 min" selected>
+                                <template #trailing><StatusChip status="running" /></template>
+                            </ListRow>
+                            <ListRow title="fix-issue-165" secondary="autostart 2/4 · dashboard">
+                                <template #trailing><StatusChip status="booting" /></template>
+                            </ListRow>
+                            <ListRow title="feat-reader-chrome" secondary="exit 1 · make web-e2e">
+                                <template #trailing>
+                                    <StatusChip status="failed" />
+                                    <IconButton icon="menu" label="Actions for feat-reader-chrome" />
+                                </template>
+                            </ListRow>
+                            <ListRow title="Follow live">
+                                <template #trailing>
+                                    <Switch v-model="followLive[`${theme.id}-${profile.id}`]" label="Follow live" />
+                                </template>
+                            </ListRow>
                         </ul>
                     </div>
 
@@ -195,6 +263,22 @@ function typeStyle(token: string): Record<string, string> {
     line-height: var(--md-type-body-small-line-height);
     color: var(--md-on-surface-variant);
     overflow-wrap: anywhere;
+}
+.samples {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--md-space-8);
+}
+.samples + .samples {
+    margin-top: var(--md-space-8);
+}
+.rows {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    gap: var(--md-space-4);
 }
 .type-sample {
     margin: 0 0 var(--md-space-4);
