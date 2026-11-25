@@ -85,7 +85,7 @@ describe("Quick settings", () => {
         const wrapper = await menu()
         expect(document.activeElement).toBe(wrapper.get('[aria-label="Increase body font size"]').element)
         await wrapper.get('[aria-label="Increase body font size"]').trigger("keydown", {key: "Tab", shiftKey: true})
-        expect(document.activeElement).toBe(wrapper.get('.quick-panel a').element)
+        expect(document.activeElement).toBe(wrapper.get('.quick-panel .settings-action').element)
     })
 
     it("paginates whole rows on a short e-ink screen and keeps keyboard focus inside", async () => {
@@ -111,7 +111,7 @@ describe("Quick settings", () => {
     it("does not restore trigger focus on navigation", async () => {
         const wrapper = await menu()
         const icon = wrapper.get('button[aria-label="Quick settings"]')
-        await wrapper.get('a').trigger('click')
+        await wrapper.get('.settings-action').trigger('click')
         await flushPromises()
         expect(wrapper.find('[role="dialog"]').exists()).toBe(false)
         expect(document.activeElement).not.toBe(icon.element)

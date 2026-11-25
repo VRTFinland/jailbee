@@ -1,10 +1,15 @@
 <script setup lang="ts">
-import {computed, nextTick, onBeforeUnmount, onMounted, ref, watch} from "vue"
+import {computed, inject, nextTick, onBeforeUnmount, onMounted, ref, watch} from "vue"
 import {useRoute} from "vue-router"
 import {FONT_SIZE_RANGE, settings, THEMES, THEME_LABELS, updateSettings} from "../settings"
 
 const props = defineProps<{context?: "containers" | "session" | null; session?: {agent: string; models: string[]; id: string} | null}>()
 const route = useRoute()
+const openSettings = inject<(trigger: HTMLElement | null) => void>("open-settings", () => {})
+function showSettings() {
+    void close(false)
+    openSettings(trigger.value)
+}
 const fonts = [{field: "bodyFontSize", label: "Body", name: "body"}, {field: "codeFontSize", label: "Code", name: "code"}] as const
 const filters = [{mode: "all", label: "All"}, {mode: "running", label: "Running"}, {mode: "active", label: "Active"}] as const
 const filtered = computed(() => props.context === "containers" && settings.containerFilter !== "all")
@@ -163,7 +168,7 @@ onBeforeUnmount(() => {
                     </label>
                 </template>
             </template>
-            <router-link class="menu-row" :to="{name: 'settings'}" @click="close(false)">Settings</router-link>
+            <button type="button" class="menu-row settings-action" @click="showSettings">Settings</button>
             <nav class="menu-pages" hidden aria-label="Settings pages">
                 <button type="button" aria-label="Previous settings page" :disabled="page === 0" @click="turn(-1)">&uarr;</button>
                 <span role="status">{{ page + 1 }} / {{ pageCount }}</span>

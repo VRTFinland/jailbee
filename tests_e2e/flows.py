@@ -49,6 +49,6 @@ def reveal_setting(page: Page, role: str, name: str) -> None:
 
 
 def open_settings(page: Page) -> None:
-    """Reach the full settings page through quick settings."""
-    reveal_setting(page, "link", "Settings")
-    page.get_by_role("link", name="Settings", exact=True).click()
+    """Open settings over the current view through quick settings."""
+    reveal_setting(page, "button", "Settings")
+    page.get_by_role("button", name="Settings", exact=True).click()
