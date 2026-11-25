@@ -66,6 +66,14 @@ describe("settings", () => {
         expect(readItem("jailbee.showThinking")).toBe("1")
     })
 
+    it("shows the title bar by default and remembers hiding it", () => {
+        expect(settings.showTitleBar).toBe(true)
+        updateSettings({showTitleBar: false})
+        reloadSettings()
+        expect(settings.showTitleBar).toBe(false)
+        expect(readItem("jailbee.showTitleBar")).toBe("0")
+    })
+
     it("keeps e-ink follow off by default and remembers opting in", () => {
         expect(settings.einkFollow).toBe(false)
         updateSettings({einkFollow: true})
@@ -97,6 +105,19 @@ describe("settings", () => {
             reloadSettings()
             expect(settings.pageStep).toBe(100)
         }
+    })
+
+    it("defaults page controls to Indicator and persists each supported mode", () => {
+        expect(settings.pageControls).toBe("indicator")
+        for (const pageControls of ["side", "bar", "indicator"] as const) {
+            updateSettings({pageControls})
+            reloadSettings()
+            expect(settings.pageControls).toBe(pageControls)
+            expect(readItem("jailbee.pageControls")).toBe(pageControls)
+        }
+        localStorage.setItem("jailbee.pageControls", "unknown")
+        reloadSettings()
+        expect(settings.pageControls).toBe("indicator")
     })
 
     it("keeps font sizes within a readable range", () => {
