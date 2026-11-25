@@ -12,6 +12,7 @@ from jailbee.inbox.follow_render import render_event
             "[jailbee] child `proj-kid` has been waiting for input for 30m; last message was…",
         ),
         ("x" * 100, "x" * 79 + "…"),
+        ("…", "…"),
     ],
 )
 def test_message_excerpt_prefers_words_but_keeps_an_overlong_first_word(body: str, excerpt: str) -> None:

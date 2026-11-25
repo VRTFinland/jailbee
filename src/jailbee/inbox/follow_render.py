@@ -32,7 +32,7 @@ def render_event(event: dict[str, Any]) -> str | None:
     item_kind = clean_c0c1(str(item.get("kind", item.get("state", ""))))
     text = clean_c0c1(str(item.get("body", item.get("detail", ""))))
     excerpt = textwrap.shorten(text, width=80, placeholder="…")
-    if excerpt == "…":
+    if excerpt == "…" and len(text) > 80:
         excerpt = text[:79] + "…"
     return (
         f"JailBee inbox: {ident} from {sender} ({item_kind}): {excerpt} "
