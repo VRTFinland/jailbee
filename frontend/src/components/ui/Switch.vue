@@ -10,41 +10,55 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{"update:modelValue": [value: boolean]}>()
 
 function toggle(): void {
-    if (!props.disabled) emit("update:modelValue", !props.modelValue)
+    emit("update:modelValue", !props.modelValue)
 }
 </script>
 
 <template>
-    <button type="button" role="switch" class="switch focus-ring" :aria-checked="modelValue ? 'true' : 'false'"
+    <button type="button" role="switch" class="switch" :aria-checked="modelValue ? 'true' : 'false'"
         :aria-label="label" :disabled="disabled" @click="toggle">
-        <span class="switch-handle state-layer"></span>
+        <span class="switch-track"><span class="switch-handle state-layer"></span></span>
     </button>
 </template>
 
 <style src="./state-layer.css"></style>
 
 <style scoped>
-/* Material 3 switch: a 52x32 track; the handle grows from 16 to 24 when on. */
+/* The button is the 44px hit target; the track inside it is the Material 3
+   switch: 52x32 (3.25rem by 2rem at the default root), the handle growing
+   from 16 to 24 when on, 2px (half of space-4) inside the 2px track border. */
 .switch {
+    display: inline-grid;
+    place-items: center;
+    flex: none;
+    min-height: var(--md-target-min);
+    padding: 0;
+    border: 0;
+    background: transparent;
+    cursor: pointer;
+    box-shadow: none;
+}
+.switch:focus-visible {
+    outline: none;
+}
+.switch:focus-visible .switch-track {
+    outline: var(--md-focus-ring-width) solid var(--md-primary);
+    outline-offset: var(--md-focus-ring-offset);
+}
+.switch-track {
     position: relative;
     display: inline-flex;
     align-items: center;
-    flex: none;
     width: 3.25rem;
     height: 2rem;
-    padding: 0;
     border: 2px solid var(--md-outline);
     border-radius: var(--md-shape-full);
     background: var(--md-surface-container-highest);
-    color: var(--md-on-surface);
-    cursor: pointer;
-    box-shadow: none;
     transition: background-color var(--md-motion-duration) var(--md-motion-easing);
 }
-.switch[aria-checked="true"] {
+.switch[aria-checked="true"] .switch-track {
     border-color: var(--md-primary);
     background: var(--md-primary);
-    color: var(--md-primary);
 }
 .switch-handle {
     position: absolute;
@@ -82,7 +96,7 @@ function toggle(): void {
     opacity: var(--md-disabled-content-opacity);
 }
 /* E-ink has no greys: a disabled switch keeps black ink and a dashed track. */
-[data-theme="eink"] .switch:disabled {
+[data-theme="eink"] .switch:disabled .switch-track {
     border-style: dashed;
 }
 </style>

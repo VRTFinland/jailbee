@@ -51,7 +51,10 @@ describe("GalleryView", () => {
         for (const panel of wrapper.findAll("section[aria-label]")) {
             const buttons = panel.findAll(".button")
             expect(buttons.map((b) => [b.attributes("data-variant"), b.attributes("disabled") !== undefined]))
-                .toEqual(["primary", "tonal", "text", "danger"].flatMap((v) => [[v, false], [v, true]]))
+                .toEqual([...["primary", "tonal", "text", "danger"].flatMap((v) => [[v, false], [v, true]]),
+                    ["primary", false], ["tonal", false]])
+            expect(buttons.slice(-2).map((b) => [b.text(), b.find("svg").exists()]))
+                .toEqual([["New container", true], ["Settings", true]])
             const iconButtons = panel.findAll(".icon-button")
             expect(iconButtons.map((b) => b.attributes("aria-label"))).toEqual(["Menu", "Close", "Settings (disabled)", "Actions for feat-reader-chrome"])
             expect(iconButtons[2].attributes("disabled")).toBeDefined()
@@ -60,9 +63,10 @@ describe("GalleryView", () => {
                 .toEqual([["true", false], ["false", false], ["true", true], ["false", true], ["false", false]])
             expect(panel.findAll(".status-chip").map((c) => c.attributes("data-status"))).toEqual([
                 "running", "stopped", "booting", "autostart", "job", "failed",
-                "waiting", "busy", "idle", "shell", "error",
+                "waiting", "busy", "idle", "shell", "error", "error",
                 "running", "booting", "failed", // the list rows' trailing chips
             ])
+            expect(panel.text()).toContain("API error: overloaded")
             const rows = panel.findAll(".list-row")
             expect(rows.map((r) => r.attributes("aria-current") ?? null)).toEqual(["true", null, null, null])
             expect(rows[0].find(".status-chip").exists()).toBe(true)

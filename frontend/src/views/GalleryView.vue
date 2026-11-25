@@ -131,6 +131,10 @@ function typeStyle(token: string): Record<string, string> {
                             </template>
                         </div>
                         <div class="samples">
+                            <Button variant="primary" icon="add">New container</Button>
+                            <Button variant="tonal" icon="settings">Settings</Button>
+                        </div>
+                        <div class="samples">
                             <IconButton icon="menu" label="Menu" />
                             <IconButton icon="close" label="Close" />
                             <IconButton icon="settings" label="Settings (disabled)" disabled />
@@ -151,6 +155,7 @@ function typeStyle(token: string): Record<string, string> {
                         <h3 class="group-title">Status chips</h3>
                         <div class="samples">
                             <StatusChip v-for="status in STATUS_NAMES" :key="status" :status="status" />
+                            <StatusChip status="error" label="API error: overloaded" />
                         </div>
                     </div>
 

@@ -324,7 +324,8 @@ def test_gallery_switch_toggles_by_pointer_and_keyboard(logged_in: Page) -> None
     expect(follow).to_have_attribute("aria-checked", "false")
     follow.click()
     expect(follow).to_have_attribute("aria-checked", "true")
-    expect(follow).to_have_css("background-color", "rgb(167, 200, 255)")
+    track = follow.locator(".switch-track")
+    expect(track).to_have_css("background-color", "rgb(167, 200, 255)")
     follow.press("Space")
     expect(follow).to_have_attribute("aria-checked", "false")
     # Other panels keep their own sample.
@@ -334,3 +335,16 @@ def test_gallery_switch_toggles_by_pointer_and_keyboard(logged_in: Page) -> None
     )
     disabled = panel.get_by_role("switch", name="On, disabled", exact=True)
     expect(disabled).to_be_disabled()
+    # Keyboard focus rings the switch and the icon button too.
+    expect(follow).to_be_focused()
+    expect(track).to_have_css("outline-style", "solid")
+    expect(track).to_have_css("outline-width", "2px")
+    menu = panel.get_by_role("button", name="Actions for feat-reader-chrome", exact=True)
+    menu.focus()
+    page.keyboard.press("Shift+Tab")
+    page.keyboard.press("Tab")
+    expect(menu).to_be_focused()
+    expect(menu).to_have_css("outline-style", "solid")
+    # The 32px track sits in a 44px hit target.
+    assert follow.evaluate("el => el.getBoundingClientRect().height") == 44
+    assert track.evaluate("el => el.getBoundingClientRect().height") == 32

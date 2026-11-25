@@ -1,7 +1,8 @@
 <script setup lang="ts">
 // A list row (#167): a title, an optional secondary line and a trailing slot
 // (a StatusChip, a Switch, an IconButton). The selected row is tonal and
-// carries `aria-current`; e-ink, with no tints, outlines it instead. The row
+// carries `aria-current`; its outline is the hairline token, drawn only in
+// e-ink, where the tonal fill is white. The row
 // is 48px tall for a fine pointer and 56px for a coarse one.
 defineProps<{
     title?: string
@@ -36,7 +37,7 @@ defineProps<{
     background: var(--md-primary-container);
     color: var(--md-on-primary-container);
     outline: 2px solid var(--md-hairline);
-    outline-offset: calc(-1 * var(--md-focus-ring-width));
+    outline-offset: calc(-1 * var(--md-space-4) / 2);
 }
 .list-row-title {
     grid-column: 1;
