@@ -1,5 +1,5 @@
 import {enableAutoUnmount, flushPromises, mount} from "@vue/test-utils"
-import {afterEach, describe, expect, it, vi} from "vitest"
+import {afterEach, beforeEach, describe, expect, it, vi} from "vitest"
 import {createMemoryHistory} from "vue-router"
 import {setToken} from "../api"
 import {DASHBOARD, Dashboard, type SocketLike} from "../dashboard"
@@ -102,7 +102,10 @@ function setPageGeometry(scrollHeight: number, scrollY: number) {
     })
 }
 
+beforeEach(() => localStorage.removeItem("jailbee.readingPositions"))
+
 afterEach(() => {
+    localStorage.removeItem("jailbee.readingPositions")
     updateSettings({displayProfile: "normal", einkFollow: false})
     document.body.innerHTML = ""
     vi.restoreAllMocks()
@@ -383,7 +386,7 @@ describe("SessionView live follow", () => {
     })
 
     it("lets a page-turn click interrupt an unfinished automatic follow", async () => {
-        updateSettings({displayProfile: "eink", einkFollow: true})
+        updateSettings({displayProfile: "eink", einkFollow: true, pageControls: "bar"})
         setPageGeometry(5000, 0)
         let y = 3200
         Object.defineProperty(window, "scrollY", {get: () => y, configurable: true})
@@ -480,7 +483,7 @@ describe("SessionView in the e-ink profile", () => {
     })
 
     it("reserves the sticky header on e-ink page turns and hides Latest answer on its page", async () => {
-        updateSettings({displayProfile: "eink"})
+        updateSettings({displayProfile: "eink", pageControls: "bar"})
         setPageGeometry(3000, 0)
         let y = 0
         Object.defineProperty(window, "scrollY", {get: () => y, configurable: true})
@@ -508,7 +511,7 @@ describe("SessionView in the e-ink profile", () => {
     })
 
     it("keeps page turns forward when the connection notice makes the header taller", async () => {
-        updateSettings({displayProfile: "eink"})
+        updateSettings({displayProfile: "eink", pageControls: "bar"})
         setPageGeometry(10000, 0)
         let y = 0
         let height = 120
@@ -543,8 +546,8 @@ describe("SessionView in the e-ink profile", () => {
 
     it("starts a page at the latest answer", async () => {
         reloadSettings()
-        updateSettings({displayProfile: "eink"})
-        setPageGeometry(3000, 0) // pages of 800 - 88 = 712px
+        updateSettings({displayProfile: "eink", pageControls: "bar"})
+        setPageGeometry(3000, 0) // The mocked control boundary leaves 712px readable.
         vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
             if (this.classList.contains("page-nav")) return {top: 712, bottom: 768} as DOMRect
             if (this.id === "entry-a1") return {top: 1500, bottom: 1550} as DOMRect
@@ -560,6 +563,6 @@ describe("SessionView in the e-ink profile", () => {
         Object.defineProperty(window, "scrollY", {value: 1500, configurable: true})
         window.dispatchEvent(new Event("scroll"))
         await flushPromises()
-        expect(wrapper.get(".page-indicator").text()).toContain("Page 4 /")
+        expect(wrapper.get(".page-indicator").text()).toContain("4 /")
     })
 })

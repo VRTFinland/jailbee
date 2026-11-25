@@ -38,8 +38,13 @@ def test_page_controls_preserve_readable_height_keys_taps_and_jump_clearance(
     choose_mode(page, mode)
     nav = page.get_by_role("navigation", name="Pages", exact=True)
     expect(nav).to_have_attribute("data-mode", mode)
+    # Reading-position restore can anchor the first prompt below its margin.
+    # Start this page-grid test at the document origin, not that restored anchor.
+    page.evaluate("window.scrollTo(0, 0)")
+    wait_for_scroll_settled(page)
     # Include a nonzero device inset, independently of control mode.
     page.evaluate("document.documentElement.style.setProperty('--guard-bottom', '60px')")
+    wait_for_scroll_settled(page)
     guard = page.locator(".bottom-guard").bounding_box()
     controls = nav.bounding_box()
     assert guard is not None and controls is not None

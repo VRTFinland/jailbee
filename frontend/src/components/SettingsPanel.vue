@@ -129,7 +129,7 @@ function number(event: Event): number {
             <legend>Page turns</legend>
             <label class="choice">
                 Page controls
-                <select class="page-controls" :value="settings.pageControls"
+                <select class="page-controls" aria-label="Page controls" :value="settings.pageControls"
                     @change="updateSettings({pageControls: ($event.target as HTMLSelectElement).value as PageControls})">
                     <option v-for="mode in PAGE_CONTROLS" :key="mode" :value="mode">{{ PAGE_CONTROL_LABELS[mode] }}</option>
                 </select>
