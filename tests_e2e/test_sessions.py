@@ -68,7 +68,9 @@ def test_repo_and_container_list_sessions_and_open_their_transcript(session_page
     expect(page.get_by_text("Done.", exact=True)).to_be_visible()
     assert_no_horizontal_scroll(page)
 
-    page.get_by_role("link", name="← work", exact=True).click()
+    page.get_by_role("navigation", name="Breadcrumb").get_by_role(
+        "link", name="work", exact=True
+    ).click()
     page.get_by_role("link", name="main", exact=True).click()
     expect(page.get_by_role("heading", name="work-main", exact=True)).to_be_visible()
     expect(page.get_by_role("link", name=OTHER_TITLE)).to_have_count(0)
@@ -113,7 +115,9 @@ def test_markdown_code_folded_tools_and_subagent_transcript(
         0
     )
     assert_no_horizontal_scroll(page)
-    page.get_by_role("link", name="Parent session").click()
+    page.get_by_role("navigation", name="Breadcrumb").get_by_role(
+        "link", name=SESSION_TITLE, exact=True
+    ).click()
     expect(page.get_by_text("Done.", exact=True)).to_be_visible()
     expect(page.get_by_text("Parent reply while reading the subagent.", exact=True)).to_be_visible()
     append_entry(server, path, "Live parent reply after returning.")

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Callable
 from pathlib import Path
 
@@ -75,7 +76,7 @@ def assert_latest_starts_below_header(page: Page) -> None:
     page.wait_for_function("""() => {
         const replies = document.querySelectorAll('.entry.assistant');
         const reply = replies[replies.length - 1].getBoundingClientRect();
-        const header = document.querySelector('.session-header').getBoundingClientRect();
+        const header = document.querySelector('.title-bar').getBoundingClientRect();
         return Math.abs(reply.top - header.bottom) <= 2;
     }""")
 
@@ -93,7 +94,7 @@ def test_latest_answer_and_sticky_title_follow_the_readable_area(
         expect(page.get_by_role("heading", name=TITLE, exact=True)).to_be_visible()
     latest = page.get_by_role("button", name="Latest answer")
     title = page.get_by_role("heading", name=TITLE, exact=True)
-    expect(title).to_have_attribute("title", TITLE)
+    expect(title).to_have_attribute("title", re.compile(r"Agent:.*Models:.*Session ID:", re.S))
     expect(latest).to_be_visible()
 
     latest.click()
@@ -101,7 +102,7 @@ def test_latest_answer_and_sticky_title_follow_the_readable_area(
     expect(page.get_by_text("Reply 24", exact=True)).to_be_in_viewport()
     assert_latest_starts_below_header(page)
     expect(title).to_be_in_viewport()
-    assert page.locator(".session-header").evaluate("el => el.getBoundingClientRect().top") == 0
+    assert page.locator(".title-bar").evaluate("el => el.getBoundingClientRect().top") == 0
 
     page.evaluate("window.scrollTo(0, 600)")
     expect(latest).to_be_visible()
@@ -308,7 +309,7 @@ def test_partial_keyboard_scroll_keeps_the_current_eink_page(
     expect(page.locator(".page-indicator")).to_contain_text("Page 1 /")
     readable = page.locator(".page-nav").evaluate(
         "el => el.getBoundingClientRect().top - "
-        "document.querySelector('.session-header').getBoundingClientRect().bottom"
+        "document.querySelector('.title-bar').getBoundingClientRect().bottom"
     )
     # Sync point: the scroll has landed and its handler has run (scroll events
     # fire before the next animation frame's callbacks).
@@ -325,7 +326,7 @@ def test_partial_keyboard_scroll_keeps_the_current_eink_page(
     expect(page.locator(".page-indicator")).to_contain_text("Page 1 /")
     readable = page.locator(".page-nav").evaluate(
         "el => Math.floor(el.getBoundingClientRect().top - "
-        "document.querySelector('.session-header').getBoundingClientRect().bottom)"
+        "document.querySelector('.title-bar').getBoundingClientRect().bottom)"
     )
     page.get_by_role("button", name="Next", exact=False).last.click()
     page.wait_for_function("height => Math.abs(window.scrollY - height) <= 1", arg=readable)
@@ -346,7 +347,7 @@ def test_short_landscape_page_turns_do_not_skip_text(
         before = page.evaluate("window.scrollY")
         readable = page.locator(".page-nav").evaluate(
             "el => el.getBoundingClientRect().top - "
-            "document.querySelector('.session-header').getBoundingClientRect().bottom"
+            "document.querySelector('.title-bar').getBoundingClientRect().bottom"
         )
         assert 0 < readable < 100
         next_page.click()
@@ -413,7 +414,7 @@ def test_out_of_date_banner_leaves_the_session_title_bar_visible(
 
     title_bar_clear = """() => {
         const banner = document.querySelector('.outdated').getBoundingClientRect();
-        const header = document.querySelector('.session-header').getBoundingClientRect();
+        const header = document.querySelector('.title-bar').getBoundingClientRect();
         return header.top >= banner.bottom - 0.5;
     }"""
     page.wait_for_function(title_bar_clear)
@@ -427,7 +428,7 @@ def test_out_of_date_banner_leaves_the_session_title_bar_visible(
         before = page.evaluate("window.scrollY")
         readable = page.locator(".page-nav").evaluate(
             "el => el.getBoundingClientRect().top - "
-            "document.querySelector('.session-header').getBoundingClientRect().bottom"
+            "document.querySelector('.title-bar').getBoundingClientRect().bottom"
         )
         page.get_by_role("button", name="Previous", exact=False).last.click()
         page.wait_for_function("previous => window.scrollY < previous", arg=before)

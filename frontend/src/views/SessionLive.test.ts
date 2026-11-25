@@ -409,11 +409,11 @@ describe("SessionView live follow", () => {
         const {wrapper, connection} = await mountLive("/repos/alpha/sessions/claude/s-1")
         connection(false)
         await flushPromises()
-        expect(wrapper.get("header .notice").text()).toBe("Connecting…")
+        expect(wrapper.get(".page > .notice").text()).toBe("Connecting…")
         expect(wrapper.get("header h1").text()).toBe("Fix the login bug")
         connection(true)
         await flushPromises()
-        expect(wrapper.find("header .notice").exists()).toBe(false)
+        expect(wrapper.find(".page > .notice").exists()).toBe(false)
         wrapper.unmount()
     })
 

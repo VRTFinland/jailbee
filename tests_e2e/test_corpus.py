@@ -133,7 +133,7 @@ def test_every_subagent_link_opens_its_transcript(
         if marker.startswith("TOY-MARKER-"):
             expect(transcript).to_contain_text(marker)
 
-    reader.get_by_role("link", name="Parent session").click()
+    reader.get_by_role("navigation", name="Breadcrumb").get_by_role("link").last.click()
     expect(reader.locator("h1", has_text=prompt_marker(session["prompts"][0]))).to_be_visible()
     expect(
         reader.get_by_role("link", name=f"Subagent: {subagent['description']}", exact=True)
