@@ -87,10 +87,13 @@ def test_jump_panel_prompt_anchor_and_end_follow(
 ) -> None:
     page.set_viewport_size({"width": 390, "height": 800})
     server, transcript = open_transcript(page, make_server, tmp_path)
-    page.evaluate("""profile => {
+    page.evaluate(
+        """profile => {
         localStorage.setItem('jailbee.displayProfile', profile);
         localStorage.setItem('jailbee.einkFollow', '1');
-    }""", profile)
+    }""",
+        profile,
+    )
     page.reload()
     expect(page.get_by_role("heading", name=TITLE, exact=True)).to_be_visible()
     page.keyboard.press("j")
