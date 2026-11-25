@@ -18,7 +18,9 @@ let settingsTrigger: HTMLElement | null = null
 function showSettings(trigger: HTMLElement | null) {
     if (settingsOpen.value) return
     settingsTrigger = trigger
-    history.pushState({...history.state, jailbeeSettings: true}, "", location.href)
+    if (history.state?.jailbeeSettings !== route.fullPath) {
+        history.pushState({...history.state, jailbeeSettings: route.fullPath}, "", location.href)
+    }
     settingsOpen.value = true
     void nextTick(() => settingsDialog.value?.focus({preventScroll: true}))
 }
@@ -27,10 +29,17 @@ function dismissSettings() {
     if (settingsOpen.value) history.back()
 }
 function onPopState() {
-    if (settingsOpen.value && !history.state?.jailbeeSettings) {
-        settingsOpen.value = false
-        void nextTick(() => settingsTrigger?.focus({preventScroll: true}))
-    }
+    const open = history.state?.jailbeeSettings === route.fullPath
+    if (open === settingsOpen.value) return
+    settingsOpen.value = open
+    void nextTick(() => {
+        if (open) settingsDialog.value?.focus({preventScroll: true})
+        else {
+            const trigger = settingsTrigger?.isConnected ? settingsTrigger
+                : document.querySelector<HTMLElement>('[aria-label="Quick settings"][aria-haspopup]')
+            trigger?.focus({preventScroll: true})
+        }
+    })
 }
 function settingsKey(event: KeyboardEvent) {
     if (!settingsOpen.value) return

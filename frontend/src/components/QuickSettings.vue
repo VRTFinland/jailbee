@@ -34,6 +34,10 @@ let pages: HTMLElement[][] = []
 // both change how many touch targets fit. No popover scroll is needed.
 function paginate() {
     if (!panel.value) return
+    panel.value.style.transform = ""
+    const rect = panel.value.getBoundingClientRect()
+    const shift = rect.left < 8 ? 8 - rect.left : Math.min(0, window.innerWidth - 8 - rect.right)
+    panel.value.style.transform = `translateX(${shift}px)`
     const rows = Array.from(panel.value.querySelectorAll<HTMLElement>(".menu-row"))
     rows.forEach(row => { row.hidden = false })
     const controls = panel.value.querySelector<HTMLElement>(".menu-pages")

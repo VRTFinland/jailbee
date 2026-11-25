@@ -9,7 +9,8 @@ import {useDashboard} from "../dashboard"
 import {usePager} from "../composables/usePager"
 import type {SessionList, SessionSummary} from "../protocol"
 
-const pager = usePager()
+const readableTop = ref(0)
+const pager = usePager(() => readableTop.value)
 const route = useRoute()
 const router = useRouter()
 const prefix = computed(() => String(route.params.prefix))
@@ -52,7 +53,7 @@ onMounted(async () => {
 
 <template>
     <div class="page">
-        <TitleBar :title="prefix" :crumbs="[{label: 'JailBee', to: {name: 'front'}}]" context="containers" />
+        <TitleBar @readable-top="readableTop = $event" :title="prefix" :crumbs="[{label: 'JailBee', to: {name: 'front'}}]" context="containers" />
         <section v-if="containers && containers.repos.length" aria-label="Containers">
             <h2>Containers</h2>
             <RepoList :view="containers" :show-headings="false" :listed-containers="listedContainers" />

@@ -5,6 +5,7 @@ import {settings} from "../settings"
 import type {RouteLocationRaw} from "vue-router"
 
 const props = defineProps<{title: string; crumbs?: {label: string; to: RouteLocationRaw}[]; context?: "containers" | "session" | null; session?: {agent: string; models: string[]; id: string} | null}>()
+const emit = defineEmits<{"readable-top": [bottom: number]}>()
 const bar = ref<HTMLElement | null>(null)
 defineExpose({element: () => bar.value})
 const breadcrumb = ref<HTMLElement | null>(null)
@@ -15,7 +16,13 @@ const collapsed = ref(false)
 const visibleCrumbs = computed(() => (props.crumbs ?? []).slice(firstCrumb.value))
 let observer: ResizeObserver | null = null
 
+function publishReadableTop() {
+    const boundary = bar.value ?? document.querySelector<HTMLElement>(".outdated")
+    emit("readable-top", Math.max(0, boundary?.getBoundingClientRect().bottom ?? 0))
+}
+
 function measure() {
+    publishReadableTop()
     const available = breadcrumb.value?.clientWidth ?? 0
     const probe = measurements.value
     if (!available || !probe) return
@@ -46,7 +53,9 @@ onMounted(() => {
         observer = new ResizeObserver(measure)
         if (breadcrumb.value) observer.observe(breadcrumb.value)
         if (measurements.value) observer.observe(measurements.value)
+        observer.observe(document.body)
     }
+    window.addEventListener("scroll", publishReadableTop, {passive: true})
     window.addEventListener("resize", measure)
     window.addEventListener("orientationchange", measure)
 })
@@ -57,6 +66,7 @@ watch(() => [props.title, props.crumbs, settings.showTitleBar], () => nextTick((
 }), {deep: true})
 onBeforeUnmount(() => {
     observer?.disconnect()
+    window.removeEventListener("scroll", publishReadableTop)
     window.removeEventListener("resize", measure)
     window.removeEventListener("orientationchange", measure)
 })
@@ -80,9 +90,9 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.title-bar { position: sticky; top: var(--app-banner-height, 0px); z-index: 12; display: flex; align-items: center; box-sizing: border-box; height: 44px; background: var(--bg); border-bottom: 1px solid var(--border); min-width: 0; }
+.title-bar { position: sticky; top: var(--app-banner-height, 0px); z-index: 12; display: flex; align-items: center; box-sizing: border-box; height: var(--title-bar-height); background: var(--bg); border-bottom: 1px solid var(--border); min-width: 0; }
 .breadcrumbs { display: flex; align-items: center; flex: 1; min-width: 0; overflow: hidden; }
-.breadcrumbs a { display: flex; flex: none; align-items: center; height: 44px; min-width: 0; overflow: hidden; white-space: nowrap; color: var(--muted); font-size: 13px; text-decoration: none; }
+.breadcrumbs a { display: flex; flex: none; align-items: center; height: var(--title-bar-height); min-width: 0; overflow: hidden; white-space: nowrap; color: var(--muted); font-size: 13px; text-decoration: none; }
 .breadcrumbs a span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .breadcrumbs a.collapsed { justify-content: center; width: 44px; font-size: 24px; }
 .separator, .separator-measure { flex: none; padding: 0 6px; color: var(--muted); font-size: 13px; }

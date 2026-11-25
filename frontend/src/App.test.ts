@@ -102,6 +102,62 @@ describe("App", () => {
         expect(wrapper.find('[role="dialog"][aria-label="Settings"]').exists()).toBe(false)
     })
 
+    it("reopens settings on Forward and closes it with one history step after reopening", async () => {
+        setToken("tok")
+        history.replaceState({}, "")
+        const {wrapper, router} = await mountAt("/")
+        const dialog = () => wrapper.find('[role="dialog"][aria-label="Settings"]')
+        const open = async () => {
+            await wrapper.get('[aria-label="Quick settings"][aria-haspopup]').trigger("click")
+            await wrapper.get('.settings-action').trigger("click")
+            await flushPromises()
+        }
+        const traverse = async (direction: "back" | "forward") => {
+            const popped = new Promise(resolve => window.addEventListener("popstate", resolve, {once: true}))
+            history[direction]()
+            await popped
+            await flushPromises()
+        }
+        await open()
+        expect(dialog().exists()).toBe(true)
+        await traverse("back")
+        expect(dialog().exists()).toBe(false)
+        await traverse("forward")
+        expect(dialog().exists()).toBe(true)
+        const closed = new Promise(resolve => window.addEventListener("popstate", resolve, {once: true}))
+        await wrapper.get('[aria-label="Close settings"]').trigger("click")
+        await closed
+        await flushPromises()
+        expect(dialog().exists()).toBe(false)
+        await open()
+        const reopenedClose = new Promise(resolve => window.addEventListener("popstate", resolve, {once: true}))
+        await wrapper.get('[aria-label="Close settings"]').trigger("click")
+        await reopenedClose
+        await flushPromises()
+        expect(dialog().exists()).toBe(false)
+        expect(router.currentRoute.value.name).toBe("front")
+    })
+
+    it("returns focus to the current menu after the title bar is toggled in settings", async () => {
+        reloadSettings()
+        settings.showTitleBar = true
+        setToken("tok")
+        history.replaceState({}, "")
+        const {wrapper} = await mountAt("/")
+        await wrapper.get('[aria-label="Quick settings"][aria-haspopup]').trigger("click")
+        await wrapper.get('.settings-action').trigger("click")
+        await flushPromises()
+        const toggle = wrapper.findAll('input[type="checkbox"]').find(input => input.element.closest("label")?.textContent?.includes("Show title bar"))!
+        await toggle.setValue(false)
+        const closed = new Promise(resolve => window.addEventListener("popstate", resolve, {once: true}))
+        await wrapper.get('[aria-label="Close settings"]').trigger("click")
+        await closed
+        await flushPromises()
+        expect(wrapper.find('.title-bar').exists()).toBe(false)
+        expect(document.activeElement).toBe(wrapper.get('[aria-label="Quick settings"][aria-haspopup]').element)
+        settings.showTitleBar = true
+    })
+
     it("opens the dashboard socket on a deep link to a signed-in page", async () => {
         setToken("tok")
         const {sockets} = await mountAt("/repos/alpha")

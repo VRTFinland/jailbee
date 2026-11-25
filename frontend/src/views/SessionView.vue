@@ -22,7 +22,6 @@ import {settings} from "../settings"
 import {readPosition, writePosition} from "../readingPosition"
 import {readItem, writeItem} from "../storage"
 
-const header = ref<InstanceType<typeof TitleBar> | null>(null)
 // The sticky header's bottom edge: below an app banner, not just its height.
 const readableTop = ref(0)
 const transcriptEl = ref<HTMLElement | null>(null)
@@ -142,11 +141,6 @@ const jumpLabel = computed(() => jumpAction.value === null ? null : {
 }[jumpAction.value])
 
 function measureVisibility() {
-    const headerRect = header.value?.element()?.getBoundingClientRect()
-    const banner = document.querySelector<HTMLElement>(".outdated")
-    readableTop.value = settings.showTitleBar && headerRect
-        ? Math.max(0, headerRect.bottom)
-        : Math.max(0, banner?.getBoundingClientRect().bottom ?? 0)
     const content = transcriptEl.value?.getBoundingClientRect()
     atTranscriptEnd.value = !!content && content.bottom <= readableBottom() + 1
     if (atTranscriptEnd.value && pending.value.length === 0) unseen.value = null
@@ -242,8 +236,6 @@ onMounted(() => {
     if (typeof ResizeObserver !== "undefined") {
         layoutObserver = new ResizeObserver(measureVisibility)
         layoutObserver.observe(document.body)
-        const bar = header.value?.element()
-        if (bar) layoutObserver.observe(bar)
     }
 })
 onBeforeUnmount(() => {
@@ -484,7 +476,7 @@ watch(
 
 <template>
     <div class="page" :style="{'--session-readable-top': `${readableTop}px`}">
-        <TitleBar ref="header" :title="title" :crumbs="crumbs" context="session" :session="transcript ? {agent: transcript.agent, models: transcript.models, id: transcript.session_id} : null" />
+        <TitleBar @readable-top="readableTop = $event" :title="title" :crumbs="crumbs" context="session" :session="transcript ? {agent: transcript.agent, models: transcript.models, id: transcript.session_id} : null" />
         <p v-if="dashboard && !dashboard.state.connected" class="notice">Connecting…</p>
         <p v-if="error" class="notice">{{ error }}</p>
         <p v-else-if="transcript === null" class="muted">Loading…</p>
@@ -652,9 +644,11 @@ h1 {
 .muted {
     color: var(--muted);
 }
+.entry, .tool-call[id] {
+    scroll-margin-top: var(--session-readable-top, 0px);
+}
 .entry {
     margin: var(--space-4) 0;
-    scroll-margin-top: var(--session-readable-top, 0px);
 }
 .entry.user {
     padding: var(--space-2) var(--space-3);

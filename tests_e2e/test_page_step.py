@@ -9,6 +9,8 @@ from typing import TypedDict, cast
 import pytest
 from playwright.sync_api import Page, expect
 
+from tests.web_fakes import container, repo_group, snapshot_of
+from jailbee.orchestration.view import ChildView
 from tests_e2e.server import E2EServer
 from tests_e2e.test_session_reading import TITLE, open_transcript, wait_for_scroll_settled
 
@@ -76,6 +78,63 @@ def test_each_step_overlaps_without_skipping_readable_text(
         assert after["y"] + after["top"] <= before["y"] + before["bottom"] + 1
         if step == 100:
             expect(page.locator(".page-guide")).to_have_count(0)
+
+
+@pytest.mark.parametrize("visible", [True, False], ids=["title", "hidden-title"])
+@pytest.mark.parametrize("view", ["front", "repo", "container"])
+def test_list_page_turns_reserve_the_visible_title_boundary(
+    server: E2EServer, logged_in: Page, view: str, visible: bool
+) -> None:
+    page = logged_in
+    page.set_viewport_size({"width": 800, "height": 600})
+    parent = container("work-orch", repo="work")
+    children = [container(f"work-task-{i:02}", repo="work",
+        child=ChildView(parent.name, "working", (), False, ())) for i in range(60)]
+    server.push(snapshot_of(repo_group("work", parent, *children)))
+    page.evaluate("""visible => {
+        localStorage.setItem('jailbee.displayProfile', 'eink');
+        localStorage.setItem('jailbee.showTitleBar', visible ? '1' : '0');
+        localStorage.setItem('jailbee.pageStep', '100');
+    }""", visible)
+    path = {"front": "/", "repo": "/repos/work", "container": "/containers/work-orch"}[view]
+    page.goto(f"{server.url}/#{path}")
+    page.reload()
+    expect(page.get_by_role("button", name="Quick settings", exact=True)).to_be_visible()
+    expect(page.get_by_role("link", name="task-59", exact=True)).to_be_attached()
+    # Start after the bar has reached its sticky position; page padding is not
+    # part of the reserved title height on subsequent turns.
+    page.evaluate("window.scrollTo(0, 100)")
+    wait_for_scroll_settled(page)
+    for _ in range(3):
+        before = page.evaluate("""() => ({y: scrollY,
+            top: document.querySelector('.title-bar')?.getBoundingClientRect().bottom ?? 0,
+            bottom: document.querySelector('.bottom-guard').getBoundingClientRect().top})""")
+        page.keyboard.press("m")
+        page.wait_for_function("y => scrollY > y", arg=before["y"])
+        wait_for_scroll_settled(page)
+        after = page.evaluate("window.scrollY")
+        assert after - before["y"] == pytest.approx(int(before["bottom"] - before["top"]), abs=1)
+        assert after + before["top"] <= before["y"] + before["bottom"] + 1
+
+
+def test_hidden_session_title_keeps_page_turns_contiguous(
+    page: Page, make_server: Callable[..., E2EServer], tmp_path: Path
+) -> None:
+    open_paged_transcript(page, make_server, tmp_path, 100)
+    page.evaluate("localStorage.setItem('jailbee.showTitleBar', '0')")
+    page.reload()
+    expect(page.locator('.title-bar')).to_have_count(0)
+    expect(page.locator('.entry.assistant')).to_have_count(24)
+    page.evaluate("window.scrollTo(0, 0)")
+    wait_for_scroll_settled(page)
+    before = reading_area(page)
+    assert before["top"] == 0
+    page.keyboard.press("m")
+    page.wait_for_function("y => scrollY > y", arg=before["y"])
+    wait_for_scroll_settled(page)
+    after = reading_area(page)
+    assert after["y"] - before["y"] == pytest.approx(int(before["bottom"]), abs=1)
+    assert after["y"] <= before["y"] + before["bottom"] + 1
 
 
 @pytest.mark.parametrize("step", [90, 75, 66, 50])

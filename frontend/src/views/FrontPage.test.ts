@@ -52,6 +52,31 @@ describe("FrontPage", () => {
         vi.useRealTimers()
     })
 
+    it.each([true, false])("reserves the title bar and banner on page turns (title visible: %s)", async (visible) => {
+        updateSettings({displayProfile: "eink", showTitleBar: visible, pageStep: 100})
+        vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+            const bottom = this.classList.contains("title-bar") ? 74 : this.classList.contains("outdated") ? 30 : 0
+            return {top: 0, bottom, height: bottom, width: 0, left: 0, right: 0, x: 0, y: 0, toJSON() {}}
+        })
+        vi.spyOn(window, "innerHeight", "get").mockReturnValue(800)
+        vi.spyOn(document.documentElement, "scrollHeight", "get").mockReturnValue(4000)
+        const scroll = vi.spyOn(window, "scrollTo").mockImplementation(() => {})
+        const banner = document.createElement("aside")
+        banner.className = "outdated"
+        document.body.append(banner)
+        const {wrapper} = setup()
+        try {
+            await nextTick()
+            window.dispatchEvent(new KeyboardEvent("keydown", {key: "m"}))
+            expect(scroll).toHaveBeenLastCalledWith(0, visible ? 726 : 770)
+        } finally {
+            wrapper.unmount()
+            banner.remove()
+            vi.restoreAllMocks()
+            updateSettings({showTitleBar: true})
+        }
+    })
+
     it("re-nests an orchestrator and two children on live snapshots without reloading", async () => {
         const {wrapper, push} = setup()
         push(orchestrationView())

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import TitleBar from "../components/TitleBar.vue"
-import {computed} from "vue"
+import {computed, ref} from "vue"
 import {useRouter} from "vue-router"
 import {logout} from "../api"
 import RepoList from "../components/RepoList.vue"
@@ -14,7 +14,8 @@ const props = withDefaults(defineProps<{refreshMs?: number}>(), {refreshMs: 60_0
 
 const router = useRouter()
 const dashboard = useDashboard()
-const pager = usePager()
+const readableTop = ref(0)
+const pager = usePager(() => readableTop.value)
 const eink = computed(() => settings.displayProfile === "eink")
 // E-ink: the list is a displayed copy refreshed slowly or on demand.
 const {shown: view, refresh} = useSlowView(
@@ -35,7 +36,7 @@ async function signOut() {
 
 <template>
     <div class="page">
-        <TitleBar title="JailBee" context="containers" />
+        <TitleBar @readable-top="readableTop = $event" title="JailBee" context="containers" />
         <div class="bar">
             <span class="device" v-if="device">{{ device }}</span>
             <button v-if="eink" class="refresh link" type="button" @click="refresh">

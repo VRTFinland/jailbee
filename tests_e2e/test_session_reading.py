@@ -47,7 +47,7 @@ def open_transcript(
     transcript.write_text(
         record(0, "user", TITLE)
         + "".join(
-            record(i, "assistant", f"Reply {i}\n\n" + "A readable paragraph.\n\n" * 16)
+            record(i, "assistant", f"Reply {i}\n\n" + "A readable paragraph.\n\n" * 24)
             for i in range(1, 25)
         )
     )
@@ -86,7 +86,7 @@ def test_jump_panel_prompt_anchor_and_end_follow(
     page: Page, make_server: Callable[..., E2EServer], tmp_path: Path, profile: str
 ) -> None:
     page.set_viewport_size({"width": 390, "height": 800})
-    _, transcript = open_transcript(page, make_server, tmp_path)
+    server, transcript = open_transcript(page, make_server, tmp_path)
     page.evaluate("profile => localStorage.setItem('jailbee.displayProfile', profile)", profile)
     page.reload()
     expect(page.get_by_role("heading", name=TITLE, exact=True)).to_be_visible()
@@ -110,6 +110,7 @@ def test_jump_panel_prompt_anchor_and_end_follow(
     wait_for_scroll_settled(page)
     with transcript.open("a") as stream:
         stream.write(record(25, "assistant", "Jump end follows this."))
+    server.watches.open[-1].fire()
     expect(page.get_by_text("Jump end follows this.", exact=True)).to_be_in_viewport()
 
 
@@ -345,6 +346,9 @@ def test_partial_keyboard_scroll_keeps_the_current_eink_page(
     )
     page.reload()
     expect(page.get_by_role("heading", name=TITLE, exact=True)).to_be_visible()
+    # Position memory may resume a later entry; this test starts a fresh grid.
+    page.evaluate("window.scrollTo(0, 0)")
+    wait_for_scroll_settled(page)
     expect(page.locator(".page-indicator")).to_contain_text("1 /")
     readable = page.locator(".page-nav").evaluate(
         "el => el.getBoundingClientRect().top - "
