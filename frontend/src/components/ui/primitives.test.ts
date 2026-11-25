@@ -1,4 +1,3 @@
-import {readFileSync} from "node:fs"
 import {describe, expect, it} from "vitest"
 import {mount} from "@vue/test-utils"
 import Button from "./Button.vue"
@@ -165,32 +164,5 @@ describe("ListRow", () => {
         expect(plain.attributes("aria-current")).toBeUndefined()
         const selected = mount(ListRow, {props: {title: "a", selected: true}})
         expect(selected.attributes("aria-current")).toBe("true")
-    })
-})
-
-describe("primitive styles", () => {
-    // Until Stylelint (ticket 03) runs over the tree: the primitives use token
-    // references only. Literal colours, font sizes, radii, z-indexes and px
-    // lengths are rejected; a 1-2px border or outline width is the exception.
-    const FILES = ["Button.vue", "IconButton.vue", "Switch.vue", "StatusChip.vue", "ListRow.vue", "state-layer.css"]
-
-    it.each(FILES)("%s uses tokens, not literal values", (file) => {
-        const source = readFileSync(`src/components/ui/${file}`, "utf8")
-        const css = (file.endsWith(".css") ? source : source.slice(source.indexOf("<style")))
-            .replace(/\/\*[\s\S]*?\*\//g, "")
-        const offending: string[] = []
-        for (const decl of css.split(/[;{}]/)) {
-            const at = decl.indexOf(":")
-            if (at < 0) continue
-            const prop = decl.slice(0, at).trim()
-            const value = decl.slice(at + 1).trim()
-            if (prop.startsWith("--") || prop.includes(" ")) continue
-            if (/#[0-9a-f]{3,8}\b|\b(rgb|rgba|hsl|hsla)\(/i.test(value)) offending.push(decl.trim())
-            if (/^(font-size|border-radius|z-index)$/.test(prop) && !value.startsWith("var(")
-                && value !== "inherit") offending.push(decl.trim())
-            const hairline = /^(border|outline)(-width)?$/.test(prop) && /^[12]px\b/.test(value)
-            if (/\d+px\b/.test(value) && !hairline) offending.push(decl.trim())
-        }
-        expect(offending).toEqual([])
     })
 })

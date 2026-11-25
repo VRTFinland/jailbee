@@ -66,6 +66,12 @@
     --md-target-min: 44px;
     --md-target-row: 48px;
 
+    /* The Material 3 switch track: 52x32 at the default root. */
+    --md-switch-track-width: 3.25rem;
+    --md-switch-track-height: 2rem;
+    /* The gap between the "on" handle and the track's border. */
+    --md-switch-handle-inset: 2px;
+
     /* Spacing on a 4px grid, each named by its px size at the default 16px
        root (`--md-space-16` is 1rem), so a name never hides its value. In rem,
        so the body-size setting scales them. */

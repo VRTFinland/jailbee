@@ -25,8 +25,7 @@ function toggle(): void {
 
 <style scoped>
 /* The button is the 44px hit target; the track inside it is the Material 3
-   switch: 52x32 (3.25rem by 2rem at the default root), the handle growing
-   from 16 to 24 when on, 2px (half of space-4) inside the 2px track border. */
+   switch, the handle growing from 16 to 24 when on. */
 .switch {
     display: inline-grid;
     place-items: center;
@@ -49,8 +48,8 @@ function toggle(): void {
     position: relative;
     display: inline-flex;
     align-items: center;
-    width: 3.25rem;
-    height: 2rem;
+    width: var(--md-switch-track-width);
+    height: var(--md-switch-track-height);
     border: 2px solid var(--md-outline);
     border-radius: var(--md-shape-full);
     background: var(--md-surface-container-highest);
@@ -72,14 +71,15 @@ function toggle(): void {
         height var(--md-motion-duration) var(--md-motion-easing);
 }
 .switch[aria-checked="true"] .switch-handle {
-    left: calc(100% - var(--md-space-24) - var(--md-space-4) / 2);
+    /* The track's width less its two 2px borders, the handle and the inset. */
+    left: calc(var(--md-switch-track-width) - var(--md-space-24) - var(--md-space-4) - var(--md-switch-handle-inset));
     width: var(--md-space-24);
     height: var(--md-space-24);
     background: var(--md-on-primary);
 }
 /* The state layer is a halo around the handle, as in Material 3. */
 .switch-handle.state-layer::before {
-    inset: calc(-1 * var(--md-space-12));
+    inset: calc(var(--md-space-12) - var(--md-space-24));
     background: var(--md-on-surface);
 }
 .switch[aria-checked="true"] .switch-handle.state-layer::before {
