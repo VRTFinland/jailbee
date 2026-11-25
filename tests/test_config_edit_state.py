@@ -593,6 +593,15 @@ def test_a_new_map_entry_needs_a_key_and_a_list_entry_refuses_one():
         st.add_entry(state, spec)
 
 
+@pytest.mark.parametrize("name", ["models", "model_policy", "default_runner"])
+def test_agent_map_refuses_reserved_setting_names(name):
+    spec = replace(COLLECTION, path=("agents",), kind=FieldKind.MODEL_MAP, default={})
+    state = _open({"agents": {"claude": {}}}, specs=(spec,))
+    with pytest.raises(ValueError, match="reserved"):
+        st.add_entry(state, spec, name)
+    assert state.staged == {}
+
+
 def test_deleting_an_entry_stages_the_remaining_list():
     state = st.delete_entry(_staged(staged={}), COLLECTION, 0)
 

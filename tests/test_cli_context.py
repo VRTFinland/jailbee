@@ -44,10 +44,11 @@ def test_wrong_side_message(monkeypatch: pytest.MonkeyPatch) -> None:
     assert cli_context.wrong_side_message("unknown", "container") is None
 
 
-def test_host_refuses_inbox() -> None:
-    assert cli_context.CONTAINER_COMMANDS == frozenset({"inbox", "_agent-snapshot"})
-    assert cli_context.wrong_side_message("inbox", "host") == (
-        "`jailbee inbox` is only available inside a jailbee container."
+@pytest.mark.parametrize("command", ["inbox", "host"])
+def test_host_refuses_container_commands(command: str) -> None:
+    assert cli_context.CONTAINER_COMMANDS == frozenset({"inbox", "host", "_agent-snapshot"})
+    assert cli_context.wrong_side_message(command, "host") == (
+        f"`jailbee {command}` is only available inside a jailbee container."
     )
 
 

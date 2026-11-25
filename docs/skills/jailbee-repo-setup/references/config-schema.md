@@ -916,6 +916,38 @@ docker_registry_mirror:
 
 Exact hostnames: no wildcard (`*.x`, `.x`), no `:port` (the mirror serves registries on 443 only), no scheme, no path. Required for every registry outside rpardini's defaults (Docker Hub, registry.k8s.io, gcr.io, quay.io, ghcr.io): the mirror refuses unlisted registries (dockerd reports `Forbidden`). Pushes into rpardini mirror's `REGISTRIES` env on next `jailbee new` / `jailbee apply`; second pull hits the cache.
 
+## `agents.models` and `agents.model_policy`
+
+Optional user-authored model guidance, normally in `~/.config/jailbee/global.yaml`:
+
+```yaml
+agents:
+  models:
+    haiku:
+      label: "Small coding model"
+      use_for: "Well-scoped coding subagents"
+      avoid_for: "Architectural reviews"
+      notes: "Our coding backend alias"
+    opus: {}
+  model_policy: "Prefer haiku for coding; use opus for difficult reviews."
+```
+
+The example is a user's policy, not a JailBee recommendation. Defaults are
+`models: {}` and `model_policy: ""`. Every model field (`label`, `use_for`,
+`avoid_for`, `notes`) is an optional string defaulting to `""`; unknown fields
+are rejected. Keys name runner model tiers or aliases; this advisory map neither
+changes runner validation nor grants model access. A repo layer can override a
+single field without losing other fields or models; host-local
+`repos/<prefix>.yaml` overrides repo, which overrides global.
+
+Both keys have separate config-editor fields, not agent entries. `models` is
+reserved: rename any agent with that name and update its references.
+`models: null` is accepted as an empty map. In any
+container, `jailbee agent models [--json]` reads the effective map and policy
+live through the broker. Host edits appear on the next query with no `apply`
+or restart. Consult the command and follow `model_policy` when selecting models
+for subagents or child runners. An empty map gives a configuration hint.
+
 ## `agents`
 
 Generic hook for terminal coding agents. A mapping keyed by agent name

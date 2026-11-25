@@ -74,6 +74,61 @@ use it only when a clean stop hangs.
 
 More: [Commands](commands.md), [Autostart](faq.md#how-do-i-run-setup-steps-or-start-services-automatically)
 
+## Before and after a host reboot
+
+```bash
+jailbee stop --all          # list and confirm every running development container
+# Reboot the host, then:
+jailbee resume
+```
+
+These commands cover all repositories, including mount-mode containers and
+orchestrated children. `stop --all --yes` skips the one confirmation; without
+`--yes`, a non-interactive invocation exits 2. Containers with a live background
+job are skipped with a warning: wait for the job, then repeat the command before
+rebooting. JailBee's registry mirror, LiteLLM, display and egress proxy containers
+are left to their own Incus `boot.autostart` settings.
+
+Successful clean stops, including agent-session capture, are saved in
+`${XDG_STATE_HOME:-~/.local/state}/jailbee/resume-set.json`. Repeating the stop
+preserves earlier entries; journal updates are locked across concurrent commands.
+Concurrent `stop --all` and `resume` runs are serialized and print a waiting
+message before waiting for the other operation.
+`resume` starts that set and repairs running containers whose boot setup has not
+been handled after Incus restarted them. A volatile `/run` marker records normal
+start setup (including empty plans) or an intentional `--no-autostart` skip;
+both are left alone for that boot. Setup writes `started` before autostart and
+marks the boot handled only after all stages, including detached stages, succeed.
+Interrupted or failed setup remains retryable even if tmux already exists.
+Marker-write failures warn without failing the boot. For older boots without a marker, an existing
+`autostart` tmux session or an empty start plan also counts as healthy. It runs the normal start setup and
+`on_start` autostart (services, agent windows and session restoration), waiting
+for all stages. Each container is reported independently; failures and live-job
+skips on resume exit non-zero, retain retry state, and do not block other
+containers. Repeat `resume` after fixing the failure. Nothing to do exits 0.
+Missing containers are dropped from the saved set with an info line, not a
+failure; `destroy` also removes their entries. An unavailable repository config
+is reported once per repository per invocation, retaining entries only for
+containers that still exist. Restore the config and retry, or remove unwanted
+containers with `jailbee orphan destroy`.
+
+Over remote SSH or the web command policy, `stop --all` and `resume` operate
+only on repositories visible to that transport. Excluded repositories and
+orphans are untouched; their saved entries remain for a local resume. Command
+allowlists still need `stop` / `resume`. The global menu offers Resume only
+for an existing saved container or a running container needing boot setup in an
+eligible repository. The host records each completed or skipped start in the
+same journal, keyed by Incus `last_used_at`. A changed start identity offers
+Resume without probing inside containers on each refresh; a matching record
+hides it in steady state, including after successful `jailbee apply` restarts.
+After upgrading from a version without these records, a running container is
+offered once, until Resume verifies or completes its setup. Unregistered orphan
+groups never offer Resume. A registered repo with an unloadable config still
+offers local-only Resume for saved containers or running containers needing
+setup, so the command can report the config error and recovery hint. An unreadable
+journal also keeps local Resume available to report the error. Destroy and local
+Resume prune vanished boot records.
+
 ## Snapshots and rollback
 
 ```bash

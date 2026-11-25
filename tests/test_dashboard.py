@@ -2068,10 +2068,13 @@ def _assert_every_key_is_fixed(menu: tmenu.MenuState | tmenu.RepoMenuState) -> N
             preferred = tmenu._preferred_menu_key(item)
             assert preferred is not None, f"{item} has no fixed key"
             assert key == preferred, f"{item} lost {preferred!r} to a neighbour in {group}"
-            # A menu letter typed in the table opens that entry, so a root letter the
-            # table answers itself would be dead. The repo menu's `n` *is* the table's
-            # `n` (new container), the same action by either route.
-            if group is None and not (isinstance(menu, tmenu.RepoMenuState) and key == "n"):
+            # `g` is Global at the table, Git/Agent inside an opened row menu.
+            # The repo menu's `n` is also the table's new-container action.
+            if (
+                group is None
+                and key != "g"
+                and not (isinstance(menu, tmenu.RepoMenuState) and key == "n")
+            ):
                 assert key not in _table_keys(), f"{item}: {key!r} is a table key"
 
 
@@ -3754,7 +3757,7 @@ def test_render_title_is_left_aligned(tmp_path):
     """Left-aligned, so a widening title grows rightwards instead of shifting."""
     g = dmodel.RepoGroup("alpha", "/repos/alpha", tmp_path / "a.yaml", [_ci("alpha-one", "alpha")])
     line = paint(view_of([g]), size=(200, 25))[0]
-    assert line.index("🐝 jailbee dashboard") <= 3
+    assert line.index("☰ 🐝 jailbee dashboard") <= 3
 
 
 def test_render_title_carries_the_no_git_marker(tmp_path):
@@ -4174,9 +4177,10 @@ def test_parse_key_maps_arrows_and_letters():
 
 
 def test_parse_key_leaves_a_containers_action_letters_to_its_menu():
-    """Every letter a menu's root owns is unmapped here, so it reaches the menu."""
-    for letter in "tsicpPudDgGlwfbxRaomN":
+    """Row accelerators reach the menu, except g reserved for Global in the table."""
+    for letter in "tsicpPudDGlwfbxRaomN":
         assert tkeys.parse_key(letter) == "", letter
+    assert tkeys.parse_key("g") == "global-menu"
     assert tkeys.parse_key("h") == "help"
     assert tkeys.parse_key("question_mark") == "help"
 

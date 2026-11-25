@@ -70,6 +70,7 @@ class AutostartPlan:
     detached: list[AutostartStage]
     agent_steps: list[AutostartStep] | None = None
     agents_last: bool = False
+    boot_identity: str | None = None
 
 
 def normalize_stages(entries: list[AutostartStep] | list[AutostartStage]) -> list[AutostartStage]:

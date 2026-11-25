@@ -48,11 +48,32 @@ preserves the original `claude-jb` flags. Without a valid marker, a captured
 process command line naming `claude` or `claude-jb` is used; otherwise resume
 falls back to plain `claude`. Plain `claude` sessions do not need a marker. The `autostart.resume_agent_sessions` setting defaults
 to `true`; setting it to `false` consumes a saved snapshot without resuming.
-Rebuild the golden image and create new containers to install the shutdown
-unit and updated launcher; `jailbee apply` alone does not retrofit existing
-containers. Unit tests cover the stop/start integration; a real-container
-restart check remains unverified in this environment. Host reboot and raw
-`incus stop` behavior are unverified and are not covered.
+Entries stay pending until their agent launch succeeds or their session's
+start/end hook acknowledges them, so failed earlier `on_start` stages or failed
+launches do not lose sessions on retry, and manually resumed or ended sessions
+are not relaunched. Re-entering autostart also skips registry sessions with a
+matching live PID and process start time. This acknowledgement protocol ships
+with the runtime code and needs no rebuild.
+Older containers need a golden-image rebuild and recreation only to install
+the original shutdown unit and launcher markers; `jailbee apply` alone does not
+retrofit those. Unit tests cover the stop/start integration; a real-container
+restart check remains unverified in this environment. For a host reboot, use
+`jailbee stop --all` before it and `jailbee resume` afterwards: see
+[host-wide lifecycle](references/commands.md#host-reboot). Both commands work
+over remote SSH and web command policy within visible repositories only;
+excluded repos and orphans remain untouched, with their saved entries left for
+a local resume. Global offers Resume for eligible saved containers, or running
+in-scope containers whose Incus start identity differs from the host's handled
+boot record. Completed/skipped setup records that start and hides Resume until
+the next boot, including after successful `jailbee apply` restarts. Running
+containers without a record offer recovery once after upgrading; Resume verifies
+or completes setup and backfills the record. Unregistered orphan groups never
+offer Resume. A registered repo with an unloadable config offers local-only
+Resume for saved containers or running containers needing setup, so the command
+can report the config error and recovery hint. Refresh does not probe guest boot
+markers. An unreadable journal keeps Resume available locally to report the error.
+Actual host reboot and
+raw `incus stop` smoke tests remain unverified.
 
 ## Repository services
 
@@ -1849,7 +1870,8 @@ a reply, a comment) shows the preview in the list's place; Esc goes back. Off a 
 dashboard's container menu opens the same box for its container. Dashboard
 publication uses the shared action runner: questions are modals, output and
 URLs or failure reasons stay in the notification queue, including over SSH.
-PR creations use it too; only the standalone manager hands over a terminal. The
+Quitting the terminal dashboard cancels pending questions, even while a modal
+is still opening. PR creations use it too; only the standalone manager hands over a terminal. The
 Qt dashboard has a native window for it. Over remote SSH the manager is
 read-only. The scriptable forms address a proposal as `pr/<manifest>.json` or
 `issue/<manifest>.json`:

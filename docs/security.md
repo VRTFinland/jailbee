@@ -250,6 +250,21 @@ session therefore carries
 Qt dashboard refused and the post-install setup offer unmade: the one at the
 other end is not at this host.
 
+`stop --all` and `resume` are permitted when the command policy allows their
+leaves (`stop` and `resume`). Remotely they affect only containers owned by
+visible repositories: excluded repos and orphans are untouched, including
+saved resume entries. This applies even with `restrict_host: false`; a local
+invocation remains host-wide. Resume uses the state service snapshot: it appears
+for an eligible saved container, or a running in-scope container whose Incus
+start identity differs from its host-side completed/skipped boot record. A running
+container without a record is offered once for upgrade recovery; orphan groups
+never offer Resume. Matching
+records hide Resume in steady state; refresh never probes guest boot markers.
+An unreadable journal offers local-only Resume so the command can report the
+error. Registered repos with unloadable configs also offer local-only Resume
+when they have saved containers or running containers needing setup; remote
+viewers never see this config-recovery offer.
+
 While `restrict_host` is on, the commands that manage the host itself are
 refused in every mode, `full` and an allowlist naming them included:
 `config edit`/`init`/`migrate`, every `remote ...` command, `setup`, `init`,

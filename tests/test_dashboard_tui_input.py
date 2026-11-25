@@ -116,14 +116,14 @@ def test_a_hotkey_typed_ahead_opens_its_level(mocker, tmp_path):
 
 
 def test_a_menu_letter_in_the_table_opens_its_level_without_enter(mocker, tmp_path):
-    """`g` on a container row is `⏎g`: the menu opens straight into Git →."""
-    run = drive(mocker, ["j", "g"], [_group(tmp_path)])
-    assert run.natives[-1] is not None and run.natives[-1].level == "Git →"
+    """`l` on a container row opens straight into Lifecycle →."""
+    run = drive(mocker, ["j", "l"], [_group(tmp_path)])
+    assert run.natives[-1] is not None and run.natives[-1].level == "Lifecycle →"
 
 
 def test_escape_after_a_menu_letter_goes_back_to_the_table(mocker, tmp_path):
-    """`g` from the table, Esc: the table again, not the menu's root the user never saw."""
-    run = drive(mocker, ["j", "g", "escape"], [_group(tmp_path)])
+    """`l` from the table, Esc: the table again, not the menu's root the user never saw."""
+    run = drive(mocker, ["j", "l", "escape"], [_group(tmp_path)])
     assert run.trace[3].overlay is None
     assert run.natives[3] is None
 

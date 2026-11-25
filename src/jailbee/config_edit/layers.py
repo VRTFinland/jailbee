@@ -36,6 +36,7 @@ from jailbee.config.common import (
     normalize_remote_ssh_gui,
     normalize_remote_ssh_keys,
 )
+from jailbee.config.models_agents import AGENT_SETTINGS_KEYS
 from jailbee.config_edit.schema import GLOBAL_ONLY_KEYS, FieldKind, dotted, entry_model
 from jailbee.config_writer import DELETE, KeyPath, YamlChange, legacy_key_migrations
 from jailbee.global_config import validate_global_raw
@@ -142,10 +143,9 @@ def lookup(raw: dict[str, object], path: KeyPath) -> tuple[bool, object]:
     node: object = raw
     agents_node = raw.get("agents")
     if path == ("agents",) and isinstance(agents_node, dict):
-        # `agents.default_runner` is the repo's default runner, not an agent: the
-        # collection the editor shows is the agents alone (it has its own fields).
-        agents = {k: v for k, v in agents_node.items() if k != "default_runner"}
-        if not agents and "default_runner" in agents_node:
+        # Reserved settings have their own fields, outside the agents collection.
+        agents = {k: v for k, v in agents_node.items() if k not in AGENT_SETTINGS_KEYS}
+        if not agents and AGENT_SETTINGS_KEYS.intersection(agents_node):
             return False, None
         return True, agents
     for key in path:

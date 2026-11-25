@@ -121,6 +121,15 @@ def test_container_skill_covers_identity_commands_and_policy() -> None:
         assert needle in body, needle
     assert "must not merge into other branches or perform host integration" in body
     assert "own-branch updates" in body
+    for instruction in (
+        "Clone mode uses a per-branch clone",
+        "Do not rely on `git push` from the container",
+        "set only on orchestrator launches",
+        "absence does not mean you are not a child",
+        "maximum configured service limit for windows created afterwards",
+        "Use the container's `short_name`",
+    ):
+        assert instruction in body, instruction
     network = body.split("## Blocked network access", 1)[1].split("## Commits", 1)[0]
     assert "child" in network and "orchestrator" in network
 
@@ -144,7 +153,7 @@ def _validate_guidance_commands(skill: str, preamble: str) -> None:
             continue  # This is a prose list, not a command invocation.
         examples.extend(re.findall(r"\bjailbee\s+.*?(?=\s+and\s+jailbee|\s+\(|[.;]|$)", line))
     host_roots = {"net", "git", "pr", "port", "display"}
-    container_roots = {"service", "config", "inbox", "version"}
+    container_roots = {"agent", "service", "config", "host", "inbox", "version"}
     for example in examples:
         if not example.startswith("jailbee "):
             continue
@@ -197,6 +206,7 @@ def test_container_guidance_commands_resolve() -> None:
     skill = (agent_skills._skills_root() / "jailbee-container" / "SKILL.md").read_text()
     _validate_guidance_commands(skill, PREAMBLE)
     commands = {
+        "agent models": False,
         "service ls": False,
         "service start": False,
         "service restart": False,

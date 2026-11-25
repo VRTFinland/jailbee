@@ -10,6 +10,55 @@ before editing `## Unreleased`.
 
 ### Added
 
+- `agents.models` and `agents.model_policy` describe user-defined model aliases
+  and selection rules, with field-level repo overrides. In any container,
+  `jailbee agent models [--json]` reads this guidance live through the broker;
+  host config changes need no `apply` or restart. Unchanged layers are cached
+  without git detection, and slow host-status refreshes cannot block model
+  queries. The agent name `models` is reserved; existing agents with that name
+  must be renamed. JailBee ships no model opinions
+  ([#149](https://github.com/VRTFinland/jailbee/issues/149)).
+- `jailbee host status [--json]` lets any container check live host load and CPU
+  count, total/available memory, free space in its Incus storage pool, and the
+  host-wide running JailBee container count before heavy work. The broker computes
+  readings on demand, coalescing inventory and pool reads in a two-second cache
+  on dedicated bounded workers so slow Incus calls cannot starve inbox or outbox
+  operations, with per-field visibility rules for future live queries
+  ([#149](https://github.com/VRTFinland/jailbee/issues/149)).
+- Interactive Claude sessions can resume after an unclean container stop,
+  including host crashes and forced Incus stops. The managed plugin keeps a
+  live session registry, prunes dead processes, excludes headless runs, removes
+  ended sessions even after a cancelled stop and replaces sessions on resume,
+  fork or `/clear`. Clean stops capture only still-live known processes.
+  Boot entries survive failed autostart stages and are acknowledged individually
+  after a successful agent launch or a session start/end hook; autostart retries
+  skip sessions whose recorded process is already live. No golden-image rebuild is needed
+  ([#149](https://github.com/VRTFinland/jailbee/issues/149)).
+- `jailbee stop --all` captures agent sessions and cleanly stops running development
+  containers across repositories before a host reboot, with one confirmation
+  (`--yes` for scripts). `jailbee resume` restores that saved set and autostart
+  in containers Incus already rebooted, leaves handled/skipped boots and empty
+  start plans alone, skips live jobs and retains failed or interrupted autostart
+  for retry, even when tmux already exists. Boot setup is handled only after
+  detached stages succeed; marker-write failures warn without failing the boot.
+  Concurrent stop/resume commands report when waiting for each other;
+  destroyed containers are dropped and unavailable repository configs receive a
+  recovery hint. The terminal dashboard offers both in a global menu (`g`, F10
+  or the title's ☰), alongside Accounts, Notifications, Global config, Settings,
+  Help and Quit; Resume uses the shared state snapshot for eligible saved
+  containers or running containers with an unhandled Incus start identity. Host-side
+  completed/skipped boot records hide Resume in steady state, including after
+  successful `apply` restarts; orphan groups never offer Resume, and a restart
+  during a recovery probe cannot acknowledge a stale start. Records keep unplanned
+  reboot recovery reachable without per-container boot probes; older starts without
+  records offer one-time upgrade recovery. Unreadable journals and registered
+  repos with unloadable configs keep local recovery visible so Resume can report
+  the error; stale stopping entries do not count as saved work.
+  Remote SSH and web command policy permit stop-all and
+  resume within visible repositories, leaving excluded repos, orphans and their
+  saved entries untouched; remote policy hides disallowed entries.
+  The web dashboard's quick settings menu sits at the title bar's left edge (☰)
+  ([#149](https://github.com/VRTFinland/jailbee/issues/149)).
 - `jailbee --version` and `jailbee version` include the source commit when
   known, with `-dirty` for uncommitted source changes. Editable installs read
   their own checkout; wheels preserve build-time provenance, and containers
@@ -188,7 +237,9 @@ before editing `## Unreleased`.
   and returning from a tmux hand-off opens the queue when any do. The list
   keeps its cursor on the same entry while output streams, a background action
   keeps running during a tmux hand-off, and an action whose worker crashes
-  settles instead of staying running. Background
+  settles instead of staying running. Quitting while a question is still mounting
+  cancels it without a teardown traceback
+  ([#146](https://github.com/VRTFinland/jailbee/issues/146)). Background
   lifecycle jobs (create, start/restart, autostart, destroy), whoever started them, are listed
   there too as read-only rows with a way to open the job log; they count in the badge
   and go when the job does (a hidden repo's jobs are left out, and a failed job
@@ -355,6 +406,11 @@ before editing `## Unreleased`.
 
 ### Changed
 
+- Host-wide agent instructions start with a five-line JailBee preamble pointing
+  to the container and child skills. Service, network and GitHub guidance lives
+  in the container skill, including service descriptions, live host status and
+  model guidance. `jailbee apply` refreshes the text for existing containers
+  without a restart ([#149](https://github.com/VRTFinland/jailbee/issues/149)).
 - The dashboards and `jailbee ls` show the sync comparison in one **SYNC**
   column: a fixed three-terminal-cell target-marker slot, aligned ↑/↓ commit
   counts, then the diff. PR-bound containers compare with the PR head the host

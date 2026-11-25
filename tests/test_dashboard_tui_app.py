@@ -46,6 +46,8 @@ _TERMINAL_BYTES = (
     "\x03",
     "\x12",
     "\x1b[15~",
+    "\x1b[21~",  # F10
+    "g",
     "?",
     "!",
     *"neEAOvMShjkqQ<>I+-=",

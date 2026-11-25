@@ -590,7 +590,11 @@ page covers the generic `agents:` mechanism they sit on top of.
 Claude's preset also declares `global_instructions: {dir: /etc/claude-code,
 file: CLAUDE.md}`. The host's `~/.config/jailbee/AGENTS.md` reaches every repo's
 containers there as read-only managed-policy memory, before the shared and
-project CLAUDE.md files. Edits reach new sessions after a successful refresh,
+project CLAUDE.md files. A five-line JailBee preamble comes first: it points to
+container identity and the **jailbee-container** and **jailbee-orchestration-child**
+skills instead of repeating the detailed environment instructions.
+`jailbee apply` refreshes this text and the bundled skills through existing
+mounts without restarting containers. Edits reach new sessions after a successful refresh,
 not sessions already running; a failed host-file read leaves the previous
 staged copy in place. See [Agent-wide instructions](config.md#agent-wide-instructions-configjailbeeagentsmd)
 for first-time apply, refresh commands and the host-wide opt-out.
@@ -653,23 +657,48 @@ autostart window to `claude-jb`.
 
 ### Sessions resume after a restart
 
-On normal `jailbee stop` and `jailbee restart`, JailBee snapshots running
-interactive Claude sessions and resumes each in its own window with its
-launcher, flags and working directory. This also covers Claude sessions
-started outside the managed autostart window, including SSH sessions; shell
-environment, non-Claude processes and background sessions are not restored.
+The managed JailBee Claude plugin keeps a container-local live session
+registry: `SessionStart` records each interactive Claude session and
+`SessionEnd` removes it. After a normal stop or restart, or an unclean stop
+such as a host crash, power loss or `incus stop --force`, the next autostart
+resumes the registered sessions in their own windows with their launcher,
+flags and working directory. A resume, fork or `/clear` replaces the previous
+session for that launcher process. This also covers sessions started outside
+the managed autostart window, including SSH sessions; shell environment,
+non-Claude processes, background sessions and headless `claude -p` / `--print`
+runs are not restored, even when Claude's PID file is not yet available.
 
 A matching JailBee launcher marker preserves the original `claude-jb` flags.
 Without a valid marker, JailBee uses the captured process command line when
 it names `claude` or `claude-jb`; otherwise it falls back to plain `claude`.
-Plain `claude` sessions do not need a marker. Set `autostart.resume_agent_sessions: false` to consume the saved
-snapshot without resuming it. Rebuild the golden image and create new
-containers to install the shutdown unit and updated `claude-jb`; `jailbee
-apply` alone does not retrofit existing containers.
+Plain `claude` sessions do not need a marker. Hook payloads do not provide the
+launcher argv, so the start hook reads the owning process and matching launcher
+marker at registration time. Hook bookkeeping is best effort, with a
+registry lock retried for at most five seconds and a 200 ms tmux query timeout;
+failures never prevent the Claude session from starting or ending. Only saved
+transcripts can be resumed. Boot entries remain pending until their tmux
+launch succeeds or a `SessionStart` / `SessionEnd` hook acknowledges that id,
+including manual resumes and detached autostart handoffs. If an earlier
+`on_start` stage or an agent launch fails, the next start can retry those
+sessions. Re-entering autostart skips pending sessions whose registry PID and
+process start time are still live. Acknowledgement removes only the pending
+entry, not the live registration, and deletes the pending file when empty.
+Overflow entries stay in their source until a later bounded batch can take them. Set `autostart.resume_agent_sessions: false` to
+consume the saved sessions without resuming them.
 
-Unit tests cover the stop/start integration; a real-container restart check
-remains unverified in this environment. Host reboot and raw `incus stop`
-behavior are also unverified and are not covered.
+The live registry ships with the plugin from `/opt/jailbee/app/current`; no
+golden-image rebuild is needed for this update. Restart Claude to load the
+updated hooks. Older containers still need the previously documented rebuild
+and recreation to install the original shutdown unit and `claude-jb` launcher
+markers. Clean-stop capture freezes only sessions whose recorded process is
+still alive (matching PID and process start time), plus sessions without a known
+PID, and merges sessions predating the plugin. Registration prunes dead process
+rows so session churn cannot fill the registry. A normal `SessionEnd` also removes
+the session from a frozen snapshot after a cancelled stop; shutdown-time end hooks
+leave it intact while `/run/nologin` exists. Ended-session tombstones prevent stale
+Claude PID files from reviving closed sessions. Unit tests cover the hook/boot and
+stop/start integration; real host crash and power-loss recovery still need
+host-side verification.
 
 ### Shared credential groups (`credentials`)
 

@@ -15,12 +15,14 @@ from pydantic import (
     ConfigDict,
     Field,
     SecretStr,
+    ValidationError,
     ValidationInfo,
     field_validator,
     model_validator,
 )
 
 from jailbee.config.common import CONTAINER_USERNAME
+from jailbee.config.errors import ConfigError
 from jailbee.config.models_net import _reject_offline
 
 # An agent name becomes a tmux window name and a `jailbee doctor` label —
@@ -30,6 +32,49 @@ from jailbee.config.models_net import _reject_offline
 # to name its subpath after the agent. (The host-wide instructions mount is the
 # exception: its device is `agent-instructions-<device_name(agent)>`.)
 _AGENT_NAME_RE = re.compile(r"[a-z0-9-]+")
+
+
+AGENT_SETTINGS_KEYS = frozenset({"default_runner", "models", "model_policy"})
+
+
+class ModelGuidance(BaseModel):
+    """User-authored guidance for a model alias, not a runner constraint."""
+
+    model_config = ConfigDict(extra="forbid")
+    label: str = Field(default="", description="Short description of this model.")
+    use_for: str = Field(default="", description="Tasks this model suits.")
+    avoid_for: str = Field(default="", description="Tasks to avoid assigning to this model.")
+    notes: str = Field(default="", description="Other model guidance or alias details.")
+
+
+class AgentModelGuidance(BaseModel):
+    """The non-agent model settings under `agents`. No built-in opinions."""
+
+    model_config = ConfigDict(extra="forbid")
+    models: dict[str, ModelGuidance] = Field(
+        default_factory=dict,
+        description="Model guidance keyed by runner model name; query with jailbee agent models.",
+    )
+    model_policy: str = Field(
+        default="", description="General rules for choosing subagent and child-runner models."
+    )
+
+    @field_validator("models", mode="before")
+    @classmethod
+    def _models_mapping(cls, value: object) -> object:
+        if value is None:
+            return {}
+        if isinstance(value, dict) and {"preset", *AgentConfig.model_fields}.intersection(value):
+            try:
+                # Model aliases may legitimately share an agent field's name.
+                for key in {"preset", *AgentConfig.model_fields}.intersection(value):
+                    ModelGuidance.model_validate(value[key])
+            except ValidationError:
+                raise ConfigError(
+                    "`agents.models` is reserved for model guidance; rename the agent "
+                    "(for example to `models-agent`) and update references to it"
+                ) from None
+        return value
 
 
 class AutostartStep(BaseModel):

@@ -89,8 +89,18 @@ or `--kind question` when a result is needed.
 For interactive Claude Code, the managed JailBee plugin automatically runs
 `jailbee inbox follow`, a non-acknowledging notification stream; read announced
 items with `jailbee inbox read ID`. Its handlers are
-`jailbee inbox hook session-start` and `jailbee inbox hook stop`. Headless Claude
-sessions and other agents use `jailbee inbox wait`. The packaged marketplace
+`jailbee inbox hook session-start`, `jailbee inbox hook session-end` and
+`jailbee inbox hook stop`. Start/end hooks maintain the live Claude session
+registry for normal and unclean-stop recovery; clean-stop capture checks known
+PIDs against their recorded start times. A session ended after a cancelled stop
+is removed from the frozen snapshot too; shutdown end hooks preserve it while
+`/run/nologin` exists. Boot skips sessions without transcripts and keeps entries
+pending until each agent launch succeeds or a session start/end hook acknowledges
+the id, so a failed earlier autostart stage leaves them available for retry.
+Re-entry skips pending sessions whose registry PID and process start time still
+match a live process. Headless `claude -p` / `--print` runs are never
+registered for interactive recovery. Headless Claude sessions and other agents
+use `jailbee inbox wait`. The packaged marketplace
 lives in `jailbee/claude_marketplace`; its read-only managed-settings drop-in
 mounts at `/etc/claude-code/managed-settings.d` independently of
 `agent_instructions`.
@@ -439,7 +449,7 @@ Transcripts follow live entries at the end (opt-in on e-ink). Scrolling up,
 including keyboard or touch momentum, stops follow; reaching the end by hand
 restores it. Answer-start jumps leave long replies in place to read, and only
 jumps reaching the transcript end resume follow.
-The top-right Quick settings menu is available on every page, with live body/code
+The left-edge ☰ (Quick settings) menu is available on every page, with live body/code
 font-size steppers and an Auto / Light / Dark / E-ink theme cycler. Its Settings
 link opens the full settings page; both edit the same per-device localStorage
 preferences without Save. Session/subagent menus add Follow new messages (normal
@@ -677,6 +687,37 @@ approve widening. Profiles and services-stage/selection decisions use the
 effective config. Service definitions still follow the container working tree,
 bounded by the stored approved service-elevation envelope.
 See [Configuration](../../../config.md#where-does-the-autostart-config-come-from).
+
+### Host reboot
+
+On the host, `jailbee stop --all` lists all running development containers
+across repositories and asks one confirmation; scripts must pass `--yes` or
+exit 2. It captures agent sessions, cleanly stops each container, and records
+successful stops in `$XDG_STATE_HOME/jailbee/resume-set.json` (default
+`~/.local/state/jailbee/`). Mount-mode containers and children are included;
+JailBee service containers are excluded. Live background jobs are skipped with
+a warning: repeat the stop after they finish. `--all` excludes NAME and `--force`.
+
+After reboot, `jailbee resume` restores the saved set plus running containers
+needing boot setup. A volatile `/run` marker records handled setup (including
+empty plans) or intentional `--no-autostart` skips; these boots stay untouched.
+New setup writes `started` before autostart and marks the boot handled only after
+all stages, including detached stages, succeed. Interrupted or failed setup is
+retryable even if tmux exists. Marker-write failures warn without failing boot.
+Older boots without a marker fall back to the `autostart` tmux session or an
+empty start plan. It uses normal start setup and waits for all `on_start` stages,
+including services and agent session restore. Failed/incomplete resumes remain
+retryable even if an earlier stage already created tmux. Resume skips live jobs
+and exits non-zero for those skips or failures, continuing with other containers.
+A no-op exits 0. Vanished containers are dropped with an info line; `destroy`
+also removes their entries. Unavailable configs are reported once per repository
+per invocation, retaining entries for existing containers: restore the config
+and retry, or use `jailbee orphan destroy`. Journal updates are locked. Concurrent
+`stop --all` and `resume` runs print a waiting message before waiting for the other
+operation. Over remote SSH and web command policy, both commands affect only
+visible repositories; excluded repos and orphans are untouched. Remote resume
+preserves out-of-scope saved entries for a local resume. Allowlists must name
+`stop` / `resume`; local invocations remain host-wide.
 
 ### `jailbee start|stop|restart [NAME]`
 
@@ -1175,11 +1216,29 @@ same command `apps run` documents above, with the container passed as its
 `--container` option rather than a positional — regardless of whether the
 entry set `top_level: true`, so it launches correctly either way.
 
-A row's actions are its menu's letters, and they work in the table without
-Enter: with a container highlighted, `g` opens `Git →`, `l` `Lifecycle →`, `t`
+A row's actions are its menu's letters; most work in the table without
+Enter. `g` / F10 / the title's left-edge ☰ opens Global: Stop all…, Resume…,
+Accounts (`A`), Notifications (`Q`), Global config (`E`), Settings (F2), Help, Quit.
+Stop all and Resume run `jailbee stop --all` / `jailbee resume` through the
+action runner, with CLI questions as modals and results in Notifications; no
+selected repo is needed. Resume uses the state service snapshot: eligible saved
+containers offer it, as do running in-scope containers whose Incus `last_used_at`
+start identity differs from the host's completed/skipped boot record. A matching
+record hides Resume in steady state, including after successful `jailbee apply`
+restarts. After upgrading from an older version, running containers without a
+record offer it once; Resume verifies or completes setup and records that start.
+Unregistered orphan groups never offer Resume. Registered repos with unloadable
+configs offer local-only Resume for saved containers or running containers
+needing setup, so the command can report the error and recovery hint. No guest
+boot marker is probed on refresh. Stale interrupted-stop entries for running
+containers do not count as saved work. An unreadable journal offers local-only
+Resume so the command can report the error. Remote policy hides disallowed commands and
+limits stop/resume to visible repositories. Escape or
+an outside click closes it. `Enter`, then `g` still opens `Git →` (repo: Agent).
+With a container highlighted, `l` opens `Lifecycle →`, `t`
 attaches tmux, `s` opens a shell (or starts a stopped container), `p` opens
 `PR →`, `a` `Launch →`, `w` `Network →`, `f` forks, `R` renames, and so on; the
-menu's own letters then carry on inside the level (`g` `u` updates from base,
+menu's own letters then carry on inside the level (`Enter` `g` `u` updates from base,
 `l` `D` destroys, `a` `i` launches the IDE). Enter opens the same menu to show
 the letters. A letter fires only when its entry is offered for that container
 — the gate is the menu itself, so a Stopped container has no `t`, `a i`/`a c`

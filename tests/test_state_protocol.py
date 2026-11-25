@@ -104,6 +104,7 @@ def _full_snapshot() -> Snapshot:
             autostart_failed=2,
             autostart_rerunnable=True,
             created_at=T0,
+            start_identity="2026-11-25T09:00:00.123456789Z",
             uuid="u-alpha",
             outbox_pr=2,
             outbox_issue=1,
@@ -214,6 +215,7 @@ def _full_snapshot() -> Snapshot:
             default_project="Org/7",
             agent_label="grok/sonnet",
             sent_count=4,
+            unavailable_repo_root="/unavailable",
             push_action_default="merge",
             push_source_default="branch",
             column_notice="note",
@@ -449,7 +451,7 @@ def test_wire_schema_leaves_out_docstrings_and_titles():
 # PROTOCOL fails below: a client of another version would misread it. A pydantic
 # upgrade that only reshapes its schema output trips this too; a bump is then
 # harmless (a protocol mismatch makes the dashboard replace the state service).
-WIRE_SCHEMA = (40, "4f3fd76fffbfef3d17478fde0ef7b4de6ca7adf986befb1066271e5dde71c8df")
+WIRE_SCHEMA = (44, "ba57bad99aa10d217e23a5bc89a5d3397e12f07640283a6c3475bc226528908d")
 
 
 def test_a_wire_schema_change_bumps_the_protocol():

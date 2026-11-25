@@ -873,8 +873,22 @@ digest time across waits and restarts.
 Every container talks to the broker over a Unix socket that the host
 keeps for that container only. A container with no orchestration role is
 *plain*: it connects, but every inbox and orchestration operation answers
-`not_orchestrated`; the socket exists so later features (the GitHub outbox)
-can use it. Gaining or losing a grant or a parent changes only which
+`not_orchestrated`. Every role can use the outbox read operations and
+`jailbee host status [--json]`; plain containers can also stage outbox proposals.
+Host status reads load (one-minute average and CPU count), total/available
+memory, free bytes in the caller's actual Incus root-disk storage pool, and
+the host-wide number of running JailBee containers across all Incus projects
+(not just the caller's repository). Counted containers have both a `*-base`
+profile and JailBee's `user.jailbee.repo_dir` label, excluding unrelated base
+profiles. Load and memory are read for each request; inventory and storage-pool
+readings share a two-second, single-flight cache, refreshed on demand rather
+than at the next broker round. Live queries have dedicated bounded workers
+and one queued or running query per container, leaving inbox and outbox workers
+available during slow Incus calls. Unavailable readings are null in JSON;
+Incus failures return a clear error instead of partial capacity information.
+This is read-only information, available without an orchestration grant.
+The command shares the socket client's connection retry and exits 4 for an
+unreachable broker or a broker reply timeout (reported separately). Gaining or losing a grant or a parent changes only which
 operations are allowed, never the socket. The broker creates
 `~/.local/state/jailbee/orchestration/sock/<instance uuid>.<random>/` (directory mode
 0700, socket `broker.sock` mode 0600, owned by your user) and attaches it to

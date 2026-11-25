@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import dataclasses
+import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+
+import pytest
 
 from jailbee.dashboard.model import RepoGroup
 from jailbee.db import get_engine
@@ -77,10 +80,10 @@ def _ci(name, git=None):
     return ContainerInfo(name, "Running", "strict", None, None, repo="alpha", git_status=git)
 
 
-def _gatherer(mocker, gather, clock, sent_counts=lambda: SentCounts(), wall_clock=None):
+def _gatherer(mocker, gather, clock, sent_counts=lambda: SentCounts(), wall_clock=None, incus=None):
     mocker.patch("jailbee.state_service.gatherer.sample_activity")
     return Gatherer(
-        mocker.Mock(),
+        incus if incus is not None else mocker.Mock(),
         CAD,
         sent_counts=sent_counts,
         gather=gather,
@@ -105,6 +108,213 @@ def test_tick_returns_numbered_snapshots_with_the_git_setting(mocker):
     assert gather.call_args_list[1].kwargs == {"with_git": True, "parent_heads": {}}
     assert gather.call_args_list[0].args[1] == [Path("/a")]
     assert g.tick(active=True, refresh=False, roots=[]) is None  # nothing due yet
+
+
+def test_snapshot_carries_only_existing_resumable_repositories(mocker):
+    import json
+
+    from jailbee.db import state_dir
+    from jailbee.state_service.protocol import decode, encode
+
+    path = state_dir() / "resume-set.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    groups = [
+        RepoGroup("alpha", "/a", None, [dataclasses.replace(_ci("alpha-x"), state="Stopped")]),
+        RepoGroup(
+            "beta", "/b", None, [dataclasses.replace(_ci("beta-x"), repo="beta", state="Stopped")]
+        ),
+        RepoGroup(
+            "lost", None, None, [dataclasses.replace(_ci("lost-x"), repo="lost", state="Stopped")]
+        ),
+    ]
+    g = _gatherer(mocker, lambda *a, **k: groups, _Clock())
+    first = g.tick(active=True, refresh=True, roots=[])
+    assert isinstance(first, Snapshot)
+    assert first.resumable_repos == []
+
+    path.write_text(
+        json.dumps(
+            {"version": 1, "containers": {"alpha-x": "/a", "lost-x": "/lost", "gone-x": "/gone"}}
+        )
+    )
+    saved = g.tick(active=True, refresh=True, roots=[])
+    assert isinstance(saved, Snapshot)
+    assert saved.resumable_repos == ["alpha"]
+    assert decode(encode(saved)) == saved
+
+    path.write_text(json.dumps({"version": 1, "containers": {}}))
+    empty = g.tick(active=True, refresh=True, roots=[])
+    assert isinstance(empty, Snapshot)
+    assert empty.resumable_repos == []
+
+
+def test_handled_running_boot_does_not_offer_resume(mocker):
+    import json
+
+    from jailbee.db import state_dir
+
+    path = state_dir() / "resume-set.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "containers": {},
+                "handled": {"alpha-x": "2026-11-25T09:00:00Z"},
+            }
+        )
+    )
+    container = dataclasses.replace(_ci("alpha-x"), start_identity="2026-11-25T09:00:00Z")
+    groups = [RepoGroup("alpha", "/a", None, [container])]
+    g = _gatherer(mocker, lambda *a, **k: groups, _Clock())
+    snapshot = g.tick(active=True, refresh=True, roots=[])
+
+    assert isinstance(snapshot, Snapshot)
+    assert snapshot.resumable_repos == []
+
+
+def test_reboot_without_saved_set_offers_resume_without_container_probes(mocker):
+    from jailbee.dashboard.menus import global_menu_actions
+
+    container = dataclasses.replace(_ci("alpha-x"), start_identity="2099-11-25T09:00:00Z")
+    groups = [RepoGroup("alpha", "/a", None, [container])]
+    incus = mocker.Mock()
+    g = _gatherer(mocker, lambda *a, **k: groups, _Clock(), incus=incus)
+    snapshot = g.tick(active=True, refresh=True, roots=[])
+
+    assert isinstance(snapshot, Snapshot)
+    assert snapshot.resumable_repos == ["alpha"]
+    assert ("Resume…", "global-resume") in global_menu_actions(
+        resumable_repos=snapshot.resumable_repos
+    )
+    incus.exec.assert_not_called()
+
+
+def test_running_orphan_without_a_record_never_offers_resume(mocker):
+    container = dataclasses.replace(
+        _ci("lost-x"), repo="lost", start_identity="2026-11-25T09:00:00Z"
+    )
+    g = _gatherer(mocker, lambda *a, **k: [RepoGroup("lost", None, None, [container])], _Clock())
+    snapshot = g.tick(active=True, refresh=True, roots=[])
+
+    assert isinstance(snapshot, Snapshot)
+    assert snapshot.resumable_repos == []
+
+
+@pytest.mark.parametrize("registered", [True, False])
+@pytest.mark.parametrize("saved", [False, True])
+@pytest.mark.parametrize("healthy_repo", [False, True])
+def test_broken_config_resume_is_local_only_and_requires_registration(
+    tmp_path, mocker, make_cfg, db_session, registered, saved, healthy_repo
+):
+    from jailbee.dashboard.menus import global_menu_actions
+    from jailbee.dashboard.model import RepoTarget, gather_live
+    from jailbee.db.models import RegisteredRepo
+    from jailbee.state_service.protocol import decode, encode
+
+    root = tmp_path / "broken"
+    (root / ".jailbee").mkdir(parents=True)
+    (root / ".jailbee" / "config.yaml").write_text("invalid: [")
+    if registered:
+        db_session.add(
+            RegisteredRepo(
+                container_prefix="alpha", repo_root=str(root), registered_at=datetime.now(UTC)
+            )
+        )
+    db_session.commit()
+    mocker.patch("jailbee.db.get_engine", return_value=db_session.get_bind())
+    mocker.patch("jailbee.remote_ssh.repo_scope.get_engine", return_value=db_session.get_bind())
+    mocker.patch("jailbee.config.load_orphan_base_config", return_value=make_cfg(tmp_path / "base"))
+    container = dataclasses.replace(
+        _ci("alpha-x"),
+        state="Stopped" if saved else "Running",
+        start_identity="2026-11-25T09:00:00Z",
+    )
+    if saved:
+        from jailbee.db import state_dir
+
+        path = state_dir() / "resume-set.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"version": 1, "containers": {"alpha-x": str(root)}}))
+    roots = [root]
+    if healthy_repo:
+        from jailbee.config import load_repo_config
+
+        healthy_root = tmp_path / "healthy"
+        cfg = make_cfg(healthy_root)
+        mocker.patch(
+            "jailbee.dashboard.model.load_repo_config",
+            side_effect=lambda path: cfg if path == healthy_root else load_repo_config(path),
+        )
+        roots.append(healthy_root)
+    mocker.patch(
+        "jailbee.dashboard.model.list_containers",
+        side_effect=lambda *a, **kw: [container] if kw["all_repos"] else [],
+    )
+    g = _gatherer(mocker, gather_live, _Clock())
+
+    snapshot = g.tick(active=True, refresh=True, roots=roots)
+
+    assert isinstance(snapshot, Snapshot)
+    assert snapshot.resumable_repos == ([None] if registered else [])
+    assert (
+        ("Resume…", "global-resume")
+        in global_menu_actions(resumable_repos=snapshot.resumable_repos)
+    ) is registered
+    for transport in ("ssh", "web"):
+        assert ("Resume…", "global-resume") not in global_menu_actions(
+            transport=transport, resumable_repos=snapshot.resumable_repos
+        )
+    # A failed config must not enable ordinary repository actions.
+    assert all(RepoTarget.of(group) is None for group in snapshot.groups if group.prefix == "alpha")
+    assert decode(encode(snapshot)) == snapshot
+
+
+def test_orphan_placeholder_never_becomes_a_resume_repository(mocker):
+    from jailbee.config import ORPHAN_BASE_PREFIX
+
+    container = dataclasses.replace(_ci("placeholder-x"), start_identity="2099-11-25T09:00:00Z")
+    g = _gatherer(
+        mocker, lambda *a, **k: [RepoGroup(ORPHAN_BASE_PREFIX, "/a", None, [container])], _Clock()
+    )
+    snapshot = g.tick(active=True, refresh=True, roots=[])
+    assert isinstance(snapshot, Snapshot)
+    assert snapshot.resumable_repos == []
+
+
+def test_unreadable_resume_journal_offers_local_recovery_only(mocker):
+    from jailbee.dashboard.menus import global_menu_actions
+    from jailbee.db import state_dir
+
+    path = state_dir() / "resume-set.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("broken json")
+    g = _gatherer(mocker, lambda *a, **k: [], _Clock())
+    snapshot = g.tick(active=True, refresh=True, roots=[])
+
+    assert isinstance(snapshot, Snapshot)
+    assert ("Resume…", "global-resume") in global_menu_actions(
+        resumable_repos=snapshot.resumable_repos
+    )
+    assert ("Resume…", "global-resume") not in global_menu_actions(
+        transport="ssh", resumable_repos=snapshot.resumable_repos
+    )
+
+
+def test_stale_stopping_entry_for_running_container_does_not_offer_resume(mocker):
+    import json
+
+    from jailbee.db import state_dir
+
+    path = state_dir() / "resume-set.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"version": 1, "containers": {}, "stopping": {"alpha-x": "/a"}}))
+    groups = [RepoGroup("alpha", "/a", None, [_ci("alpha-x")])]
+    g = _gatherer(mocker, lambda *a, **k: groups, _Clock())
+    snapshot = g.tick(active=True, refresh=True, roots=[])
+
+    assert isinstance(snapshot, Snapshot)
+    assert snapshot.resumable_repos == []
 
 
 def test_a_base_gather_carries_the_last_git_status_forward(mocker):

@@ -32,6 +32,7 @@ HitKind = Literal[
     "upgrade-all",
     "details-scroll",
     "queue",
+    "global-menu",
 ]
 _KINDS: frozenset[str] = frozenset(get_args(HitKind))
 

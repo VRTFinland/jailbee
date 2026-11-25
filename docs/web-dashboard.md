@@ -71,7 +71,7 @@ coloured edge and a phase label, and a Stopped container is dimmed. The e-ink
 theme has no colour, so phases differ by edge style (dashed, dotted, double,
 heavy) and the label, and a Stopped row is drawn without top, right and bottom edges instead of a fade.
 
-The top-right **Quick settings** menu filters front-page and repository container lists
+The left-edge **☰** (Quick settings) menu filters front-page and repository container lists
 by **All**, **Running** (Incus state Running), or **Active** (a non-grey
 agent marker in the terminal dashboard: busy, waiting, shell, API errors, or
 idle with a real event less than 30 minutes old). Recent-idle membership is
@@ -429,7 +429,7 @@ allowed, so the current dashboard only reads.
 
 ## Themes and display profile
 
-Open **Quick settings** from the menu icon in the top-right corner of any page.
+Open **Quick settings** from the **☰** menu at the left edge of the title bar on any page.
 Body and code font-size steppers apply immediately; the theme button cycles
 **Auto / Light / Dark / E-ink**. Auto follows the device's colour scheme, including
 changes while the page is open. Theme colours and display profile remain independent.
@@ -443,8 +443,8 @@ frequent choices, including display profile and the login session's name.
 Both surfaces edit one live settings store; display choices need no Save and are
 stored in per-device localStorage (in memory when storage is blocked). Existing
 container filter preferences are preserved. Escape, the icon, or a click outside
-the popover closes it and returns focus to the icon. Escape on the Agent context
-select is left to the native control; move focus elsewhere to dismiss the menu.
+the popover closes it and returns focus to the icon. Escape on a closed Agent
+context select also dismisses the menu; an open native select handles Escape first.
 Navigation closes the menu without returning focus to the icon. Tab stays inside the open
 popover. Short screens split the menu into whole-row pages with up/down buttons
 and PageUp/PageDown; e-ink also supports **n** (previous) and **m** (next). There is

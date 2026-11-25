@@ -5,11 +5,11 @@ description: Use when working inside a JailBee container, identifying the contai
 
 # Working inside a JailBee container
 
-The container is host-managed. Work and commit locally; ask the host operator for lifecycle, network and other host-only actions. If `JAILBEE_ROLE=child`, your first prompt identifies you as a child, or you have been adopted as a child, use **jailbee-orchestration-child**: children report to their orchestrator, must not push, open PRs or manage containers, and must not merge into other branches or perform host integration. Follow the child skill for own-branch updates from the orchestrator.
+The container is host-managed. Work and commit locally; ask the host operator for lifecycle, network and other host-only actions. If `JAILBEE_ROLE=child`, your first prompt identifies you as a child, or you have been adopted as a child, use **jailbee-orchestration-child**: children report to their orchestrator, must not push, open PRs or manage containers, and must not merge into other branches or perform host integration. Follow the child skill for own-branch updates from the orchestrator. `JAILBEE_ROLE` is set only on orchestrator launches; its absence does not mean you are not a child.
 
 ## Identify the container and repository
 
-Read `/etc/jailbee/container.json` before naming a target. `name` is the full container name, `short_name` its short name, `container_prefix` identifies the repo, and `repo_dir` is its in-container repository path. `mode` distinguishes a branch clone from a mounted host tree; in mount mode `branch` is null and the git bridge does not apply. `base_branch`, `pr` and `fork_of` record creation details.
+Read `/etc/jailbee/container.json` before naming a target. `name` is the full container name, `short_name` its short name, `container_prefix` identifies the repo, and `repo_dir` is its in-container repository path. Clone mode uses a per-branch clone; mount mode uses the mounted host repository. In mount mode `branch` is null and the git bridge does not apply. `base_branch`, `pr` and `fork_of` record creation details.
 
 The file is a creation-time snapshot, not live state: a later rename or retarget is not reflected. It may be absent on older containers or if creation could not write it. In that case, `hostname` gives the container name and `$JAILBEE_BRANCH`, when set for a clone, records the creation-time branch rather than live Git state. Run `git branch --show-current` in the repository for the current branch; it prints nothing for a detached HEAD. Confirm other details with the operator. For host commands outside the repo, the root option `jailbee --repo <container_prefix> ...` selects the repo; do not confuse it with an egress subcommand's `--repo` scope flag.
 
@@ -61,10 +61,9 @@ history instead: `jailbee service logs api --grep 'ready' -n 5 -A 40`. For
 errors, use `jailbee service logs api --filter errors -n 20 -A 30` when the repo
 defines that filter. Wait excludes `--grep`, `--filter`, and `--follow`; timeout
 defaults to 300 seconds (`0` is unlimited). Exit codes: 0 match, 1 timeout, 2
-invalid input, 3 unusable pane. See service config for named filters and the
-session-wide scrollback limit.
+invalid input, 3 unusable pane. Session history uses the maximum configured service limit for windows created afterwards, not existing panes. See service config for named filters and each service's `logs.history_limit`.
 
-The in-container CLI offers `service` (including `ls`, `start`, `stop`, `restart`, `refresh`, `plan`, `logs`), `config validate [--config <path>]`, `inbox`, `version` and `--version`. Inbox notification commands include `jailbee inbox follow` (a non-acknowledging stream) and Claude hook handlers `jailbee inbox hook session-start` / `jailbee inbox hook stop`. In interactive Claude Code sessions the managed JailBee plugin starts the follower automatically; headless sessions and other agents use `jailbee inbox wait` as their fallback. The plugin marketplace ships in `jailbee/claude_marketplace`; its read-only managed-settings drop-in is mounted at `/etc/claude-code/managed-settings.d`, independently of the host-wide agent-instructions mount. Other JailBee management commands run on the host, not here.
+The in-container CLI offers `service` (including `ls`, `start`, `stop`, `restart`, `refresh`, `plan`, `logs`), `config validate [--config <path>]`, `host status [--json]`, `agent models [--json]`, `inbox`, `version` and `--version`. Inbox notification commands include `jailbee inbox follow` (a non-acknowledging stream) and Claude hook handlers `jailbee inbox hook session-start` / `jailbee inbox hook session-end` / `jailbee inbox hook stop`. Start/end hooks maintain the live Claude session registry so autostart can resume sessions after unclean stops as well as normal restarts. In interactive Claude Code sessions the managed JailBee plugin starts the follower automatically; headless sessions and other agents use `jailbee inbox wait` as their fallback. The plugin marketplace ships in `jailbee/claude_marketplace`; its read-only managed-settings drop-in is mounted at `/etc/claude-code/managed-settings.d`, independently of the host-wide agent-instructions mount. Other JailBee management commands run on the host, not here.
 
 `jailbee --version` and `jailbee version` include the staged host code's source
 commit when known, e.g. `1.8.9 (abc1234)`; `-dirty` marks uncommitted source
@@ -72,7 +71,32 @@ changes when staged or built. This is not the container repository's HEAD. With
 no build info they print just the package version; no rebuild is needed solely
 for this metadata.
 
+### Choosing models
+
+Before choosing a model for a subagent or child runner, run
+`jailbee agent models` (`--json` for structured output). Follow `model_policy`
+and consult each model's `label`, `use_for`, `avoid_for` and `notes`. This is the
+user's effective repo guidance, read live from host config; changes need no
+`apply` or restart. An empty map gives a hint to configure `agents.models` in
+`~/.config/jailbee/global.yaml`; JailBee supplies no model recommendations.
+The broker caches unchanged config files without running git; host-status
+refreshes cannot hold up model queries. Invalid config or a missing repo config
+is refused with an explanation, not reported as an unreachable broker.
+Runner availability and permissions still come from `jailbee inbox runners`.
+
 ### Health and waiting
+
+Before long test runs, builds or spawning parallel work, run
+`jailbee host status` (`--json` for machine-readable output) to check current
+host load/CPU count, available memory, free space in this container's Incus
+storage pool and the host-wide running JailBee container count across all
+Incus projects and repositories. Every container may query it; no orchestration
+grant is needed. Readings are computed on demand, not from the last broker
+round; inventory and pool readings share a two-second cache and dedicated
+bounded workers, so repeated checks do not starve inbox or outbox operations.
+The usual broker connection retry applies; exit 4 means the broker is
+unreachable or did not answer in time (the message distinguishes them).
+Treat unavailable readings as unknown, not as free capacity.
 
 Before long tests or work that depends on services, check `jailbee service ls`
 or run `jailbee service wait api --until unhealthy` in the background to watch
@@ -100,11 +124,11 @@ jailbee net egress add api.vendor.example <container>
 jailbee net loose <container> --for 30m
 ```
 
-The destination precedes the container in `egress add`. If needed, prefix either command with `jailbee --repo <container_prefix>` instead of `jailbee`.
+The destination precedes the container in `egress add`. Use the container's `short_name` from `/etc/jailbee/container.json` as `<container>`. If needed, prefix either command with `jailbee --repo <container_prefix>` instead of `jailbee`.
 
 ## Commits and GitHub
 
-In clone mode, make local commits and ask the host operator to extract them with `jailbee git pull <container>` or publish with `jailbee pr push <container>`. In mount mode the host and container share the tree; no bridge extraction is needed. Treat `gh` as read-only policy, not a guarantee about token permissions. Stage PR review writes with **jailbee-pr-review** and issue writes with **jailbee-issue-management** for host publication. Child agents follow the stricter **jailbee-orchestration-child** rules instead of requesting publication directly.
+In clone mode, make local commits and ask the host operator to extract them with `jailbee git pull <container>` or publish with `jailbee pr push <container>`. In mount mode the host and container share the tree; no bridge extraction is needed. Do not rely on `git push` from the container; publication belongs on the host. Treat `gh` as read-only policy, not a guarantee about token permissions. Stage PR review writes with **jailbee-pr-review** and issue writes with **jailbee-issue-management** for host publication. Child agents follow the stricter **jailbee-orchestration-child** rules instead of requesting publication directly.
 
 ## Other resources
 

@@ -8,7 +8,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from jailbee.config.models_remote import RemotePolicy
 from jailbee.dashboard import actions as dact
@@ -16,6 +16,7 @@ from jailbee.dashboard.commands import (
     Transport,
     check_dashboard_command,
     dashboard_action_argv,
+    permitted,
     remote_unlocks,
 )
 from jailbee.dashboard.model import AppMenuEntry, RepoGroup, RepoTarget, Row, _find_group
@@ -89,6 +90,72 @@ class MenuGroup:
 
 
 MenuItem = tuple[str, str] | MenuGroup
+
+
+def global_action_argv(verb: str) -> list[str] | None:
+    """The CLI command behind a host-wide action; UI-only entries have none."""
+    commands = {
+        "global-stop-all": ["stop", "--all"],
+        "global-resume": ["resume"],
+        "global-accounts": ["account", "ls"],
+        "global-config-edit-global": ["config", "edit", "--global"],
+    }
+    return commands.get(verb)
+
+
+def terminal_config_edit_available(*, remote: bool, transport: Transport) -> bool:
+    """The terminal editor needs a local terminal, not a remote hand-off."""
+    return not remote and transport == "none"
+
+
+def global_menu_actions(
+    policy: RemotePolicy | None = None,
+    *,
+    transport: Transport = "none",
+    frontend: Literal["terminal", "web"] = "terminal",
+    remote: bool = False,
+    resumable_repos: Sequence[str | None] = (),
+) -> list[tuple[str, str]]:
+    """Global leaves, filtered by command policy and snapshot resume candidates."""
+    from jailbee.remote_ssh.repo_scope import scope_for_session
+
+    excluded: set[str] = set()
+    if transport != "none":
+        excluded.update(scope_for_session().excluded)
+        if policy is not None:
+            excluded.update(policy.excluded_repos)
+    resumable = any(
+        transport == "none" or (prefix is not None and prefix not in excluded)
+        for prefix in resumable_repos
+    )
+    items = [
+        ("Stop all…", "global-stop-all"),
+        ("Resume…", "global-resume"),
+        ("Accounts", "global-accounts"),
+        ("Notifications", "global-queue"),
+        ("Global config", "global-config-edit-global"),
+        ("Settings", "global-settings"),
+        ("Help", "global-help"),
+        ("Quit", "global-quit"),
+    ]
+    return [
+        item
+        for item in items
+        if not (item[1] == "global-resume" and not resumable)
+        and not (frontend == "web" and item[1] in {"global-quit", "global-settings"})
+        and not (
+            item[1] == "global-config-edit-global"
+            and (
+                frontend == "web"
+                or not terminal_config_edit_available(remote=remote, transport=transport)
+            )
+        )
+        and (
+            (argv := global_action_argv(item[1])) is None
+            or permitted(argv, policy, transport=transport)
+        )
+    ]
+
 
 _PR_MENU_VERBS = frozenset(
     {

@@ -1678,6 +1678,19 @@ def _global_editor(tmp_path, global_):
     return editor
 
 
+@pytest.mark.parametrize("name", ["models", "model_policy", "default_runner"])
+def test_new_agent_reserved_name_shows_error_and_keeps_prompt(tmp_path, name):
+    editor = _global_editor(tmp_path, {"agents": {"claude": {}}})
+    _descend(editor, "agents")
+    editor.new_entry_here()
+    assert editor.prompt is not None
+    editor.prompt.area.text = name
+    editor.commit_prompt()
+    assert editor.prompt is not None
+    assert editor.state.staged == {}
+    assert "reserved" in editor.message
+
+
 _PROFILE = {"litellm": {"profiles": {"mine": {"opus": "sol-high"}}}}
 
 

@@ -1543,7 +1543,10 @@ def config_show(
     # would serialise every entry — including `agents.claude`, which is a
     # ClaudeAgentConfig — through the base AgentConfig shape and silently
     # drop the Claude-only fields (plugins_enabled, seed_onboarding, …).
-    data["agents"] = {name: agent.model_dump(mode="json") for name, agent in cfg.agents.items()}
+    data["agents"] = {
+        **{name: agent.model_dump(mode="json") for name, agent in cfg.agents.items()},
+        **cfg.agent_models().model_dump(mode="json"),
+    }
     typer.echo(yaml.safe_dump(data, sort_keys=False))
 
 
@@ -3956,6 +3959,7 @@ def _inline_autostart_handler(
                 services_present=services_present,
                 agent_steps=plan.agent_steps if plan else None,
                 agents_last=plan.agents_last if plan else False,
+                boot_identity=plan.boot_identity if plan else None,
             ),
             on_phase=on_phase,
             on_progress=on_progress,
@@ -4049,6 +4053,7 @@ def _spawn_autostart_worker(
     rerun: bool = False,
     agent_steps: "list[AutostartStep] | None" = None,
     agents_last: bool = False,
+    boot_identity: str | None = None,
 ) -> None:
     """Hand the detached stages to a `_autostart-worker` and record its row.
 
@@ -4132,6 +4137,7 @@ def _spawn_autostart_worker(
                 rerun=rerun,
                 agent_steps=agent_steps,
                 agents_last=agents_last,
+                boot_identity=boot_identity,
             )
         )
     )
@@ -4973,9 +4979,12 @@ def _post_start_actions(
         inject_github_token,
         run_autostart,
     )
+    from jailbee.boot_state import current_start, record
     from jailbee.hosts import sync_hosts
     from jailbee.lifecycle import container_repo_dir, current_network_mode
 
+    boot_identity = current_start(incus, name)
+    marker_written = record(incus, name, "started")
     mirror_endpoint = _mirror_endpoint_or_none(cfg, incus)
     mode = current_network_mode(cfg, incus, name)
     sync_hosts(cfg, incus, name, mode, mirror_endpoint=mirror_endpoint)
@@ -5034,6 +5043,8 @@ def _post_start_actions(
         from jailbee.agent_resume import boot_entries
 
         boot_entries(cfg, incus, name)
+        if marker_written:
+            record(incus, name, "skipped", expected_start=boot_identity)
         return
 
     profile = resolve_profile(cfg, incus, name)
@@ -5072,9 +5083,15 @@ def _post_start_actions(
     _post_create_gui_launches(cfg, incus, name)
 
     if plan.detached and on_detach is not None:
+        from dataclasses import replace
+
+        plan = replace(plan, boot_identity=boot_identity)
         on_detach(
             cfg.autostart, AutostartTrigger.ON_START.value, repo_dir, bool(cfg.services), plan
         )
+    # A detached continuation owns completion, even if its handler ran inline.
+    if not plan.detached and marker_written:
+        record(incus, name, "handled", expected_start=boot_identity)
 
 
 def _clear_superseded_boot_job(cfg: "Config", full_name: str) -> None:
@@ -5199,6 +5216,7 @@ def _autostart_detach_handler(
             services_present=services_present,
             agent_steps=plan.agent_steps if plan else None,
             agents_last=plan.agents_last if plan else False,
+            boot_identity=plan.boot_identity if plan else None,
         )
 
     return on_detach
@@ -5407,6 +5425,23 @@ def start(
     _clear_superseded_boot_job(cfg, name)
 
 
+@app.command("resume")
+def resume_cmd(config: ConfigOption = None) -> None:
+    """Resume all repositories after a host reboot or `stop --all`."""
+    from jailbee.host_resume import run_resume
+    from jailbee.incus import Incus
+
+    if not run_resume(
+        _load_orphan_base_or_exit(config),
+        Incus(),
+        post_start=lambda cfg, incus, name: _post_start_actions(
+            cfg, incus, name, no_autostart=False, allow_prompt=True, override="wait"
+        ),
+        clear_boot=_clear_superseded_boot_job,
+    ):
+        raise typer.Exit(1)
+
+
 @app.command("mem")
 def mem_cmd(
     name: ContainerArg = None,
@@ -5527,6 +5562,12 @@ def rename_cmd(
 @app.command()
 def stop(
     name: ContainerArg = None,
+    all: Annotated[
+        bool, typer.Option("--all", help="Stop running JailBee containers across all repositories.")
+    ] = False,
+    yes: Annotated[
+        bool, typer.Option("--yes", "-y", help="Confirm --all without prompting.")
+    ] = False,
     force: Annotated[
         bool,
         typer.Option(
@@ -5542,10 +5583,20 @@ def stop(
     ] = False,
     config: ConfigOption = None,
 ) -> None:
-    """Stop a running container."""
+    """Stop a container, or save and stop all repositories before a reboot."""
     from jailbee.lifecycle import short_name
-    from jailbee.stopping import stop_container
 
+    if all:
+        from jailbee.host_resume import run_stop_all
+        from jailbee.incus import Incus
+
+        if name is not None or force:
+            error("--all cannot be combined with a container name or --force.")
+            raise typer.Exit(2)
+        cfg = _load_orphan_base_or_exit(config)
+        if not run_stop_all(cfg, Incus(), yes=yes, stop=_stop_cleanly):
+            raise typer.Exit(1)
+        return
     cfg = _load_or_exit(config)
     incus, name = _resolve_existing(cfg, name)
     if not force:
@@ -5556,13 +5607,20 @@ def stop(
     # No force fallback here: this container holds the user's work, so a
     # shutdown that will not finish is reported (with what is blocking it)
     # rather than turned into a power cut behind their back.
-    with _stop_job_row(cfg, name):
-        if not force:
-            from jailbee.agent_resume import capture
+    if force:
+        from jailbee.stopping import stop_container
 
-            capture(cfg, incus, name)
-        stop_container(incus, name, force=force, label=short_name(cfg, name))
+        with _stop_job_row(cfg, name):
+            stop_container(incus, name, force=True, label=short_name(cfg, name))
+    else:
+        _stop_cleanly(cfg, incus, name)
     success(f"Stopped: {short_name(cfg, name)}")
+
+
+def _stop_cleanly(cfg: "Config", incus: "IncusType", name: str) -> None:
+    from jailbee.stopping import clean_stop
+
+    clean_stop(cfg, incus, name, job=_stop_job_row)
 
 
 @contextlib.contextmanager

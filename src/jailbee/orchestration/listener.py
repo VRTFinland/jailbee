@@ -29,6 +29,9 @@ SQLite inbox queries additionally share ``MAX_STORE_QUERIES_PER_CONTAINER``
 queued or running slots per container. Excess queries wait unconsumed in the
 connection's input buffer; snapshot and executor requests do not use these
 slots. The bounded global worker queue still answers ``BUSY`` when full.
+Live queries use a separate bounded queue and two workers, with at most one
+queued or running query per container, so slow Incus reads cannot occupy the
+SQLite workers. Their slots likewise survive disconnects until the work ends.
 
 While a connection is held back its socket is still read, so a
 disconnect is noticed, until a line's worth is buffered (``wire.MAX_LINE_BYTES``);
@@ -71,6 +74,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from jailbee.orchestration import wire
+from jailbee.orchestration.live_query import AGENT_MODELS, LIVE_OPS
 from jailbee.orchestration.query import QUERY_OPS, SNAPSHOT_OPS
 
 if TYPE_CHECKING:
@@ -90,6 +94,8 @@ _SUN_PATH_MAX = 107  # Linux sockaddr_un.sun_path minus the terminating NUL
 OUTBUF_CAP = 4 * 1024 * 1024  # unsent reply bytes above which intake stops
 _QUERY_WORKERS = 4
 _QUERY_QUEUE_CAP = 32
+_LIVE_WORKERS = 2
+MAX_LIVE_QUERIES_PER_CONTAINER = 1
 
 
 @dataclass(frozen=True)
@@ -128,6 +134,7 @@ class _Conn:
     close_after_flush: bool = False
     in_flight: bool = False
     store_held: bool = False
+    live_held: str | None = None
     # The line at the head of ``inbuf`` is an outbox put holding its
     # container's outbox slot (it may grow to the outbox cap).
     slot_line: bool = False
@@ -182,6 +189,11 @@ class Listener:
         self._requests = requests
         self._queries = queries
         self._query_queue: queue.Queue[RequestEvent] = queue.Queue(maxsize=_QUERY_QUEUE_CAP)
+        self._live_queue: queue.Queue[RequestEvent] = queue.Queue(maxsize=_QUERY_QUEUE_CAP)
+        self._models_queue: queue.Queue[RequestEvent] = queue.Queue(maxsize=_QUERY_QUEUE_CAP)
+        self._live_threads: list[threading.Thread] = []
+        self._live_queries: dict[tuple[str, str], int] = {}
+        self._live_pending: dict[int, str] = {}
         self._query_stop = threading.Event()
         self._query_lock = threading.Lock()  # orders worker handoffs against shutdown
         self._query_threads: list[threading.Thread] = []
@@ -220,12 +232,20 @@ class Listener:
             return
         self._running = True
         if self._queries is not None:
-            for i in range(_QUERY_WORKERS):
-                worker = threading.Thread(
-                    target=self._query_worker, name=f"broker-query-{i}", daemon=True
-                )
-                self._query_threads.append(worker)
-                worker.start()
+            for work_queue, threads, count, name in (
+                (self._query_queue, self._query_threads, _QUERY_WORKERS, "query"),
+                (self._live_queue, self._live_threads, _LIVE_WORKERS, "live"),
+                (self._models_queue, self._live_threads, 1, "models"),
+            ):
+                for i in range(count):
+                    worker = threading.Thread(
+                        target=self._query_worker,
+                        args=(work_queue,),
+                        name=f"broker-{name}-{i}",
+                        daemon=True,
+                    )
+                    threads.append(worker)
+                    worker.start()
         self._thread = threading.Thread(target=self._run, name="broker-listener", daemon=True)
         self._thread.start()
 
@@ -242,13 +262,16 @@ class Listener:
             self._thread = None
         self._shutdown_all()
         deadline = time.monotonic() + 0.2
-        for worker in self._query_threads:
+        for worker in (*self._query_threads, *self._live_threads):
             worker.join(timeout=max(0.0, deadline - time.monotonic()))
-        while True:
-            try:
-                self._query_queue.get_nowait()
-            except queue.Empty:
-                break
+        for work_queue in (self._query_queue, self._live_queue, self._models_queue):
+            while True:
+                try:
+                    work_queue.get_nowait()
+                except queue.Empty:
+                    break
+        self._live_queries.clear()
+        self._live_pending.clear()
         self._pending.clear()
         self._followers.clear()
         self._inflight.clear()
@@ -356,12 +379,12 @@ class Listener:
 
         self._post(send)
 
-    def _query_worker(self) -> None:
+    def _query_worker(self, work_queue: queue.Queue[RequestEvent]) -> None:
         queries = self._queries
         assert queries is not None
         while not self._query_stop.is_set():
             try:
-                event = self._query_queue.get(timeout=0.1)
+                event = work_queue.get(timeout=0.1)
             except queue.Empty:
                 continue
             if self._query_stop.is_set():
@@ -603,6 +626,11 @@ class Listener:
                 conn.store_held
                 and self._store_queries.get(conn.uuid, 0) >= MAX_STORE_QUERIES_PER_CONTAINER
             )
+            or (
+                conn.live_held is not None
+                and self._live_queries.get((conn.uuid, conn.live_held), 0)
+                >= MAX_LIVE_QUERIES_PER_CONTAINER
+            )
         )
 
     def _parse(self, conn: _Conn) -> None:
@@ -654,10 +682,20 @@ class Listener:
                     conn.conn_id, wire.encode_response(wire.fail(wire.BUSY, "too many followers"))
                 )
                 continue
+            live_query = self._queries is not None and request.op in LIVE_OPS
+            if (
+                live_query
+                and self._live_queries.get((conn.uuid, request.op), 0)
+                >= MAX_LIVE_QUERIES_PER_CONTAINER
+            ):
+                conn.live_held = request.op
+                self._update_interest(conn)
+                return
+            conn.live_held = None
             store_query = (
                 self._queries is not None
                 and request.op in QUERY_OPS
-                and request.op not in SNAPSHOT_OPS
+                and request.op not in SNAPSHOT_OPS | LIVE_OPS
             )
             if (
                 store_query
@@ -671,6 +709,10 @@ class Listener:
             del conn.inbuf[: nl + 1]
             # A dispatched put keeps the slot until it is answered or released.
             conn.slot_line = False
+            if live_query:
+                self._live_pending[conn.conn_id] = request.op
+                key = (conn.uuid, request.op)
+                self._live_queries[key] = self._live_queries.get(key, 0) + 1
             if store_query:
                 self._store_pending.add(conn.conn_id)
                 self._store_queries[conn.uuid] = self._store_queries.get(conn.uuid, 0) + 1
@@ -687,7 +729,11 @@ class Listener:
                     self.respond(conn.conn_id, self._queries.answer(conn.uuid, request))
                 else:
                     try:
-                        self._query_queue.put_nowait(event)
+                        if request.op == AGENT_MODELS:
+                            work_queue = self._models_queue
+                        else:
+                            work_queue = self._live_queue if live_query else self._query_queue
+                        work_queue.put_nowait(event)
                     except queue.Full:
                         self.respond(conn.conn_id, wire.fail(wire.BUSY, "query workers are busy"))
             else:
@@ -750,6 +796,14 @@ class Listener:
         self._query_pending.discard(conn_id)
         if uuid is None:
             return
+        if conn_id in self._live_pending:
+            op = self._live_pending.pop(conn_id)
+            key = (uuid, op)
+            live_left = self._live_queries[key] - 1
+            if live_left > 0:
+                self._live_queries[key] = live_left
+            else:
+                self._live_queries.pop(key)
         if conn_id in self._store_pending:
             self._store_pending.remove(conn_id)
             store_left = self._store_queries[uuid] - 1

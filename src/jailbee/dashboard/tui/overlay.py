@@ -17,7 +17,7 @@ from jailbee.dashboard.overlays import (
 from jailbee.dashboard.settings import (
     SettingsState,
 )
-from jailbee.dashboard.tui.menu_state import MenuState, RepoMenuState
+from jailbee.dashboard.tui.menu_state import GlobalMenuState, MenuState, RepoMenuState
 
 
 # What occupies the slot under the table. Overlays are mutually exclusive by
@@ -30,6 +30,7 @@ class CommandState:
 Overlay = (
     MenuState
     | RepoMenuState
+    | GlobalMenuState
     | EgressState
     | SettingsState
     | CommandState
@@ -84,6 +85,8 @@ def overlay_key(overlay: Overlay | None) -> tuple[object, ...] | None:
     """
     if overlay is None:
         return None
+    if isinstance(overlay, GlobalMenuState):
+        return ("global-menu",)
     if overlay == "help":
         return ("help",)
     if isinstance(overlay, MenuState):

@@ -3735,6 +3735,21 @@ def test_cli_config_show_includes_resolved_agents(tmp_path, monkeypatch, mocker)
     assert "api.openai.com:443" in result.stdout
 
 
+def test_cli_config_show_includes_effective_model_guidance(tmp_path, monkeypatch, mocker):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".jailbee").mkdir()
+    (tmp_path / ".jailbee" / "config.yaml").write_text(
+        "container_prefix: myrepo\nagents:\n  models:\n    haiku: {label: coding}\n"
+        "  model_policy: Prefer small models.\n"
+    )
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
+    result = CliRunner().invoke(app, ["config", "show"])
+    assert result.exit_code == 0, result.output
+    assert "  models:" in result.stdout.splitlines()
+    assert "      label: coding" in result.stdout.splitlines()
+    assert "  model_policy: Prefer small models." in result.stdout.splitlines()
+
+
 def test_cli_config_show_agents_claude_keeps_subclass_fields_no_top_level_claude(
     tmp_path, monkeypatch, mocker
 ):

@@ -115,6 +115,9 @@ class ContainerInfo:
     # Effective ordinary stages, derived by the dashboard gatherer from the host config.
     autostart_rerunnable: bool = False
     created_at: datetime | None = None
+    # Incus last_used_at changes on every start, including daemon autostart.
+    # Preserve RFC3339Nano verbatim: sub-microsecond starts must stay distinct.
+    start_identity: str | None = None
     memory_usage: int | None = None
     memory_override: bool = False
     # Raw inputs for the CPU/DOING columns, from the same `incus list`
@@ -642,6 +645,7 @@ def list_containers(
     """
     from jailbee import egress_scope
     from jailbee.accounts import groups
+    from jailbee.boot_state import start_identity
     from jailbee.mounts import attached_kinds, mount_until
     from jailbee.network_generation import generation_of
     from jailbee.work_mode import work_mode_state
@@ -815,6 +819,7 @@ def list_containers(
                 credential_group=credential_group_raw or None,
                 autostart_profile=config.get("user.jailbee.autostart_profile") or None,
                 created_at=_parse_incus_timestamp(raw.get("created_at")),
+                start_identity=start_identity(raw.get("last_used_at")),
                 uuid=config.get("volatile.uuid") or None,
                 memory_usage=memory_usage,
                 init_pid=init_pid,
@@ -2484,6 +2489,10 @@ def _new_container(
             groups.set_container_group(cfg, incus, name, wanted)
 
     incus.start(name)
+    from jailbee.boot_state import current_start, record
+
+    boot_identity = current_start(incus, name)
+    marker_written = record(incus, name, "started")
     # Clear a failed-refresh guard only after the repaired disk is mounted.
     sync_pr_bindings(incus, name, cfg=cfg)
 
@@ -2753,6 +2762,7 @@ def _new_container(
         from jailbee.autostart_profiles import SERVICES_KEY, encode_names
 
         incus.config_set(name, SERVICES_KEY, encode_names(opts.autostart_services))
+    detached_from: str | None = None
     if opts.autostart:
         from jailbee.autostart_profiles import selection
         from jailbee.services.autostart import ENVELOPE_KEY, approval_envelope
@@ -2786,9 +2796,7 @@ def _new_container(
         # run: everything after it — the entire `on_start` trigger included —
         # belongs to whoever takes the hand-off, so this process must not run
         # it as well. `run_detached` resumes from the trigger it is told.
-        detached_from: str | None = (
-            AutostartTrigger.ON_CREATE.value if create_plan.detached else None
-        )
+        detached_from = AutostartTrigger.ON_CREATE.value if create_plan.detached else None
         if detached_from is None:
             # `incus.start` above transitioned the container into the running
             # state, so on_start steps apply on this first launch too.
@@ -2805,14 +2813,24 @@ def _new_container(
             if start_plan.detached:
                 detached_from = AutostartTrigger.ON_START.value
         if detached_from is not None and on_detach is not None:
+            from dataclasses import replace
+
+            handoff = (
+                start_plan if detached_from == AutostartTrigger.ON_START.value else create_plan
+            )
+            handoff = replace(handoff, boot_identity=boot_identity)
             on_detach(
                 effective_cfg.autostart,
                 detached_from,
                 repo_dir,
                 bool(effective_cfg.services),
-                start_plan if detached_from == AutostartTrigger.ON_START.value else None,
+                handoff,
             )
 
+    if detached_from is None and marker_written:
+        record(
+            incus, name, "handled" if opts.autostart else "skipped", expected_start=boot_identity
+        )
     return name
 
 
@@ -3193,6 +3211,7 @@ def boot_container(
     *,
     restart: bool,
     initial_prompt: str | None = None,
+    ensure_running: bool = False,
 ) -> None:
     """Bring a container up, re-attaching GUI sockets in the right order.
 
@@ -3211,6 +3230,8 @@ def boot_container(
     then run autostart".
     ``restart=False`` never reboots — a running container reaching
     `incus start` fails, which is what `jailbee start` should report.
+    ``ensure_running=True`` is the host-reboot recovery path: an Incus-restored
+    running container gets the same wiring without another start or reboot.
     After boot and attachment, its AHEAD base anchor is caught up forward-only.
     """
     from jailbee.runtime_mounts import (
@@ -3288,7 +3309,8 @@ def boot_container(
             # re-create, so a failed restart does not also strand the GUI.
             attach_runtime_devices(cfg, incus, name)
             raise
-    incus.start(name)
+    if not (ensure_running and state == "Running" and not restart):
+        incus.start(name)
     # Clear a failed-refresh guard only after the repaired disk is mounted.
     sync_pr_bindings(incus, name, cfg=cfg)
     attach_runtime_devices(cfg, incus, name)
@@ -3456,6 +3478,13 @@ def _destroy_container_locked(
 
     _phase("deleting")
     incus.delete(name, force=force)
+
+    from jailbee import host_resume
+
+    try:
+        host_resume.remove(name, destroyed=True)
+    except (OSError, ValueError) as exc:
+        warn(f"Could not remove resume entry for '{name}' (continuing): {exc}")
 
     from jailbee import autostart_outcomes
 

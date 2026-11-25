@@ -259,8 +259,16 @@ def resolve_agents_raw(raw: dict[str, object]) -> dict[str, object]:
     # must not see it validated as one, but its own value is still checked.
     if "default_runner" in raw_agents:
         peel_agents_runner({"agents": raw_agents}, "the merged config")
+    from jailbee.config.models_agents import AGENT_SETTINGS_KEYS, AgentModelGuidance
+
+    try:
+        AgentModelGuidance.model_validate(
+            {k: v for k, v in raw_agents.items() if k in {"models", "model_policy"}}
+        )
+    except ValidationError as e:
+        raise ConfigError(f"Invalid model guidance in `agents`:\n{e}") from e
     agents: dict[str, object] = {
-        k: _copy(v) for k, v in raw_agents.items() if k != "default_runner"
+        k: _copy(v) for k, v in raw_agents.items() if k not in AGENT_SETTINGS_KEYS
     }
 
     legacy = result.pop("claude", None)
@@ -586,10 +594,18 @@ def _build_config_from_dict(
     reaches here the layers are merged, so the file to name is unknowable —
     see `_warn_legacy_chrome_layers`, which runs one level up.
     """
+    from jailbee.config.models_agents import AgentModelGuidance
+
     label = origin or str(config_path)
+    raw_agents = raw.get("agents")
     try:
+        guidance = AgentModelGuidance.model_validate(
+            {k: v for k, v in raw_agents.items() if k in {"models", "model_policy"}}
+            if isinstance(raw_agents, dict)
+            else {}
+        )
         raw = resolve_agents_raw(raw)
-    except ConfigError as e:
+    except (ConfigError, ValidationError) as e:
         raise ConfigError(f"Config validation failed in {label}:\n{e}") from e
     raw = resolve_browsers_raw(raw)
     _check_retired_keys(raw)
@@ -598,6 +614,7 @@ def _build_config_from_dict(
     except ValidationError as e:
         raise ConfigError(f"Config validation failed in {label}:\n{e}") from e
 
+    cfg._agent_models = guidance
     repo_root = _derive_repo_root(config_path)
     object.__setattr__(cfg, "repo_root", repo_root)
     # Resolve the upstream remote before the default branch: the latter is
@@ -750,7 +767,9 @@ def load_config_from_text(text: str, path: Path) -> Config:
     return _load_config_from_repo_raw(_parse_yaml_text(text, str(path)), path, origin=str(path))
 
 
-def _load_config_from_repo_raw(repo_raw: dict[str, object], path: Path, *, origin: str) -> Config:
+def _load_config_from_repo_raw(
+    repo_raw: dict[str, object], path: Path, *, origin: str, skip_git: bool = False
+) -> Config:
     """Build a validated `Config` from an already-parsed repo layer.
 
     The shared body of `load_config_from_text` (repo layer from YAML text) and
@@ -769,7 +788,7 @@ def _load_config_from_repo_raw(repo_raw: dict[str, object], path: Path, *, origi
     from jailbee.global_config import default_global_config_path
 
     global_raw = _read_yaml_or_empty(default_global_config_path())
-    return load_config_from_layers(global_raw, repo_raw, path, origin=origin)
+    return load_config_from_layers(global_raw, repo_raw, path, origin=origin, skip_git=skip_git)
 
 
 def load_config_from_layers(
@@ -1225,6 +1244,17 @@ def load_orphan_base_config(repo_root: Path) -> Config:
         )
         cfg._synthetic = True
         return _sanitize_columns(cfg)
+
+
+def load_repo_config_without_git(repo_root: Path) -> Config:
+    """Load current layers for read-only queries that need no branch or remote."""
+    path = repo_config_path_warned(repo_root)
+    if path is None:
+        raw = synthesized_repo_layer(repo_root)
+        path = repo_root / REPO_CONFIG_DIRS[0] / "config.yaml"
+    else:
+        raw = _parse_yaml_text(path.read_text(), str(path))
+    return _load_config_from_repo_raw(raw, path, origin=str(path), skip_git=True)
 
 
 def load_repo_config_unsanitized(repo_root: Path) -> Config:

@@ -43,6 +43,113 @@ async def _until(pilot: Any, condition: Callable[[], bool], what: str) -> None:
         await pilot.pause(0.02)
 
 
+async def _confirm_modal(pilot: Any, app: Any) -> None:
+    # push_screen makes the screen current before mount finishes. Do not act
+    # on it (or tear it down) until mount and its deferred focus have settled.
+    await _until(
+        pilot,
+        lambda: isinstance(app.screen, pm.ConfirmModal) and app.screen.is_mounted,
+        "the mounted modal",
+    )
+    await pilot.pause()
+
+
+def test_quit_driver_waits_for_mounted_question_before_exiting(mocker, tmp_path):
+    """Pin the real runner's current-but-still-mounting question before quit."""
+    app = make_app(mocker, [_group(tmp_path)])
+    app.threaded_actions = True
+    app.action_runner = drunner.run_action
+    spawn = Spawns([_prompt(default=False, destructive=True)])
+    app.action_spawn = spawn
+
+    async def main():
+        mounting = asyncio.Event()
+        release = asyncio.Event()
+        exiting = asyncio.Event()
+        mount = pm.ConfirmModal.on_mount
+
+        async def held_mount(modal):
+            mounting.set()
+            await release.wait()
+            mount(modal)
+
+        mocker.patch.object(pm.ConfirmModal, "on_mount", held_mount)
+        async with app.run_test() as pilot:
+            app.run_actions([drunner.ActionRun(["merge", "alpha-x"], tmp_path)], lambda _: None)
+            await mounting.wait()
+
+            async def quit_when_ready():
+                await _confirm_modal(pilot, app)
+                exiting.set()
+                app.exit()
+
+            quitting = asyncio.create_task(quit_when_ready())
+            try:
+                await asyncio.sleep(0)
+                assert not exiting.is_set(), "quit must not tear down a mounting question"
+                assert not quitting.done()
+            finally:
+                release.set()
+                await quitting
+
+    asyncio.run(asyncio.wait_for(main(), _RUN_SECONDS))
+    assert isinstance(spawn.child.answers[0], Cancel)
+    spawn.child._thread.join(_JOIN_SECONDS)
+    assert not spawn.child._thread.is_alive()
+
+
+@pytest.mark.parametrize("kind", ["confirm", "choose_one", "choose_many", "text", "secret"])
+def test_exit_while_prompt_is_mounting_does_not_report_an_exception(mocker, tmp_path, kind):
+    app = make_app(mocker, [_group(tmp_path)])
+    app.threaded_actions = True
+    app.action_runner = drunner.run_action
+    prompt = _prompt(
+        kind=kind,
+        default=False if kind == "confirm" else None,
+        destructive=kind == "confirm",
+        options=(WireOption("0", "first", "first", ""),) if "choose" in kind else (),
+    )
+    spawn = Spawns([prompt])
+    app.action_spawn = spawn
+    errors = mocker.spy(app, "_handle_exception")
+
+    async def main():
+        mounting = asyncio.Event()
+        release = asyncio.Event()
+        modal_type = type(pm.modal_for(prompt))
+        mount = modal_type.on_mount
+        held = None
+        mounted = asyncio.Event()
+
+        async def held_mount(modal):
+            nonlocal held
+            held = modal
+            mounting.set()
+            await release.wait()
+            mount(modal)
+            mounted.set()
+
+        mocker.patch.object(modal_type, "on_mount", held_mount)
+        async with app.run_test():
+            app.run_actions([drunner.ActionRun(["merge", "alpha-x"], tmp_path)], lambda _: None)
+            await mounting.wait()
+            try:
+                app.exit()
+                # Force pruning before releasing mount instead of relying on
+                # Textual's shutdown scheduling to hit the race by chance.
+                await held.remove_children()
+            finally:
+                release.set()
+
+        assert mounted.is_set(), "the gated mount must finish, not just be cancelled"
+
+    asyncio.run(asyncio.wait_for(main(), _RUN_SECONDS))
+    errors.assert_not_called()
+    assert isinstance(spawn.child.answers[0], Cancel)
+    spawn.child._thread.join(_JOIN_SECONDS)
+    assert not spawn.child._thread.is_alive()
+
+
 def _drive(
     mocker: Any,
     tmp_path: Path,
@@ -159,6 +266,42 @@ def test_outbox_publish_uses_runner_modal_and_keeps_queue_result(mocker, tmp_pat
     assert "--source-manifest" in argv if kind == "source" else "apply" in argv
 
 
+@pytest.mark.parametrize(("index", "argv"), [(0, ["stop", "--all"]), (1, ["resume"])])
+def test_global_lifecycle_runs_without_a_repo_and_uses_prompt_channel(mocker, index, argv):
+    from tests.dashboard_pilot import FakeStateClient, Pick, _apply
+
+    client = FakeStateClient([])
+    client.resumable_repos = ["alpha"]
+    app = make_app(mocker, [], client=client)
+    app.threaded_actions = True
+    app.action_runner = drunner.run_action
+    spawn = Spawns([_prompt(question="Proceed on the host?", default=False)])
+    app.action_spawn = spawn
+    hand_off = mocker.patch.object(app, "hand_off", side_effect=AssertionError("terminal hand-off"))
+
+    async def main():
+        async with app.run_test() as pilot:
+            await pilot.press("g")
+            await pilot.pause()
+            await _apply(pilot, app, Pick(index))
+            await _until(
+                pilot, lambda: isinstance(app.screen, pm.ConfirmModal), "host confirmation"
+            )
+            assert app.screen.prompt.question == "Proceed on the host?"
+            await pilot.press("y")
+            await _until(pilot, lambda: _finished(app), "host lifecycle result")
+            (entry,) = app.session.queue
+            assert entry.target == "Host"
+            assert entry.command == "jailbee " + " ".join(argv)
+            assert entry.state == "done" and "alku" in entry.output
+
+    asyncio.run(asyncio.wait_for(main(), _RUN_SECONDS))
+    hand_off.assert_not_called()
+    assert spawn.child.answers[0].value is True
+    assert spawn.calls[0]["argv"][-len(argv) :] == argv
+    assert spawn.calls[0]["cwd"] == Path.home()
+
+
 def test_single_choice_answer_reaches_the_child(mocker, tmp_path):
     options = (WireOption("0", "a", "a", ""), WireOption("1", "b", "b", ""))
     spawn = Spawns([_prompt(kind="choose_one", question="which", options=options)])
@@ -191,13 +334,7 @@ def test_destructive_question_is_styled_and_defaults_to_no(mocker, tmp_path):
     seen: dict[str, Any] = {}
 
     async def script(app, pilot):
-        # The modal sets its preset focus on mount; under load the screen can be
-        # current a frame before that, so wait for the focus too.
-        await _until(
-            pilot,
-            lambda: isinstance(app.screen, pm.ConfirmModal) and app.focused is not None,
-            "the modal with its preset focus",
-        )
+        await _confirm_modal(pilot, app)
         seen["styled"] = app.screen.has_class("destructive")
         seen["focus"] = app.focused
         await pilot.press("enter")  # Enter on the preset focus
@@ -231,7 +368,7 @@ def test_quitting_with_a_question_pending_cancels_it_and_the_app_exits(mocker, t
     spawn = Spawns([_prompt()])
 
     async def script(app, pilot):
-        await _until(pilot, lambda: isinstance(app.screen, pm.ConfirmModal), "the modal")
+        await _confirm_modal(pilot, app)
         app._after("quit")  # what the quit key does
 
     app = _drive(mocker, tmp_path, spawn, script)  # wait_for: a hang fails the test

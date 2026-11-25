@@ -15,6 +15,26 @@ from tests_e2e.test_session_reading import open_transcript, record, wait_for_scr
 
 
 @pytest.mark.parametrize("width", [1280, 390], ids=["desktop", "phone"])
+def test_hamburger_is_at_left_edge_and_does_not_overlap_title(logged_in: Page, width: int) -> None:
+    page = logged_in
+    page.set_viewport_size({"width": width, "height": 600})
+    icon = page.get_by_role("button", name="Quick settings", exact=True)
+    heading = page.get_by_role("heading", name="JailBee", exact=True)
+    expect(icon).to_be_visible()
+    icon_box = icon.bounding_box()
+    heading_box = heading.bounding_box()
+    assert icon_box is not None and heading_box is not None
+    assert icon_box["x"] < 24
+    assert icon_box["x"] + icon_box["width"] <= heading_box["x"]
+    open_quick_settings(page)
+    panel = page.get_by_role("dialog", name="Quick settings")
+    panel_box = panel.bounding_box()
+    assert panel_box is not None
+    assert panel_box["x"] == icon_box["x"]
+    assert panel_box["x"] + panel_box["width"] <= width
+
+
+@pytest.mark.parametrize("width", [1280, 390], ids=["desktop", "phone"])
 @pytest.mark.parametrize("profile", ["normal", "eink"])
 def test_menu_context_paging_and_live_preferences(
     page: Page, make_server: Callable[..., E2EServer], tmp_path: Path, width: int, profile: str
@@ -135,7 +155,7 @@ def test_small_viewport_pages_show_every_context_row_in_order(
     expected_rows += (
         ["All", "Running", "Active"]
         if page_context == "containers"
-        else ["Follow new messages", "Show thinking", "Agent context Hidden Collapsed Shown"]
+        else ["Follow new messages", "Show thinking", "Agent context"]
     )
     expected_rows.append("Settings")
     seen: list[str] = []
@@ -146,7 +166,8 @@ def test_small_viewport_pages_show_every_context_row_in_order(
         seen.extend(
             panel.locator(".menu-row:visible").evaluate_all(
                 "rows => rows.map(row => (row.classList.contains('font-row') "
-                "? row.querySelector('span').innerText : row.innerText)"
+                "? row.querySelector('span').innerText : row.classList.contains('context-row') "
+                "? row.childNodes[0].textContent : row.innerText)"
                 ".replace(/\\s+/g, ' ').trim())"
             )
         )
@@ -201,7 +222,8 @@ def test_resizing_menu_clamps_pages_and_keeps_all_rows_reachable(
         seen.extend(
             panel.locator(".menu-row:visible").evaluate_all(
                 "rows => rows.map(row => (row.classList.contains('font-row') "
-                "? row.querySelector('span').innerText : row.innerText)"
+                "? row.querySelector('span').innerText : row.classList.contains('context-row') "
+                "? row.childNodes[0].textContent : row.innerText)"
                 ".replace(/\\s+/g, ' ').trim())"
             )
         )
@@ -217,11 +239,20 @@ def test_quick_settings_icon_does_not_overlap_public_page_content(
     page: Page, make_server: Callable[..., E2EServer], public_page: str
 ) -> None:
     server = make_server(setup=public_page == "setup")
-    page.set_viewport_size({"width": 320, "height": 600})
+    page.set_viewport_size({"width": 320, "height": 320})
+    page.add_init_script(
+        "localStorage.setItem('jailbee.bodyFontSize', '24'); "
+        "localStorage.setItem('jailbee.displayProfile', 'eink')"
+    )
     page.goto(f"{server.url}/#/{public_page}")
+    # Simulate a larger touch target and verify that content tracks its actual size.
+    page.evaluate("""() => {
+        document.documentElement.style.setProperty('--quick-trigger-size', '6rem');
+    }""")
     heading = "JailBee" if public_page == "login" else "Register a security key"
     expect(page.get_by_role("heading", name=heading)).to_be_visible()
     expect(page.locator("main input").first).to_be_visible()
+    page.evaluate("window.scrollTo(0, 0)")
 
     overlaps = page.evaluate("""() => {
         const icon = document.querySelector('.quick-trigger').getBoundingClientRect();
@@ -233,6 +264,43 @@ def test_quick_settings_icon_does_not_overlap_public_page_content(
         });
     }""")
     assert not overlaps
+
+
+def test_escape_after_font_stepper_disables_closes_menu(logged_in: Page) -> None:
+    page = logged_in
+    open_quick_settings(page)
+    panel = page.get_by_role("dialog", name="Quick settings")
+    increase = panel.get_by_role("button", name="Increase body font size")
+    while increase.is_enabled():
+        increase.click()
+    # Browsers may leave focus on a disabled element or move it to the body.
+    page.locator("body").focus()
+    page.evaluate("document.activeElement.blur()")
+    page.keyboard.press("Escape")
+    expect(panel).to_have_count(0)
+    expect(page.get_by_role("button", name="Quick settings", exact=True)).to_be_focused()
+
+
+def test_escape_on_trigger_closes_open_menu(logged_in: Page) -> None:
+    page = logged_in
+    open_quick_settings(page)
+    icon = page.get_by_role("button", name="Quick settings", exact=True)
+    icon.focus()
+    page.keyboard.press("Escape")
+    expect(page.get_by_role("dialog", name="Quick settings")).to_have_count(0)
+    expect(icon).to_be_focused()
+
+
+def test_escape_on_closed_select_closes_menu_and_restores_focus(
+    page: Page, make_server: Callable[..., E2EServer], tmp_path: Path
+) -> None:
+    open_transcript(page, make_server, tmp_path)
+    reveal_setting(page, "combobox", "Agent context")
+    panel = page.get_by_role("dialog", name="Quick settings")
+    panel.get_by_role("combobox", name="Agent context").focus()
+    page.keyboard.press("Escape")
+    expect(panel).to_have_count(0)
+    expect(page.get_by_role("button", name="Quick settings", exact=True)).to_be_focused()
 
 
 def test_menu_follow_opt_out_keeps_live_entries_from_scrolling(

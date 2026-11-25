@@ -326,6 +326,63 @@ def test_run_apply_syncs_instructions_before_building_binds(make_cfg, tmp_path, 
     assert events == ["sync", "binds"]
 
 
+def test_run_apply_restages_instructions_for_running_container_without_restart(
+    make_cfg, tmp_path, mocker, monkeypatch
+):
+    from jailbee import agent_instructions as ai
+    from jailbee.apply import run_apply
+    from jailbee.global_config import GlobalConfig
+    from jailbee.lifecycle import ContainerInfo
+
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    cfg = make_cfg(tmp_path / "repo", agents={"claude": {"enabled": True}})
+    source = ai.source_path()
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"Keep the host policy.\n")
+    directory = ai.staging_dir("claude", "CLAUDE.md")
+    directory.mkdir(parents=True)
+    target = directory / "CLAUDE.md"
+    target.write_bytes(b"Old verbose preamble\n\nKeep the host policy.\n")
+    directory_inode = directory.stat().st_ino
+    incus = MagicMock(spec=Incus)
+    incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
+    incus.network_get.return_value = ""
+    mocker.patch("jailbee.apply._profile_differs", return_value=False)
+    mocker.patch("jailbee.apply._acl_differs", return_value=False)
+    mocker.patch(
+        "jailbee.apply._list_containers",
+        return_value=[
+            ContainerInfo(
+                name=f"{cfg.container_prefix}-live",
+                state="Running",
+                network="strict",
+                ip="10.0.0.1",
+                memory_limit="16GiB",
+                repo=cfg.container_prefix,
+            )
+        ],
+    )
+    mocker.patch("jailbee.hosts.apply_hosts")
+    mocker.patch("jailbee.docker_daemon.apply_docker_proxy")
+
+    result = run_apply(
+        cfg,
+        incus,
+        GlobalConfig(),
+        confirm_fn=lambda _msg: pytest.fail("Text refresh must not ask for a restart"),
+    )
+
+    assert b"Old verbose preamble" not in target.read_bytes()
+    assert b"Load the jailbee-container skill" in target.read_bytes()
+    assert target.read_bytes().endswith(b"\n\nKeep the host policy.\n")
+    assert directory.stat().st_ino == directory_inode
+    assert result.restarted == []
+    incus.stop.assert_not_called()
+    incus.start.assert_not_called()
+
+
 def test_run_apply_pushes_changed_profile(make_cfg, tmp_path: Path, mocker: MockerFixture) -> None:
     from jailbee.apply import run_apply
     from jailbee.global_config import GlobalConfig
@@ -1543,6 +1600,62 @@ def test_run_apply_partial_restart_failure(make_cfg, tmp_path: Path, mocker: Moc
     assert result.restarted == ["a", "c"]
     assert result.restart_failures == [("b", "boom")]
     assert result.fully_successful is False
+
+
+@pytest.mark.parametrize("setup", ["complete", "failed", "restarted", "identity-unavailable"])
+def test_apply_records_only_the_start_it_successfully_sets_up(make_cfg, tmp_path, mocker, setup):
+    from jailbee.apply import run_apply
+    from jailbee.autostart_plan import AutostartPlan
+    from jailbee.dashboard.model import RepoGroup
+    from jailbee.global_config import GlobalConfig
+    from jailbee.host_resume import resumable_repos
+    from jailbee.lifecycle import list_containers
+
+    cfg = make_cfg(tmp_path, container_prefix="myrepo")
+    incus = MagicMock(spec=Incus)
+    raw = {
+        "name": "myrepo-work",
+        "status": "Running",
+        "profiles": ["myrepo-base"],
+        "last_used_at": "2026-11-25T09:00:00Z",
+    }
+    incus.list_containers.return_value = [raw]
+    incus.config_get.return_value = ""
+    incus.exec.return_value = "recorded"
+    incus.profile_show.return_value = "config: {}\ndevices: {}\n"
+    incus.network_acl_list.return_value = []
+    incus.network_get.return_value = ""
+    mocker.patch("jailbee.lifecycle.current_network_mode", return_value="strict")
+    mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/repo")
+    mocker.patch("jailbee.hosts.sync_hosts")
+    mocker.patch("jailbee.egress_proxy.sync_container")
+    mocker.patch("jailbee.autostart.inject_github_token")
+
+    def boot(*args, **kwargs):
+        raw["last_used_at"] = "2026-11-25T10:00:00Z"
+        if setup == "identity-unavailable":
+            # Fail only the identity capture immediately after the restart.
+            incus.list_containers.side_effect = [IncusError("query failed"), [raw]]
+
+    mocker.patch("jailbee.lifecycle.boot_container", side_effect=boot)
+
+    def autostart(*args, **kwargs):
+        if setup == "failed":
+            raise IncusError("setup failed")
+        if setup in ("restarted", "identity-unavailable"):
+            raw["last_used_at"] = "2026-11-25T11:00:00Z"
+        if setup == "identity-unavailable":
+            incus.list_containers.side_effect = None
+        return AutostartPlan(blocking=[], detached=[])
+
+    mocker.patch("jailbee.autostart.run_autostart", side_effect=autostart)
+
+    result = run_apply(cfg, incus, GlobalConfig(), assume_yes=True)
+
+    assert result.fully_successful is (setup != "failed")
+    assert resumable_repos(
+        [RepoGroup("myrepo", str(tmp_path), None, list_containers(cfg, incus))]
+    ) == ([] if setup == "complete" else ["myrepo"])
 
 
 def test_run_apply_all_restarts_succeed_is_fully_successful(

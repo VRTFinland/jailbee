@@ -575,6 +575,7 @@ class AutostartJob:
     rerun: bool = False
     agent_steps: list[AutostartStep] | None = None
     agents_last: bool = False
+    boot_identity: str | None = None
 
 
 def autostart_job_to_dict(
@@ -591,6 +592,7 @@ def autostart_job_to_dict(
     rerun: bool = False,
     agent_steps: list[AutostartStep] | None = None,
     agents_last: bool = False,
+    boot_identity: str | None = None,
 ) -> dict[str, Any]:
     """Serialize a detached autostart run to the worker's job file.
 
@@ -625,6 +627,7 @@ def autostart_job_to_dict(
         if agent_steps is not None
         else None,
         "agents_last": agents_last,
+        "boot_identity": boot_identity,
     }
 
 
@@ -665,6 +668,7 @@ def dict_to_autostart_job(raw: dict[str, Any]) -> AutostartJob:
             else None
         ),
         agents_last=raw.get("agents_last", False),
+        boot_identity=raw.get("boot_identity"),
     )
 
 

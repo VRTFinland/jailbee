@@ -574,7 +574,11 @@ class Editor:
                 if self.prompt is not None:
                     self.prompt.secret_key = key
                 return
-            self.state, crumb = st.add_entry(self.state, spec, key)
+            try:
+                self.state, crumb = st.add_entry(self.state, spec, key)
+            except ValueError as exc:
+                self.notice(str(exc), style="class:error")
+                return
             self.new_entry = (*self.state.trail, crumb)
             self.state = st.enter_crumb(self.state, crumb)
             self.prompt = None

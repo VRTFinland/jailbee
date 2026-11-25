@@ -10,7 +10,10 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import TYPE_CHECKING
 
+from jailbee.config.errors import ConfigError
+from jailbee.incus import IncusError
 from jailbee.orchestration import wire
+from jailbee.orchestration.live_query import LIVE_OPS, LiveQuery
 from jailbee.orchestration.outbox import grant_json_text
 from jailbee.orchestration.store import StoreError
 
@@ -25,7 +28,7 @@ log = logging.getLogger(__name__)
 SNAPSHOT_OPS = frozenset({"children", "status", "grant"})
 STORE_OPS = frozenset({"list", "read", "ack"})
 # Outbox ops are SQLite queries too: query workers, never the round loop.
-QUERY_OPS = SNAPSHOT_OPS | STORE_OPS | wire.OUTBOX_OPS
+QUERY_OPS = SNAPSHOT_OPS | STORE_OPS | LIVE_OPS | wire.OUTBOX_OPS
 # The roles whose outbox writes (stage, drop, drafts) the broker accepts.
 WRITER_ROLES = frozenset({"plain", "orchestrator"})
 
@@ -48,8 +51,9 @@ class Queries:
     a connection per call, retaining BEGIN IMMEDIATE for acknowledgement writes.
     """
 
-    def __init__(self, store: BrokerStore) -> None:
+    def __init__(self, store: BrokerStore, *, live: Mapping[str, LiveQuery] | None = None) -> None:
         self._store = store
+        self.live = dict(live or {})
         self._snapshot: Mapping[str, ContainerSnapshot] = MappingProxyType({})
 
     def publish(self, snapshot: Mapping[str, ContainerSnapshot]) -> None:
@@ -70,6 +74,14 @@ class Queries:
             return wire.fail(exc.code, exc.detail)
         except StoreError as exc:
             return wire.fail(wire.STORE, str(exc))
+        except IncusError as exc:
+            detail = " ".join(str(exc).split())
+            log.warning("broker: query %r unavailable: %s", request.op, detail)
+            return wire.fail(wire.REFUSED, f"host status unavailable: {detail}")
+        except ConfigError as exc:
+            detail = " ".join(str(exc).split())
+            log.warning("broker: query %r config invalid: %s", request.op, detail)
+            return wire.fail(wire.REFUSED, f"configuration error: {detail}")
         except Exception:
             log.exception("broker: query %r failed", request.op)
             return wire.fail(wire.REFUSED, "broker error")
@@ -77,6 +89,18 @@ class Queries:
 
     def _dispatch(self, uuid: str, request: wire.Request) -> object:
         op, args = request.op, request.args
+        if op in LIVE_OPS:
+            view = self._snapshot.get(uuid)
+            if view is None or not view.ready:
+                raise wire.WireError(
+                    wire.STORE, "the broker does not know this container yet; retry shortly"
+                )
+            if args:
+                raise wire.WireError(wire.BAD_REQUEST, f"{op} accepts no arguments")
+            handler = self.live.get(op)
+            if handler is None:
+                raise wire.WireError(wire.REFUSED, "live query is not supported by this broker")
+            return handler.answer(uuid, view)
         if op in wire.OUTBOX_OPS:
             return self._outbox(uuid, op, args)
         if op in STORE_OPS:

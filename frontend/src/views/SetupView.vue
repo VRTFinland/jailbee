@@ -82,7 +82,7 @@ async function submit() {
 .setup {
     max-width: 26rem;
     margin: 0 auto;
-    padding: max(4rem, 64px) var(--space-3) 0;
+    padding: max(4rem, calc(var(--quick-trigger-top) + var(--quick-trigger-size) + 0.75rem)) var(--space-3) 4rem;
 }
 .form {
     display: flex;

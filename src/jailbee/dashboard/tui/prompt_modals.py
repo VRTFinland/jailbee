@@ -116,7 +116,8 @@ class ConfirmModal(PromptModal):
     def on_mount(self) -> None:
         # A destructive question defaults to No (the channel already says so).
         yes = self.prompt.default is True and not self.prompt.destructive
-        self.query_one("#yes" if yes else "#no", Button).focus()
+        # Exit may prune the dialog while its screen is still mounting.
+        self.query("#yes" if yes else "#no").focus()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         event.stop()
@@ -140,16 +141,16 @@ class ChooseOneModal(PromptModal):
         yield OptionList(*[Option(_row_text(o), id=o.id) for o in self.prompt.options])
 
     def on_mount(self) -> None:
-        widget = self.query_one(OptionList)
-        default = self.prompt.default
-        if isinstance(default, str):
-            for index, option in enumerate(self.prompt.options):
-                if option.id == default:
-                    widget.highlighted = index
-                    break
-        if widget.highlighted is None and self.prompt.options:
-            widget.highlighted = 0
-        widget.focus()
+        for widget in self.query(OptionList):
+            default = self.prompt.default
+            if isinstance(default, str):
+                for index, option in enumerate(self.prompt.options):
+                    if option.id == default:
+                        widget.highlighted = index
+                        break
+            if widget.highlighted is None and self.prompt.options:
+                widget.highlighted = 0
+            widget.focus()
 
     def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
         event.stop()
@@ -168,7 +169,7 @@ class ChooseManyModal(PromptModal):
         )
 
     def on_mount(self) -> None:
-        self.query_one(SelectionList).focus()
+        self.query(SelectionList).focus()
 
     def on_key(self, event: events.Key) -> None:
         if event.key == "enter":
@@ -203,7 +204,7 @@ class TextModal(PromptModal):
         yield Static("", classes="error", id="problem", markup=False)
 
     def on_mount(self) -> None:
-        self.query_one(Input).focus()
+        self.query(Input).focus()
 
     def on_key(self, event: events.Key) -> None:
         # The terminal's Ctrl-R: the only way to answer "" under `clear_shortcut`.

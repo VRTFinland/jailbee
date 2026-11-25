@@ -472,7 +472,7 @@ def _on_start_agent_steps(
         default_runner=cfg.orchestration_view().default_runner,
         resume=read_resume(incus, container),
     )
-    entries = boot_entries(cfg, incus, container)
+    entries = boot_entries(cfg, incus, container, retain=cfg.autostart.resume_agent_sessions)
     if cfg.autostart.resume_agent_sessions:
         prompted = (
             ("claude" if runner is not None else primary_agent(cfg).name) if pending else None
@@ -613,7 +613,12 @@ def run_detached(
     :func:`_cancel_on_sigterm`.
     """
     from jailbee.autostart_plan import TRIGGER_ORDER
+    from jailbee.boot_state import current_start, record
     from jailbee.services.autostart import services_stage_wanted
+
+    boot_identity = spec.boot_identity or (
+        None if spec.rerun else current_start(incus, spec.container_name)
+    )
 
     if spec.rerun:
         from jailbee.autostart_rerun import validate_remote, validate_windows
@@ -687,6 +692,8 @@ def run_detached(
                     )
         finally:
             incus.config_unset(spec.container_name, "user.jailbee.autostart_in_progress")
+        if not spec.rerun:
+            record(incus, spec.container_name, "handled", expected_start=boot_identity)
 
 
 def _detach_mounts(
@@ -903,8 +910,12 @@ def _step_invocation(cfg: Config, step: AutostartStep, repo_dir: str) -> _StepIn
     independently, which is exactly how the two paths drift apart — a step's
     behaviour must not depend on how many chains its stage happens to have.
     """
+    from jailbee.agent_resume import BOOT_SESSION_ENV
+
+    env = {**cfg.autostart.env, **step.env, "REPO_DIR": repo_dir}
+    env.pop(BOOT_SESSION_ENV, None)
     return _StepInvocation(
-        env={**cfg.autostart.env, **step.env, "REPO_DIR": repo_dir},
+        env=env,
         cwd=repo_dir if not step.working_dir else f"{repo_dir}/{step.working_dir}",
         timeout=step.timeout if step.timeout is not None else cfg.autostart.step_timeout,
     )
@@ -1188,6 +1199,10 @@ def _apply_step(
                 background=step.background,
                 timeout=timeout,
             )
+            from jailbee.agent_resume import BOOT_SESSION_ENV, acknowledge_boot
+
+            if session_id := step.env.get(BOOT_SESSION_ENV):
+                acknowledge_boot(cfg, incus, container, session_id)
         except TmuxStepError as e:
             raise AutostartStepError(
                 container=container,

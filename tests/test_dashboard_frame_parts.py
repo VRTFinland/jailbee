@@ -24,12 +24,15 @@ def test_the_title_counts_repos_containers_and_folds(tmp_path):
     ]
     title = frame_title(groups, frozenset({"a", "empty", "absent"}), git_enabled=True, now=NOW)
     assert title.plain == (
-        "🐝 jailbee dashboard  ·  h/? help  ·  3 repos · 3 containers · 1 folded  ·  12:00:05"
+        "☰ 🐝 jailbee dashboard · h/? help  ·  3 repos · 3 containers · 1 folded  ·  12:00:05"
     )
     console = Console()
-    brand_end = title.plain.index("  ·")
+    brand_end = title.plain.index(" ·")
     help_start = title.plain.index("h/? help")
-    assert all(title.get_style_at_offset(console, i).bold for i in range(brand_end))
+    assert all(
+        title.get_style_at_offset(console, i).bold
+        for i in range(title.plain.index("🐝"), brand_end)
+    )
     assert all(
         title.get_style_at_offset(console, i).dim
         for i in range(help_start, help_start + len("h/? help"))
@@ -40,7 +43,7 @@ def test_the_title_counts_repos_containers_and_folds(tmp_path):
 
 def test_the_title_marks_no_git():
     assert frame_title([], frozenset(), git_enabled=False, now=NOW).plain == (
-        "🐝 jailbee dashboard  ·  h/? help  ·  0 repos · 0 containers  ·  (no-git)  ·  12:00:05"
+        "☰ 🐝 jailbee dashboard · h/? help  ·  0 repos · 0 containers  ·  (no-git)  ·  12:00:05"
     )
 
 

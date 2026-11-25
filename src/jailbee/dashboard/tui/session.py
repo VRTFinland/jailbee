@@ -100,6 +100,8 @@ from jailbee.dashboard.menus import (
     actions_for_container,
     config_edit_reject_note_for_prefix,
     fork_container_argv,
+    global_action_argv,
+    global_menu_actions,
     host_branches,
     new_container_argv,
     new_container_base_default,
@@ -107,6 +109,7 @@ from jailbee.dashboard.menus import (
     new_container_target,
     new_pr_container_argv,
     rename_argv,
+    terminal_config_edit_available,
     view_only_note,
 )
 from jailbee.dashboard.model import (
@@ -175,6 +178,7 @@ from jailbee.dashboard.sorting import (
 from jailbee.dashboard.tui.frame import DashboardView
 from jailbee.dashboard.tui.layout import MIN_DETAILS_ROWS
 from jailbee.dashboard.tui.menu_state import (
+    GlobalMenuState,
     MenuState,
     RepoMenuState,
     menu_entries,
@@ -611,6 +615,7 @@ class DashboardSession:
         self.git_enabled = snapshot.git_enabled
         self.update = None if transport != "none" else snapshot.update
         self.system = snapshot.system
+        self.resumable_repos = snapshot.resumable_repos
         self.groups: list[RepoGroup] = visible_repo_groups(
             self.all_groups, show_empty_repos=self.show_empty_repos, hidden_repos=self.hidden_repos
         )
@@ -646,6 +651,7 @@ class DashboardSession:
         self.git_enabled = snapshot.git_enabled
         self.update = None if (self.transport != "none") else snapshot.update
         self.system = snapshot.system
+        self.resumable_repos = snapshot.resumable_repos
         self.groups = visible_repo_groups(
             self.all_groups, show_empty_repos=self.show_empty_repos, hidden_repos=self.hidden_repos
         )
@@ -3768,6 +3774,16 @@ class DashboardSession:
         cursor (`MenuBox.show`).
         """
         menu = self.overlay
+        if isinstance(menu, GlobalMenuState):
+            actions = global_menu_actions(
+                self.ssh_policy,
+                transport=self.transport,
+                remote=self.remote,
+                resumable_repos=self.resumable_repos,
+            )
+            if actions != menu.actions:
+                self.overlay = replace(menu, actions=list(actions))
+            return
         if not isinstance(menu, MenuState):
             return
         fresh = open_menu(
@@ -4036,9 +4052,28 @@ class DashboardSession:
             )
         return None
 
-    def menu_chosen(self, verb: str, group: str | None, index: int) -> None:
+    def menu_chosen(self, verb: str, group: str | None, index: int) -> Outcome:
         """A menu leaf was chosen at ``group``/``index``: a panel, a question, or a verb to run."""
         menu = self.overlay
+        if isinstance(menu, GlobalMenuState):
+            self.overlay = None
+            if verb in ("global-stop-all", "global-resume"):
+                argv = global_action_argv(verb)
+                assert argv is not None
+                try:
+                    check_dashboard_command(argv, self.ssh_policy, transport=self.transport)
+                except RouteError as exc:
+                    self.set_notice(str(exc))
+                else:
+                    self.run_action(
+                        RepoTarget(Path.home(), None),
+                        argv,
+                        style="output",
+                        label=" ".join(argv),
+                        target="Host",
+                    )
+                return None
+            return self.handle_key(verb.removeprefix("global-"))
         assert isinstance(menu, (MenuState, RepoMenuState))
         # Where the menu reopens if the panel this opens is backed out of.
         parent = replace(menu, start_group=group, start_index=index)
@@ -4135,6 +4170,7 @@ class DashboardSession:
                 self.overlay = self.begin_loose(target)
             else:
                 self.dispatch(target, verb)
+        return None
 
     def setting_toggled(self, tab: Tab, key: str) -> None:
         """A settings row was toggled: apply it to the view and persist it."""
@@ -4188,6 +4224,17 @@ class DashboardSession:
             self.activate()
         elif key == "help":
             self.overlay = "help"
+        elif key == "global-menu":
+            self.overlay = GlobalMenuState(
+                list(
+                    global_menu_actions(
+                        self.ssh_policy,
+                        transport=self.transport,
+                        remote=self.remote,
+                        resumable_repos=self.resumable_repos,
+                    )
+                )
+            )
         elif key == "command":
             self.overlay = CommandState()
         elif key == "settings":
@@ -4198,7 +4245,9 @@ class DashboardSession:
             self.overlay = self.open_accounts()
         elif key == "queue":
             self.open_queue()
-        elif key in ("config-edit", "config-edit-global") and self.remote:
+        elif key in ("config-edit", "config-edit-global") and not terminal_config_edit_available(
+            remote=self.remote, transport=self.transport
+        ):
             self.set_notice(REMOTE_CONFIG_EDIT_NOTE)
         elif key in ("config-edit", "config-edit-global"):
             self.edit_config(global_layer=key == "config-edit-global")
@@ -4850,9 +4899,14 @@ class DashboardSession:
             ):
                 return  # a question or a running publish keeps the focus
         elif overlay is not None and not (
-            isinstance(overlay, (MenuState, RepoMenuState, Picker)) or overlay == "help"
+            isinstance(overlay, (MenuState, RepoMenuState, GlobalMenuState, Picker))
+            or overlay == "help"
         ):
             return  # a prompt, the command line, settings, egress or accounts keep the focus
+        if hit is not None and hit.kind == "global-menu":
+            self.close_overlay()
+            self.handle_key("global-menu")
+            return
         if hit is not None and hit.kind == "queue":
             self.open_queue()
             return

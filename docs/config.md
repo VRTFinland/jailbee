@@ -2012,7 +2012,7 @@ Top-level keys:
 | `on_start` | list[Step] \| list[Stage] | `[]` | Run on every stopped→running transition: both `jailbee new` (after `on_create`) and `jailbee start`/`restart`. Put one-shot setup in `on_create` and recurring launches (dev servers, etc.) in `on_start` — don't duplicate. Same two shapes as `on_create`. |
 | `step_timeout` | int | `600` | Default per-step timeout in seconds (overridable per step). |
 | `env` | map | `{}` | Global env merged into every step (per-step `env` wins on key collisions). |
-| `resume_agent_sessions` | bool | `true` | Resume eligible interactive Claude sessions captured on a normal JailBee stop/restart. `false` consumes the saved snapshot without resuming. Does not cover shell environment, non-Claude processes or background sessions; host reboot and raw `incus stop` are unverified. |
+| `resume_agent_sessions` | bool | `true` | Resume eligible interactive Claude sessions saved by the live registry or normal stop/restart capture. Entries remain pending until their agent launch succeeds or their session start/end hook acknowledges them, so failed earlier autostart stages can be retried without reviving ended sessions. Re-entry skips sessions with a matching live registry PID and process start time. `false` consumes the saved snapshot without resuming. Does not cover shell environment, non-Claude processes or background sessions; real host reboot and raw `incus stop` recovery remain unverified. |
 
 #### Profiles
 
@@ -2546,6 +2546,52 @@ agents:
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `agents.default_runner` | `{agent, profile?, model?}` | none | The repo's default [runner](orchestration.md) for **every** container of the repo, not only spawned children. Allowed in `global.yaml`, the repo's `.jailbee/config.yaml` and the host-local `repos/<prefix>.yaml`; layered local → repo → global, the first layer that sets it wins. It is not an agent: it never appears under `agents.<name>`. Autostart resolves a container's Claude command as: the container's own runner label (a child spawned with a runner), then `agents.default_runner`, then the legacy path (`primary_agent`, `litellm.autostart`, `litellm.default_profile`, no model). With a runner the `agents.claude.command` is rewritten (`claude` ↔ `claude-jb`, `-P`, `--model`); a command that is not a Claude command keeps its configured form and logs a warning. It does not change which agent is the primary agent. When the runner names a `claude-jb` profile, that profile is also the `claude-jb` default inside the repo's containers (written by `jailbee apply`, `new` and `jailbee agent use`). Set it with [`jailbee agent use`](commands.md#jailbee-agent). The deprecated alias `orchestration.default_runner` is still read (in a layer, `agents.default_runner` wins over it); spawned children get the same default as before. |
+
+### `agents.models` and `agents.model_policy`
+
+Describe your model aliases once in `~/.config/jailbee/global.yaml`:
+
+```yaml
+agents:
+  models:
+    haiku:
+      label: "Small coding model"
+      use_for: "Well-scoped fixes and coding subagents"
+      avoid_for: "Architectural reviews"
+      notes: "This alias uses our coding backend"
+    opus:
+      label: "Review model"
+  model_policy: "Prefer haiku for coding; use opus for difficult reviews."
+```
+
+These are **user-authored examples**, not JailBee recommendations. JailBee ships
+an empty map and no model policy. Model keys are the names used when selecting a
+runner model (`fable`, `opus`, `sonnet`, `haiku`, or another alias); the map is
+advisory and does not change runner validation or grant access to a model.
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `agents.models` | map of model name to guidance | `{}` | Each entry accepts only the optional free-text strings `label`, `use_for`, `avoid_for` and `notes`; each defaults to `""`. |
+| `agents.model_policy` | string | `""` | General rules for choosing models for subagents and child runners. |
+
+The repo's `.jailbee/config.yaml` and the host-local `repos/<prefix>.yaml` may
+override individual model fields: setting `haiku.use_for` keeps the global
+`haiku.label` and all other models. The host-local layer wins over the repo
+layer, which wins over global. Both keys have their own fields in the config
+editor; they are not agent entries. `models` is a reserved agent name: rename
+an existing agent with that name (for example to `models-agent`) and update its
+references. `models: null` is accepted as an empty map.
+
+Inside **any** container, run `jailbee agent models` (or `--json`) before choosing
+a subagent or child-runner model, and follow `model_policy`. It queries the
+broker for the calling container's effective repo config on every invocation.
+Unchanged config files reuse a per-repo cache without git detection; edits to
+the global, repo or host-local layer are visible on the next query, without
+`apply` or a restart. Model queries have a separate worker and lock from slow
+host-status refreshes. Invalid YAML or a container without a repo config is
+refused with a clear explanation, not an unreachable-broker error.
+An empty map prints a configuration hint; JSON always returns
+`{"models": {}, "model_policy": ""}` for the unconfigured case.
 
 ### `docker_registry_mirror.extra_registries`
 
@@ -3381,8 +3427,13 @@ Instructions that apply to every wired agent in every container of every repo �
 model preferences, house rules — go in one file on the host:
 `~/.config/jailbee/AGENTS.md` (`$XDG_CONFIG_HOME/jailbee/AGENTS.md` if set).
 
-Jailbee prepends a built-in container-environment preamble to these optional
-instructions and stages them in `~/.local/share/jailbee/agent-instructions/<agent>/by-file/<file>/`
+Jailbee prepends a five-line container-environment preamble to these optional
+instructions: identify the JailBee container via `/etc/jailbee/container.json`,
+load the **jailbee-container** skill for services, logs, network, outbox, host
+status and model guidance, and use **jailbee-orchestration-child** when the
+agent is a child (by environment variable, first prompt or adoption). Detailed
+environment instructions live in the skill, not the always-loaded preamble.
+Jailbee stages the preamble followed by the host instructions in `~/.local/share/jailbee/agent-instructions/<agent>/by-file/<file>/`
 (`$XDG_DATA_HOME/jailbee/agent-instructions/...` if set), under each
 agent's own file name, and mounts that directory read-only into containers
 where the agent is enabled and has `global_instructions` configured. Currently
@@ -3399,6 +3450,9 @@ model-policy enforcement; they do not configure the agent running on the host.
   `jailbee start`/`restart`, `jailbee ls`, `jailbee shell` and `jailbee tmux`.
   A session reads it when it starts, so an edit reaches the next agent session,
   not one already running. No `jailbee apply` needed after the first.
+  `jailbee apply` also re-stages an updated built-in preamble and bundled skills
+  for running containers through their existing directory mounts; no container
+  restart is needed for these text updates.
 - **No file:** the staged copy contains the built-in preamble alone. Removing
   the source restores that copy on the next refresh.
   Each (agent, file name) pair has its own staging directory, so a repo that

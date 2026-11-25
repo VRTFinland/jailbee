@@ -298,7 +298,7 @@ def test_rejects_unsafe_files_and_invalid_snapshot(tmp_path: Path) -> None:
     os.mkfifo(path)
     assert snapshot.capture(tmp_path, proc=tmp_path / "proc", windows={}) == 0
     target = tmp_path / snapshot.SNAPSHOT_RELPATH
-    target.parent.mkdir(parents=True)
+    target.parent.mkdir(parents=True, exist_ok=True)
     target.symlink_to(path)
     assert snapshot.boot(tmp_path, proc=tmp_path / "proc") == {
         "version": 1,
@@ -329,8 +329,248 @@ def test_boot_consumes_malformed_and_oversized_records(tmp_path: Path) -> None:
     assert not list(directory.iterdir())
 
 
+def test_retained_boot_acknowledges_only_launched_session_and_preserves_new_hooks(
+    tmp_path, monkeypatch
+):
+    other_id = "aaaaaaaa-1234-1234-1234-123456789abc"
+    monkeypatch.setattr(snapshot, "PROC", tmp_path / "proc")
+    snapshot.register_session(tmp_path, {"session_id": ID, "cwd": "/work"})
+    snapshot.register_session(tmp_path, {"session_id": other_id, "cwd": "/other"})
+    original = snapshot.boot(tmp_path, retain=True)
+    assert len(original["sessions"]) == 2
+    assert snapshot.boot(tmp_path, retain=True) == original
+
+    # Hooks may update the live registry before the host acknowledges the launch.
+    snapshot.register_session(tmp_path, {"session_id": ID, "cwd": "/new"})
+    snapshot.acknowledge(tmp_path, [ID])
+    assert [row["session_id"] for row in snapshot.boot(tmp_path, retain=True)["sessions"]] == [
+        other_id
+    ]
+    snapshot.acknowledge(tmp_path, [other_id])
+    snapshot.acknowledge(tmp_path, [other_id])
+    assert snapshot.capture(tmp_path, proc=tmp_path / "proc", windows={}) == 1
+    assert snapshot.boot(tmp_path)["sessions"] == [
+        {
+            "agent": "claude",
+            "session_id": ID,
+            "cwd": "/new",
+            "launcher": ["claude"],
+            "window": None,
+        }
+    ]
+
+
+@pytest.mark.parametrize("ended", [False, True], ids=["session-start", "session-end"])
+def test_hook_acknowledges_pending_session(tmp_path, monkeypatch, ended):
+    proc = tmp_path / "proc"
+    monkeypatch.setattr(snapshot, "PROC", proc)
+    snapshot.register_session(tmp_path, {"session_id": ID, "cwd": "/work"})
+    assert len(snapshot.boot(tmp_path, proc=proc, retain=True)["sessions"]) == 1
+
+    snapshot.register_session(tmp_path, {"session_id": ID, "cwd": "/work"}, ended=ended)
+    assert not (tmp_path / snapshot.BOOT_RELPATH).exists()
+    if ended:
+        assert snapshot.boot(tmp_path, proc=proc, retain=True)["sessions"] == []
+    else:
+        assert snapshot.capture(tmp_path, proc=proc, windows={}) == 1
+
+
+@pytest.mark.parametrize("hook", [False, True])
+def test_pending_ack_waits_for_concurrent_hook_lock(tmp_path, monkeypatch, hook):
+    import fcntl
+    import threading
+
+    monkeypatch.setattr(snapshot, "PROC", tmp_path / "proc")
+    snapshot.register_session(tmp_path, {"session_id": ID, "cwd": "/work"})
+    snapshot.boot(tmp_path, retain=True)
+    lock = (tmp_path / snapshot.REGISTRY_RELPATH).with_suffix(".lock")
+    with lock.open("r+") as owner:
+        fcntl.flock(owner, fcntl.LOCK_EX)
+        release = threading.Timer(0.35, lambda: fcntl.flock(owner, fcntl.LOCK_UN))
+        release.start()
+        try:
+            if hook:
+                snapshot.register_session(tmp_path, {"session_id": ID, "cwd": "/work"})
+            else:
+                snapshot.acknowledge(tmp_path, [ID])
+        finally:
+            release.join()
+    assert not (tmp_path / snapshot.BOOT_RELPATH).exists()
+
+
+@pytest.mark.parametrize("start", [None, "777", "888"], ids=["dead", "live", "reused-pid"])
+def test_boot_reentry_skips_pending_session_only_while_process_matches(
+    tmp_path, monkeypatch, start
+):
+    proc = tmp_path / "proc"
+    monkeypatch.setattr(snapshot, "PROC", proc)
+    snapshot.register_session(tmp_path, {"session_id": ID, "cwd": "/work"})
+    batch = snapshot.boot(tmp_path, proc=proc, retain=True)
+    # Model a manually resumed process whose hook/host acknowledgement was lost.
+    path = tmp_path / snapshot.REGISTRY_RELPATH
+    registry = json.loads(path.read_text())
+    registry["sessions"] = [
+        {**batch["sessions"][0], "pid": "7", "procStart": "777", "ended": False}
+    ]
+    path.write_text(json.dumps(registry))
+    if start is not None:
+        live(proc, 7, start)
+    result = snapshot.boot(tmp_path, proc=proc, retain=True)
+    assert [row["session_id"] for row in result["sessions"]] == ([] if start == "777" else [ID])
+    if start == "777":
+        assert snapshot.boot(tmp_path, proc=proc, retain=True)["sessions"] == []
+        assert not (tmp_path / snapshot.BOOT_RELPATH).exists()
+        assert snapshot.capture(tmp_path, proc=proc, windows={}) == 1
+
+
+def test_same_boot_frozen_capture_does_not_relaunch_live_session(tmp_path, monkeypatch):
+    proc = tmp_path / "proc"
+    monkeypatch.setattr(snapshot, "PROC", proc)
+    live(proc, 1)
+    live(proc, 7)
+    monkeypatch.setattr(snapshot.os, "getppid", lambda: 7)
+    snapshot.register_session(tmp_path, {"session_id": ID, "cwd": "/work"})
+    assert snapshot.capture(tmp_path, proc=proc, windows={}) == 1
+    assert snapshot.boot(tmp_path, proc=proc, retain=True)["sessions"] == []
+    assert snapshot.boot(tmp_path, proc=proc, retain=True)["sessions"] == []
+    assert snapshot.capture(tmp_path, proc=proc, windows={}) == 1
+    (proc / "7/stat").unlink()
+    stat = proc / "1/stat"
+    stat.write_text(stat.read_text().replace("777", "888"))
+    assert [
+        row["session_id"] for row in snapshot.boot(tmp_path, proc=proc, retain=True)["sessions"]
+    ] == [ID]
+
+
+def test_partial_restore_survives_another_clean_stop(tmp_path, monkeypatch):
+    other_id = "aaaaaaaa-1234-1234-1234-123456789abc"
+    monkeypatch.setattr(snapshot, "PROC", tmp_path / "proc")
+    snapshot.register_session(tmp_path, {"session_id": ID, "cwd": "/work"})
+    snapshot.register_session(tmp_path, {"session_id": other_id, "cwd": "/other"})
+    assert len(snapshot.boot(tmp_path, retain=True)["sessions"]) == 2
+    snapshot.register_session(tmp_path, {"session_id": ID, "cwd": "/work"})
+    snapshot.acknowledge(tmp_path, [ID])
+    snapshot.capture(tmp_path, proc=tmp_path / "proc", windows={})
+    assert {row["session_id"] for row in snapshot.boot(tmp_path, retain=True)["sessions"]} == {
+        ID,
+        other_id,
+    }
+
+
+@pytest.mark.parametrize("read_before_hook", [False, True])
+def test_new_boot_hook_cannot_prune_unacknowledged_sessions(
+    tmp_path, monkeypatch, read_before_hook
+):
+    proc = tmp_path / "proc"
+    monkeypatch.setattr(snapshot, "PROC", proc)
+    live(proc, 1)
+    live(proc, 7)
+    monkeypatch.setattr(snapshot.os, "getppid", lambda: 7)
+    snapshot.register_session(tmp_path, {"session_id": ID, "cwd": "/old"})
+    (proc / "7/stat").unlink()
+    stat = proc / "1/stat"
+    stat.write_text(stat.read_text().replace("777", "888"))
+    if read_before_hook:
+        assert [
+            row["session_id"] for row in snapshot.boot(tmp_path, proc=proc, retain=True)["sessions"]
+        ] == [ID]
+    live(proc, 8)
+    monkeypatch.setattr(snapshot.os, "getppid", lambda: 8)
+    other_id = "aaaaaaaa-1234-1234-1234-123456789abc"
+    snapshot.register_session(tmp_path, {"session_id": other_id, "cwd": "/new"})
+    assert [
+        row["session_id"] for row in snapshot.boot(tmp_path, proc=proc, retain=True)["sessions"]
+    ] == [ID]
+    snapshot.acknowledge(tmp_path, [ID])
+    assert snapshot.capture(tmp_path, proc=proc, windows={}) == 1
+    (proc / "8/stat").unlink()
+    stat.write_text(stat.read_text().replace("888", "999"))
+    assert [row["session_id"] for row in snapshot.boot(tmp_path, proc=proc)["sessions"]] == [
+        other_id
+    ]
+
+
+def test_registry_overflow_survives_new_boot_hooks(tmp_path, monkeypatch):
+    proc = tmp_path / "proc"
+    monkeypatch.setattr(snapshot, "PROC", proc)
+    live(proc, 1)
+    live(proc, 7)
+    monkeypatch.setattr(snapshot.os, "getppid", lambda: 7)
+    snapshot.register_session(tmp_path, {"session_id": ID, "cwd": "/work"})
+    registry = tmp_path / snapshot.REGISTRY_RELPATH
+    payload = json.loads(registry.read_text())
+    payload["sessions"][0]["launcher"] = ["claude", "--append-system-prompt", "x" * 34000]
+    registry.write_text(json.dumps(payload))
+    (proc / "7/stat").unlink()
+    assert len(snapshot.boot(tmp_path, proc=proc, retain=True)["sessions"]) == 1
+    other_id = "aaaaaaaa-1234-1234-1234-123456789abc"
+    payload["sessions"][0]["session_id"] = other_id
+    registry.write_text(json.dumps(payload))
+    stat = proc / "1/stat"
+    stat.write_text(stat.read_text().replace("777", "888"))
+    live(proc, 8)
+    monkeypatch.setattr(snapshot.os, "getppid", lambda: 8)
+    new_id = "bbbbbbbb-1234-1234-1234-123456789abc"
+    for _ in range(2):
+        snapshot.register_session(tmp_path, {"session_id": new_id, "cwd": "/new"})
+    snapshot.acknowledge(tmp_path, [ID])
+    assert [
+        row["session_id"] for row in snapshot.boot(tmp_path, proc=proc, retain=True)["sessions"]
+    ] == [other_id]
+
+
+def test_pending_and_new_capture_are_delivered_in_bounded_batches(tmp_path, monkeypatch):
+    other_id = "aaaaaaaa-1234-1234-1234-123456789abc"
+    monkeypatch.setattr(snapshot, "PROC", tmp_path / "proc")
+    snapshot.register_session(tmp_path, {"session_id": ID, "cwd": "/work"})
+    path = tmp_path / snapshot.REGISTRY_RELPATH
+    payload = json.loads(path.read_text())
+    payload["sessions"][0]["launcher"] = ["claude", "--append-system-prompt", "x" * 34000]
+    path.write_text(json.dumps(payload))
+    assert len(snapshot.boot(tmp_path, retain=True)["sessions"]) == 1
+    frozen = tmp_path / snapshot.SNAPSHOT_RELPATH
+    payload["sessions"][0]["session_id"] = other_id
+    frozen.write_text(json.dumps(payload))
+    first = snapshot.boot(tmp_path, retain=True)
+    assert [row["session_id"] for row in first["sessions"]] == [ID]
+    snapshot.acknowledge(tmp_path, [ID])
+    second = snapshot.boot(tmp_path, retain=True)
+    assert [row["session_id"] for row in second["sessions"]] == [other_id]
+    snapshot.acknowledge(tmp_path, [other_id])
+    assert snapshot.boot(tmp_path)["sessions"] == []
+
+
+def test_source_overflow_does_not_mask_new_clean_capture(tmp_path, monkeypatch):
+    proc = tmp_path / "proc"
+    monkeypatch.setattr(snapshot, "PROC", proc)
+    snapshot.register_session(tmp_path, {"session_id": ID, "cwd": "/work"})
+    path = tmp_path / snapshot.REGISTRY_RELPATH
+    payload = json.loads(path.read_text())
+    payload["sessions"][0]["launcher"] = ["claude", "--append-system-prompt", "x" * 34000]
+    path.write_text(json.dumps(payload))
+    snapshot.boot(tmp_path, proc=proc, retain=True)
+    other_id = "aaaaaaaa-1234-1234-1234-123456789abc"
+    payload["sessions"][0]["session_id"] = other_id
+    (tmp_path / snapshot.SNAPSHOT_RELPATH).write_text(json.dumps(payload))
+    assert len(snapshot.boot(tmp_path, proc=proc, retain=True)["sessions"]) == 1
+    snapshot.register_session(tmp_path, {"session_id": ID, "cwd": "/work"})
+    snapshot.acknowledge(tmp_path, [ID])
+    snapshot.register_session(tmp_path, {"session_id": ID, "cwd": "/work"})
+    assert snapshot.capture(tmp_path, proc=proc, windows={}) == 1
+    delivered = set()
+    for _ in range(2):
+        batch = snapshot.boot(tmp_path, proc=proc, retain=True)
+        ids = [row["session_id"] for row in batch["sessions"]]
+        delivered.update(ids)
+        snapshot.acknowledge(tmp_path, ids)
+    assert delivered == {ID, other_id}
+    assert snapshot.boot(tmp_path, proc=proc)["sessions"] == []
+
+
 def test_window_names_and_failure(monkeypatch: pytest.MonkeyPatch) -> None:
     from subprocess import CompletedProcess
+
+    from jailbee.services.local_proc import LocalProc
 
     calls = []
 
@@ -338,14 +578,14 @@ def test_window_names_and_failure(monkeypatch: pytest.MonkeyPatch) -> None:
         calls.append(args)
         return CompletedProcess(args, 0, "autostart\t@3\tclaude\nother\t@4\tignore\ninvalid\n", "")
 
-    monkeypatch.setattr(snapshot.LocalProc, "tmux", tmux)
+    monkeypatch.setattr(LocalProc, "tmux", tmux)
     assert snapshot.window_names() == {"@3": "claude"}
     assert calls == [["list-windows", "-a", "-F", "#{session_name}\t#{window_id}\t#{window_name}"]]
 
     def failure(self: object, args: list[str]) -> CompletedProcess[str]:
         raise OSError("tmux unavailable")
 
-    monkeypatch.setattr(snapshot.LocalProc, "tmux", failure)
+    monkeypatch.setattr(LocalProc, "tmux", failure)
     assert snapshot.window_names() == {}
 
 

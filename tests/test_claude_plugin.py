@@ -32,7 +32,7 @@ def test_plugin_commands_resolve_in_container_cli():
     plugin = Path(claude_plugin.__file__).parent / "claude_marketplace/jailbee"
     hooks = json.loads((plugin / "hooks/hooks.json").read_text())
     assert set(hooks) == {"hooks"}
-    assert set(hooks["hooks"]) == {"SessionStart", "Stop"}
+    assert set(hooks["hooks"]) == {"SessionStart", "SessionEnd", "Stop"}
     commands = []
     for entries in hooks["hooks"].values():
         assert isinstance(entries, list) and entries

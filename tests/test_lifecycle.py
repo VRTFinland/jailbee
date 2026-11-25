@@ -2251,6 +2251,7 @@ def test_new_container_reports_only_successful_instance_creation(
 
 
 def test_new_work_generation_assigns_stable_filtered_nic(tmp_path, mocker, db_session):
+    mocker.patch("jailbee.boot_state.current_start", return_value=None)
     cfg = _cfg_for_new(tmp_path)
     incus = MagicMock()
     incus.exists.return_value = False
@@ -2331,6 +2332,7 @@ def test_new_work_allocations_across_repos_are_unique(tmp_path, mocker, db_sessi
 
 
 def test_new_work_loose_grant_precedes_start(tmp_path, mocker, db_session):
+    mocker.patch("jailbee.boot_state.current_start", return_value=None)
     cfg = _cfg_for_new(tmp_path)
     incus = MagicMock()
     incus.exists.return_value = False
@@ -2374,6 +2376,7 @@ def test_new_work_loose_grant_precedes_start(tmp_path, mocker, db_session):
 def test_scratch_directory_creation_uses_work_profiles(tmp_path, monkeypatch, mocker, db_session):
     from jailbee.config import load_repo_config
 
+    mocker.patch("jailbee.boot_state.current_start", return_value=None)
     xdg = tmp_path / "xdg"
     global_dir = xdg / "jailbee"
     global_dir.mkdir(parents=True)
@@ -4628,6 +4631,115 @@ def test_new_container_attaches_runtime_devices_after_start(tmp_path, mocker):
     assert events == ["start", "attach"]
 
 
+@pytest.mark.parametrize("outcome", ["success", "failure", "detached", "write-failure", "skipped"])
+def test_new_boot_marker_tracks_the_whole_autostart_run(tmp_path, mocker, outcome):
+    from jailbee.autostart import AutostartStepError
+    from jailbee.autostart_plan import AutostartPlan
+    from jailbee.boot_state import MARKER
+    from jailbee.config import AutostartStage
+
+    cfg = _cfg_for_new(tmp_path)
+    incus = MagicMock()
+    incus.exists.return_value = False
+    events = []
+    marker = None
+
+    def execute(name, argv, **kwargs):
+        nonlocal marker
+        script = " ".join(argv)
+        if MARKER in script:
+            events.append(script)
+            if outcome == "write-failure":
+                raise IncusError("marker unavailable")
+            marker = script.split("printf '%s' ", 1)[1].split()[0]
+        return ""
+
+    def ensure_agents(*args, **kwargs):
+        assert marker == "started" or outcome == "write-failure"
+
+    def autostart(_cfg, _incus, _name, trigger, **kwargs):
+        events.append(trigger.value)
+        if outcome == "failure":
+            raise AutostartStepError(
+                container="repo-feat-x", step_name="setup", reason="broken stage"
+            )
+        return AutostartPlan(
+            blocking=[],
+            detached=[AutostartStage(stage="deps", steps=[])] if outcome == "detached" else [],
+        )
+
+    incus.exec.side_effect = execute
+    mocker.patch("jailbee.agents.ensure_agents", side_effect=ensure_agents)
+    mocker.patch("jailbee.autostart.run_autostart", side_effect=autostart)
+    opts = NewContainerOptions(
+        container_branch="feat/x",
+        name=None,
+        network="strict",
+        memory="8GiB",
+        cpu=4,
+        from_base="gisgro-base",
+        clone=False,
+        autostart=outcome != "skipped",
+    )
+    if outcome == "failure":
+        with pytest.raises(AutostartStepError):
+            new_container(cfg, incus, opts)
+    else:
+        assert new_container(cfg, incus, opts) == "repo-feat-x"
+
+    assert "started" in events[0]
+    if outcome == "success":
+        assert events[1:3] == ["on_create", "on_start"]
+        assert "handled" in events[3]
+        assert marker == "handled"
+    elif outcome == "skipped":
+        assert marker == "skipped"
+    elif outcome == "write-failure":
+        assert marker is None
+        assert len(events) == 3
+    else:
+        assert marker == "started"
+        assert len(events) == 2
+
+
+@pytest.mark.parametrize("autostart", [True, False])
+def test_new_with_real_start_identity_leaves_resume_hidden(tmp_path, mocker, autostart):
+    from jailbee.boot_state import MARKER
+    from jailbee.dashboard.model import RepoGroup
+    from jailbee.host_resume import resumable_repos
+    from jailbee.incus import Incus
+
+    cfg = _cfg_for_new(tmp_path)
+    incus = MagicMock(spec=Incus)
+    incus.exists.return_value = False
+    incus.list_containers.return_value = []
+
+    def start(name):
+        incus.list_containers.return_value = [
+            {
+                "name": name,
+                "status": "Running",
+                "profiles": ["repo-base"],
+                "last_used_at": "2026-11-25T09:00:00.123456789Z",
+            }
+        ]
+
+    incus.start.side_effect = start
+    incus.exec.side_effect = lambda _name, argv, **kw: (
+        "recorded" if MARKER in " ".join(argv) else ""
+    )
+    mocker.patch("jailbee.autostart.run_autostart", return_value=_EMPTY_PLAN)
+    opts = NewContainerOptions(
+        "feat/x", None, "strict", "8GiB", 4, "gisgro-base", False, autostart=autostart
+    )
+
+    assert new_container(cfg, incus, opts) == "repo-feat-x"
+
+    groups = [RepoGroup("repo", str(cfg.repo_root), None, list_containers(cfg, incus))]
+    assert groups[0].containers[0].start_identity == "2026-11-25T09:00:00.123456789Z"
+    assert resumable_repos(groups) == []
+
+
 def test_new_container_runs_both_on_create_and_on_start(tmp_path, mocker):
     """`gie new` transitions the container into running state, so on_start
     steps must execute on this first launch — not only on subsequent
@@ -6025,6 +6137,22 @@ def test_boot_container_starts_when_already_stopped(tmp_path, mocker):
     incus.stop.assert_not_called()
     incus.start.assert_called_once_with("feat-x")
     assert events == ["detach", "start", "attach"]
+
+
+@pytest.mark.parametrize(
+    "state, expected",
+    [("Running", ["detach", "attach"]), ("Stopped", ["detach", "start", "attach"])],
+)
+def test_boot_container_resume_ensures_running_without_reboot(tmp_path, mocker, state, expected):
+    cfg = _cfg_for_new(tmp_path)
+    incus = MagicMock()
+    incus.list_containers.return_value = [{"name": "feat-x", "status": state}]
+    events = _boot_events(mocker, incus)
+
+    boot_container(cfg, incus, "feat-x", restart=False, ensure_running=True)
+
+    assert events == expected
+    incus.stop.assert_not_called()
 
 
 def test_boot_container_start_mode_detaches_before_starting(tmp_path, mocker):
@@ -12260,6 +12388,8 @@ def test_new_same_pool_copy_is_silent(tmp_path, mocker):
 
 def test_new_work_network_path_uses_the_same_creator(tmp_path, mocker, db_session):
     from jailbee.golden import golden_instance_name
+
+    mocker.patch("jailbee.boot_state.current_start", return_value=None)
 
     cfg = _cfg_for_new(tmp_path)
     golden = golden_instance_name(cfg.golden.alias)

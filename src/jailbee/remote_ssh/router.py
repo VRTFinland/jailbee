@@ -530,6 +530,8 @@ _CONTAINER_COMMANDS = frozenset(
         "snapshot restore",
         "start",
         "stop",
+        # Aggregate lifecycle commands enforce the remote repo scope themselves.
+        "resume",
         "submodule pr push",
         "submodule pr bind",
         "submodule pr unbind",
@@ -838,6 +840,7 @@ def policy_allows(
             "exec",
             "job ls",
             # Filtered to the visible repos inside the command itself.
+            "resume",
             "outbox sent ls",
             "outbox sent show",
             "outbox sent clear",
