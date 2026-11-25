@@ -75,7 +75,7 @@ onBeforeUnmount(() => {
 <template>
     <header v-if="settings.showTitleBar" ref="bar" class="title-bar">
         <nav ref="breadcrumb" aria-label="Breadcrumb" class="breadcrumbs">
-            <template v-for="crumb in visibleCrumbs" :key="crumb.label">
+            <template v-for="(crumb, index) in visibleCrumbs" :key="index">
                 <router-link :to="crumb.to" :title="crumb.label" :aria-label="crumb.label" :class="{collapsed}" :style="parentWidth === null ? undefined : {maxWidth: `${parentWidth}px`}"><span>{{ collapsed ? '‹' : crumb.label }}</span></router-link><span v-if="!collapsed" class="separator" aria-hidden="true">›</span>
             </template>
             <h1 :title="session ? `Agent: ${session.agent}\nModels: ${session.models.join(', ')}\nSession ID: ${session.id}` : title">{{ title }}</h1>

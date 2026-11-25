@@ -56,6 +56,17 @@ describe("TitleBar breadcrumbs", () => {
         expect(router.currentRoute.value.path).toBe("/repo")
     })
 
+    it("keeps equally named ancestors distinct when the path changes", async () => {
+        const {wrapper} = await titleBar()
+        const crumb = (to: string) => ({label: "Same title", to})
+        await wrapper.setProps({crumbs: [crumb("/"), crumb("/repo"), crumb("/parent")]})
+        await wrapper.setProps({crumbs: [crumb("/parent"), crumb("/repo"), crumb("/"), {label: "New ancestor", to: "/repo"}]})
+        await wrapper.setProps({crumbs: [crumb("/repo"), {label: "New ancestor", to: "/parent"}, crumb("/")]})
+        expect(wrapper.findAll("nav a").map(link => [link.text(), link.attributes("href")])).toEqual([
+            ["Same title", "/repo"], ["New ancestor", "/parent"], ["Same title", "/"],
+        ])
+    })
+
     it("keeps session details on the current title without making them breadcrumb levels", async () => {
         const {wrapper} = await titleBar()
         await wrapper.setProps({session: {agent: "codex", models: ["model-a", "model-b"], id: "session-123"}})
