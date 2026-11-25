@@ -80,7 +80,9 @@ def test_gallery_snapshot(
         ("select", "Theme", "listbox"),
     ]
     for name, trigger, role in overlays:
-        control = panel.get_by_role("combobox" if name == "select" else "button", name=trigger, exact=True)
+        control = panel.get_by_role(
+            "combobox" if name == "select" else "button", name=trigger, exact=True
+        )
         control.click()
         overlay = page.get_by_role(role)
         expect(overlay).to_be_visible()
