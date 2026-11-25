@@ -98,7 +98,16 @@ def test_gallery_shows_every_theme_and_profile_after_login(logged_in: Page) -> N
     )
 
 
-def test_bundled_icons_render_at_token_sizes_and_turn_black_in_eink(logged_in: Page) -> None:
+# Every icon's painted fill and the text colour of the element it sits in.
+_ICON_INK = """
+(panel) => [...panel.querySelectorAll("svg")].map((svg) => [
+    getComputedStyle(svg.querySelector("path")).fill,
+    getComputedStyle(svg.parentElement).color,
+])
+"""
+
+
+def test_bundled_icons_render_at_token_sizes_and_follow_the_text_colour(logged_in: Page) -> None:
     page = logged_in
     _open_gallery(page)
     for name in PANELS:
@@ -111,9 +120,16 @@ def test_bundled_icons_render_at_token_sizes_and_turn_black_in_eink(logged_in: P
             assert icon.locator("path").evaluate("el => el.getBBox().width > 0")
         assert icons.first.evaluate("el => el.getBoundingClientRect().width") == 24
         assert icons.first.evaluate("el => el.getBoundingClientRect().height") == 24
-        if "E-ink theme" in name or "e-ink profile" in name:
-            for icon in icons.all():
-                expect(icon.locator("path")).to_have_css("fill", "rgb(0, 0, 0)")
+        # Colour belongs to the theme (ADR 0007): an icon is drawn in its
+        # surroundings' text colour, light on a dark e-ink-profile panel and on
+        # a primary button, black in the e-ink theme because its text is.
+        ink = panel.evaluate(_ICON_INK)
+        assert len(ink) > 30
+        assert [fill for fill, _ in ink] == [colour for _, colour in ink], name
+        if "E-ink theme" in name:
+            assert {fill for fill, _ in ink} <= {"rgb(0, 0, 0)", "rgb(255, 255, 255)"}, name
+        if "Dark theme" in name:
+            assert "rgb(0, 0, 0)" not in {fill for fill, _ in ink}, name
 
     sizes = page.get_by_role("region", name="Light theme, normal profile").get_by_label(
         "Icon sizes", exact=True

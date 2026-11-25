@@ -361,16 +361,8 @@ body {
    profile; the blanket stop below skips a normal-profile scope inside an
    e-ink one (a gallery panel on an e-ink page). A browser without complex
    `:not()` drops the blanket stop; transitions on the token still stop. */
-[data-theme="light"],
-[data-theme="dark"] {
-    --md-icon-ink: initial;
-}
 [data-profile="eink"] {
     --md-motion-duration: 0ms;
-    --md-icon-ink: #000000;
-}
-[data-theme="eink"] {
-    --md-icon-ink: #000000;
 }
 [data-profile="normal"] {
     --md-motion-duration: 150ms;
