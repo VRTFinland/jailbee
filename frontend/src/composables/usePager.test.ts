@@ -1,6 +1,6 @@
 import {enableAutoUnmount, mount} from "@vue/test-utils"
 import {afterEach, beforeEach, describe, expect, it, vi} from "vitest"
-import {defineComponent, h} from "vue"
+import {defineComponent, h, ref} from "vue"
 import PageNav from "../components/PageNav.vue"
 import {reloadSettings, updateSettings} from "../settings"
 import {usePager, type Pager} from "./usePager"
@@ -83,6 +83,85 @@ describe("page turns", () => {
         await wrapper.get("button.next").trigger("click")
         expect(scrollTo).toHaveBeenLastCalledWith(0, guardHeight === 32 ? 64 : 8)
         wrapper.unmount()
+    })
+
+    it("keeps a turned page anchored when the title settles into its sticky position", async () => {
+        const scrollTo = fakeLayout(1750)
+        const topInset = ref(60)
+        let y = 0
+        vi.spyOn(window, "scrollY", "get").mockImplementation(() => y)
+        scrollTo.mockImplementation((_x, top) => { y = top ?? 0 })
+        updateSettings({displayProfile: "eink"})
+        const StickyTitle = defineComponent({
+            setup() {
+                const pager = usePager(() => topInset.value)
+                return () => h(PageNav, {pager})
+            },
+        })
+        const wrapper = mount(StickyTitle, {attachTo: document.body})
+        await wrapper.vm.$nextTick()
+        await wrapper.get("button.next").trigger("click")
+        expect(y).toBe(440)
+
+        // The title's page padding scrolls away before the browser emits scroll.
+        topInset.value = 44
+        window.dispatchEvent(new Event("scroll"))
+        await wrapper.vm.$nextTick()
+        expect(wrapper.get(".page-indicator").text()).toBe("2 / 4")
+        await wrapper.get("button.next").trigger("click")
+        expect(y).toBe(896)
+        window.dispatchEvent(new Event("scroll"))
+        await wrapper.get("button.prev").trigger("click")
+        expect(y).toBe(440)
+        window.dispatchEvent(new Event("scroll"))
+        await wrapper.get("button.prev").trigger("click")
+        expect(y).toBe(0)
+        topInset.value = 60
+        window.dispatchEvent(new Event("scroll"))
+        await wrapper.vm.$nextTick()
+        expect(wrapper.get(".page-indicator").text()).toBe("1 / 4")
+    })
+
+    it("reaches the last page and remeasures a settled title after a viewport resize", async () => {
+        const scrollTo = fakeLayout(1750)
+        const topInset = ref(60)
+        let y = 0
+        vi.spyOn(window, "scrollY", "get").mockImplementation(() => y)
+        scrollTo.mockImplementation((_x, top) => { y = Math.min(top ?? 0, 1162) })
+        updateSettings({displayProfile: "eink"})
+        const StickyTitle = defineComponent({
+            setup() {
+                const pager = usePager(() => topInset.value)
+                return () => h(PageNav, {pager})
+            },
+        })
+        const wrapper = mount(StickyTitle, {attachTo: document.body})
+        await wrapper.vm.$nextTick()
+        await wrapper.get("button.next").trigger("click")
+        topInset.value = 44
+        window.dispatchEvent(new Event("scroll"))
+        await wrapper.get("button.next").trigger("click")
+        await wrapper.get("button.next").trigger("click")
+        window.dispatchEvent(new Event("scroll"))
+        await wrapper.vm.$nextTick()
+        expect(y).toBe(1162)
+        expect(wrapper.get(".page-indicator").text()).toBe("4 / 4")
+        expect(wrapper.get("button.next").attributes("disabled")).toBeDefined()
+        await wrapper.get("button.prev").trigger("click")
+        expect(y).toBe(896)
+        window.dispatchEvent(new Event("scroll"))
+
+        // A wider viewport is a new grid, unlike a header scrolling into place.
+        vi.spyOn(window, "innerHeight", "get").mockReturnValue(788)
+        vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
+            return {top: this.classList.contains("page-nav") ? 700 : 0} as DOMRect
+        })
+        window.dispatchEvent(new Event("resize"))
+        await wrapper.vm.$nextTick()
+        expect(y).toBe(896)
+        expect(wrapper.get(".page-indicator").text()).toBe("2 / 3")
+        await wrapper.get("button.prev").trigger("click")
+        expect(y).toBe(0)
     })
 
     it("keeps the next turn within readable content after the bottom guard shrinks", async () => {

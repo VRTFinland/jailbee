@@ -98,9 +98,14 @@ export function usePager(
         page.value = currentPage()
     }
 
-    watch([topInset, step], () => {
-        // A resized header changes the page grid without moving the reader.
+    watch([topInset, step], ([top, fraction], [previousTop, previousFraction]) => {
+        const index = page.value
+        // A sticky header can move up as a turn scrolls its outer padding away.
+        // Keep that turn's start as the new grid anchor, not inside page zero.
+        const keepAnchor = top < previousTop && fraction === previousFraction && index > 0
+            && Math.abs(window.scrollY - (index * pageHeight() - gridShift.value)) <= SUBPIXEL_SLACK
         measure()
+        if (keepAnchor) gridShift.value = index * pageHeight() - window.scrollY
         page.value = currentPage()
     }, {flush: "sync"})
 
