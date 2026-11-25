@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING
 
@@ -71,38 +72,81 @@ def prepare(ctx: ActionContext, child: Node) -> Path | None:
     return path
 
 
-def settle(root: Path, path: Path | None) -> None:
-    """Keep intent on an I/O failure, without hiding a successful destruction."""
-    from jailbee.orchestration.outbox import settle_child_idle
+@dataclass(frozen=True)
+class _Intent:
+    recipient_full: str
+    recipient_uuid: str
+    child_full: str
+    child_short: str
+    child_uuid: str | None
+    at: datetime
+    pending: frozenset[str]
+    ids: frozenset[str]
 
-    if path is None:
-        return
+
+def _load(path: Path) -> _Intent | None:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-        settle_child_idle(
-            root,
-            data["recipient_full"],
-            data["child_short"],
+        if not isinstance(data, dict):
+            raise ValueError("idle cleanup intent must be an object")
+        for key in ("recipient_full", "recipient_uuid", "child_full", "child_short", "at"):
+            if not isinstance(data[key], str) or not data[key]:
+                raise ValueError(f"invalid idle cleanup {key}")
+        if data["child_uuid"] is not None and not isinstance(data["child_uuid"], str):
+            raise ValueError("invalid idle cleanup child_uuid")
+        for key in ("pending", "ids"):
+            if not isinstance(data[key], list) or any(
+                not isinstance(value, str) or not value for value in data[key]
+            ):
+                raise ValueError(f"invalid idle cleanup {key}")
+        return _Intent(
+            recipient_full=data["recipient_full"],
             recipient_uuid=data["recipient_uuid"],
-            now=datetime.fromisoformat(data["at"]),
-            pending_names=frozenset(data["pending"]),
+            child_full=data["child_full"],
+            child_short=data["child_short"],
+            child_uuid=data["child_uuid"],
+            at=datetime.fromisoformat(data["at"]),
+            pending=frozenset(data["pending"]),
             ids=frozenset(data["ids"]),
         )
-        path.unlink(missing_ok=True)
     except (OSError, ValueError, KeyError, TypeError):
+        log.exception("broker: cannot read idle cleanup intent; quarantining: %s", path)
+        try:
+            path.rename(path.with_name(path.name + ".bad"))
+        except OSError:
+            log.exception("broker: cannot quarantine idle cleanup intent: %s", path)
+        return None
+
+
+def settle(root: Path, path: Path | None) -> None:
+    """Keep intent on a settlement I/O failure; quarantine unusable intent files."""
+    from jailbee.orchestration.outbox import settle_child_idle
+
+    if path is None or (intent := _load(path)) is None:
+        return
+    try:
+        settle_child_idle(
+            root,
+            intent.recipient_full,
+            intent.child_short,
+            recipient_uuid=intent.recipient_uuid,
+            now=intent.at,
+            pending_names=intent.pending,
+            ids=intent.ids,
+        )
+        path.unlink(missing_ok=True)
+    except OSError:
         log.exception("broker: idle cleanup deferred: %s", path)
 
 
 def retry(root: Path, present: Mapping[str, str]) -> None:
     """Retry after a broker restart even when the destroyed child is no longer listed."""
     for path in (root / "idle-cleanup").glob("*.json"):
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-            full = data["child_full"]
-            uuid = data["child_uuid"]
-            if full in present and (not uuid or present[full] == uuid):
-                continue  # Destruction failed, or the pre-destroy intent is still in flight.
-        except (OSError, ValueError, KeyError, TypeError):
-            log.exception("broker: cannot read idle cleanup intent: %s", path)
+        intent = _load(path)
+        if intent is None:
             continue
+        if intent.child_full in present and (
+            not intent.child_uuid or present[intent.child_full] == intent.child_uuid
+        ):
+            continue  # Destruction failed, or the pre-destroy intent is still in flight.
         settle(root, path)

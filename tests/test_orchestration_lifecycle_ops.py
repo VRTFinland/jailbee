@@ -409,6 +409,55 @@ def test_destroy_retries_idle_cleanup_after_io_failure(
     seams["destroy"].assert_called_once()
 
 
+@pytest.mark.parametrize(
+    "damage", ["json", "unreadable", "missing-field", "invalid-date", "invalid-ids"]
+)
+def test_retry_quarantines_unusable_intents_once(tmp_path, seams, monkeypatch, caplog, damage):
+    import json
+    from pathlib import Path
+
+    from jailbee.orchestration import idle_cleanup
+    from jailbee.orchestration.store import BrokerStore, store_path
+
+    rig = Rig(tmp_path, config={"volatile.uuid": "child-uuid"})
+    rig.sender.config["volatile.uuid"] = "orch-uuid"
+    st = BrokerStore(store_path(tmp_path))
+    st.insert_item(
+        "orch-uuid", rig.sender.full,
+        {"id": "idle", "type": "message", "kind": "idle", "from": "c1"}, now=1,
+    )
+    path = idle_cleanup.prepare(rig.ctx(), rig.child)
+    assert path is not None
+    if damage == "json":
+        path.write_text("{")
+    elif damage == "unreadable":
+        real_read = Path.read_text
+
+        def read(self, *args, **kwargs):
+            if self == path:
+                raise PermissionError("unreadable intent")
+            return real_read(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "read_text", read)
+    else:
+        data = json.loads(path.read_text())
+        if damage == "missing-field":
+            del data["recipient_uuid"]
+        elif damage == "invalid-date":
+            data["at"] = "not a date"
+        else:
+            data["ids"] = [None]
+        path.write_text(json.dumps(data))
+
+    idle_cleanup.retry(tmp_path, {})
+    assert not path.exists()
+    assert path.with_name(path.name + ".bad").exists()
+    assert [item.id for item in st.unacked("orch-uuid")] == ["idle"]
+    assert len(caplog.records) == 1
+    idle_cleanup.retry(tmp_path, {})
+    assert len(caplog.records) == 1
+
+
 def test_destroy_settles_parked_idle_before_it_can_reach_the_inbox(tmp_path, seams):
     from jailbee.orchestration import outbox
     from jailbee.orchestration.state import pending_dir
