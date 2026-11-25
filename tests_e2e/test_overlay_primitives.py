@@ -11,6 +11,8 @@ def test_portalled_overlays_keep_the_panel_theme_and_profile(logged_in: Page, pr
     page = logged_in
     page.emulate_media(reduced_motion="no-preference")
     page.goto(f"{page.url.split('#')[0]}#/ui")
+    # An inner normal panel must override even an e-ink page profile.
+    page.locator("html").evaluate("el => el.dataset.profile = 'eink'")
     panel = page.get_by_role("region", name=f"Dark theme, {profile} profile", exact=True)
     panel.get_by_role("button", name="Open centred dialog", exact=True).click()
     dialog = page.get_by_role("dialog", name="Destroy dev-plan?")

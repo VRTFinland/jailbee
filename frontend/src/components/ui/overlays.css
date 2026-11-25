@@ -7,11 +7,11 @@
     from { opacity: 0; }
     to { opacity: 1; }
 }
-[data-profile="eink"] .ui-dialog-scrim {
+.ui-overlay-scope[data-profile="eink"] .ui-dialog-scrim {
     background: transparent;
 }
-[data-profile="eink"] .ui-dialog,
-[data-profile="eink"] .ui-popup {
+.ui-overlay-scope[data-profile="eink"] .ui-dialog,
+.ui-overlay-scope[data-profile="eink"] .ui-popup {
     border: 1px solid var(--md-eink-overlay-outline);
     animation: none;
 }
