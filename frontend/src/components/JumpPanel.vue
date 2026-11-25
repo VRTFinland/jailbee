@@ -6,9 +6,9 @@ const props = defineProps<{entries: RenderedEntry[]; origin?: HTMLElement | null
 const emit = defineEmits<{close: []; select: [target: string]}>()
 const closeButton = ref<HTMLButtonElement | null>(null)
 const prompts = computed(() => props.entries.filter(e => e.kind === "user" && !e.meta).map(e => {
-    const node = document.createElement("div")
+    const node = document.createElement("template")
     node.innerHTML = e.kind === "user" ? e.html : ""
-    return {id: e.id, text: (node.textContent ?? "").replace(/\s+/g, " ").trim() || "(empty prompt)"}
+    return {id: e.id, text: (node.content.textContent ?? "").replace(/\s+/g, " ").trim() || "(empty prompt)"}
 }))
 onMounted(() => void nextTick(() => closeButton.value?.focus()))
 onBeforeUnmount(() => props.origin?.focus({preventScroll: true}))

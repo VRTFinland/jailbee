@@ -98,8 +98,13 @@ def test_settings_preserves_reader_and_live_updates(
 
 def test_eink_overlay_has_no_tint_or_motion(logged_in: Page) -> None:
     page = logged_in
+    page.set_viewport_size({"width": 1280, "height": 800})
     open_settings_overlay(page)
+    dialog = page.get_by_role("dialog", name="Settings", exact=True)
+    expect(dialog).to_have_css("border-top-width", "0px")
     page.get_by_role("radio", name="E-ink (page turns, no animation, slow refresh)").check()
+    expect(dialog).to_have_css("border-top-width", "1px")
+    expect(dialog).to_have_css("border-top-style", "solid")
     expect(page.locator(".settings-backdrop")).to_have_css("background-color", "rgba(0, 0, 0, 0)")
     expect(page.get_by_role("dialog", name="Settings", exact=True)).to_have_css(
         "transition-duration", "0s"

@@ -1,7 +1,23 @@
 import {mount} from "@vue/test-utils"
 import {nextTick} from "vue"
-import {expect, it} from "vitest"
+import {expect, it, vi} from "vitest"
 import JumpPanel from "./JumpPanel.vue"
+
+it("extracts prompt text without activating elements in the live document", async () => {
+    const activated = vi.fn()
+    const tag = `prompt-probe-${crypto.randomUUID()}`
+    customElements.define(tag, class extends HTMLElement {
+        constructor() { super(); activated() }
+    })
+    const wrapper = mount(JumpPanel, {props: {entries: [
+        {kind: "user", id: "u1", timestamp: null, html: `<${tag}>Read <strong>this</strong> &amp; that</${tag}>`, meta: false, label: null, expandable: false},
+    ]}})
+    expect(wrapper.get("button.excerpt").text()).toBe("Read this & that")
+    expect(activated).not.toHaveBeenCalled()
+    await wrapper.get("button.excerpt").trigger("click")
+    expect(wrapper.emitted("select")).toEqual([["entry:u1"]])
+    wrapper.unmount()
+})
 
 it("traps focus and restores the opening control on Escape", async () => {
     const origin = document.createElement("button")

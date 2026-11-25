@@ -16,6 +16,7 @@ import type {
     RenderedEntry,
     RenderedSubagent,
     RenderedToolResult,
+    SessionSummary,
     TranscriptView,
 } from "../protocol"
 import {settings} from "../settings"
@@ -46,7 +47,8 @@ function openJump(origin: HTMLElement | null = document.activeElement as HTMLEle
 provide("open-jump", openJump)
 function jumpKey(event: KeyboardEvent) {
     const target = event.target
-    if (event.key !== "j" || event.ctrlKey || event.metaKey || event.altKey ||
+    if (event.key !== "j" || event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey ||
+        document.querySelector('[role="dialog"], dialog[open]') ||
         (target instanceof HTMLElement && (target.isContentEditable || !!target.closest('input, textarea, select, [contenteditable="true"]')))) return
     event.preventDefault()
     openJump()
@@ -163,8 +165,9 @@ let positionReady = false
 function savePosition() {
     if (!positionReady || !transcriptEl.value) return
     measureVisibility()
-    const entry = Array.from(transcriptEl.value.querySelectorAll<HTMLElement>("[id^='entry-']"))
-        .find(el => el.getBoundingClientRect().top >= readableTop.value - 1)
+    const entries = Array.from(transcriptEl.value.querySelectorAll<HTMLElement>("[id^='entry-']"))
+    const first = entries[0]
+    const entry = entries.reverse().find(el => el.getBoundingClientRect().top <= readableTop.value + 1) ?? first
     writePosition(positionStore, positionKey, {entryId: entry ? entry.id.slice(6) : null, atEnd: atTranscriptEnd.value})
 }
 function schedulePosition() {
@@ -437,6 +440,7 @@ async function load() {
                 scrollToEnd()
             } else if (remembered) {
                 if (target) scrollProgrammatically(() => eink.value ? pager.goToElement(target) : target.scrollIntoView({block: "start"}))
+                else if (remembered.entryId === null) scrollToEnd()
                 else window.scrollTo(0, 0)
             }
             positionReady = true
@@ -459,7 +463,9 @@ onMounted(() => {
     void load()
     if (agentId.value !== null) {
         const path = [prefix.value, "sessions", agent.value, sessionId.value].map(encodeURIComponent).join("/")
-        void apiFetch<TranscriptView>(`/api/repos/${path}?meta=hidden`).then(view => { parentTitle.value = view.title || "Untitled session" }).catch(() => {})
+        void apiFetch<SessionSummary>(`/api/repos/${path}/summary`).then(parent => {
+            parentTitle.value = parent.title || "Untitled session"
+        }).catch(() => {})
     }
 })
 // Changing Agent context re-reads the transcript and resubscribes with the new mode.

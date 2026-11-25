@@ -4,6 +4,7 @@ import json
 from collections.abc import Callable
 from pathlib import Path
 
+import pytest
 from playwright.sync_api import Page, expect
 
 from tests_e2e.server import E2EServer
@@ -23,6 +24,43 @@ def assert_at_transcript_end(page: Page) -> None:
             document.querySelector('.bottom-guard')).getBoundingClientRect().top;
         return bottom !== undefined && Math.abs(bottom - boundary) <= 2;
     }""")
+
+
+@pytest.mark.parametrize("profile", ["normal", "eink"])
+@pytest.mark.parametrize("index", [8, 23], ids=["long-entry", "last-entry"])
+def test_restores_covering_entry_with_follow_off(
+    page: Page, make_server: Callable[..., E2EServer], tmp_path: Path, profile: str, index: int
+) -> None:
+    open_transcript(page, make_server, tmp_path)
+    page.evaluate(
+        """profile => {
+            localStorage.setItem('jailbee.displayProfile', profile);
+            localStorage.setItem('jailbee.followNewMessages', '0');
+            localStorage.setItem('jailbee.einkFollow', '0');
+        }""",
+        profile,
+    )
+    page.reload()
+    entry = page.locator(".entry.assistant").nth(index)
+    expect(entry).to_be_attached()
+    entry_id = entry.get_attribute("id")
+    entry.evaluate("""el => {
+        const top = document.querySelector('.title-bar').getBoundingClientRect().bottom;
+        window.scrollTo(0, scrollY + el.getBoundingClientRect().top - top + 300);
+    }""")
+    wait_for_scroll_settled(page)
+    assert entry.evaluate("el => el.getBoundingClientRect().top") < -200
+    page.evaluate("window.dispatchEvent(new Event('pagehide'))")
+    page.reload()
+    expect(page.get_by_role("heading", name=TITLE, exact=True)).to_be_visible()
+    page.wait_for_function(
+        """id => {
+            const entry = document.getElementById(id);
+            const top = document.querySelector('.title-bar').getBoundingClientRect().bottom;
+            return entry && Math.abs(entry.getBoundingClientRect().top - top) <= 2;
+        }""",
+        arg=entry_id,
+    )
 
 
 def test_restores_tool_call_below_title_bar(

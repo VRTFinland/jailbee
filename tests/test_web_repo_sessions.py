@@ -99,6 +99,42 @@ def test_lists_sessions_newest_first_with_title_activity_and_models(client: Test
     assert rows[1]["title"] == "hello there"
 
 
+def test_session_summary_returns_metadata_without_transcript_entries(client: TestClient) -> None:
+    response = client.get(f"/api/repos/alpha/sessions/claude/{SESSION_A}/summary")
+    assert response.status_code == 200
+    assert response.json() == {
+        "session_id": SESSION_A,
+        "agent": "claude",
+        "title": "Fix the login bug in the auth module",
+        "last_activity": "2026-11-01T10:05:01Z",
+        "models": ["claude-opus-5-5", "claude-sonnet-5"],
+        "container": None,
+    }
+
+
+@pytest.mark.parametrize(
+    "prefix,agent,session",
+    [
+        ("secret", "claude", SESSION_A),
+        ("nope", "claude", SESSION_A),
+        ("alpha", "codex", SESSION_A),
+        ("alpha", "claude", "missing"),
+    ],
+)
+def test_session_summary_hides_unknown_and_excluded_sessions(
+    client: TestClient, homes: Homes, prefix: str, agent: str, session: str
+) -> None:
+    response = client.get(f"/api/repos/{prefix}/sessions/{agent}/{session}/summary")
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Unknown session"}
+    assert "secret" not in homes.calls
+
+
+def test_session_summary_requires_login(client: TestClient) -> None:
+    client.headers.pop("Authorization")
+    assert client.get(f"/api/repos/alpha/sessions/claude/{SESSION_A}/summary").status_code == 401
+
+
 def test_session_list_shows_the_typed_prompt_after_slash_commands(
     client: TestClient, home: Path
 ) -> None:

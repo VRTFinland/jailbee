@@ -199,7 +199,7 @@ describe("page turns", () => {
         expect(scrollTo).toHaveBeenLastCalledWith(0, 250)
     })
 
-    it("marks the previous bottom after an overlapping turn until the next turn or manual scroll", () => {
+    it("marks the previous bottom after every overlapping forward turn until a backward turn or manual scroll", () => {
         const scrollTo = fakeLayout(1750)
         const y = clampScrolls(scrollTo, 1162)
         updateSettings({displayProfile: "eink", pageStep: 75})
@@ -210,7 +210,8 @@ describe("page turns", () => {
         expect(y()).toBe(375)
         expect(pager.guideTop.value).toBe(125)
         pager.next()
-        expect(pager.guideTop.value).toBeNull()
+        expect(y()).toBe(750)
+        expect(pager.guideTop.value).toBe(125)
         pager.next()
         expect(pager.guideTop.value).toBe(125)
         window.dispatchEvent(new Event("scroll"))
