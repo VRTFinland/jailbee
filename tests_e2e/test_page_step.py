@@ -20,12 +20,16 @@ class ReadingArea(TypedDict):
 
 
 def reading_area(page: Page) -> ReadingArea:
-    return cast(ReadingArea, page.evaluate("""() => ({
-        top: Number.parseFloat(document.querySelector('.page').style.getPropertyValue('--session-readable-top')),
+    return cast(
+        ReadingArea,
+        page.evaluate("""() => ({
+        top: Number.parseFloat(document.querySelector('.page').style
+            .getPropertyValue('--session-readable-top')),
         bottom: (document.querySelector('.page-nav[data-mode="bar"]') ??
             document.querySelector('.bottom-guard')).getBoundingClientRect().top,
         y: window.scrollY,
-    })"""))
+    })"""),
+    )
 
 
 def open_paged_transcript(
