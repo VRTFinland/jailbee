@@ -20,8 +20,8 @@ function measure() {
     const probe = measurements.value
     if (!available || !probe) return
     const widths = Array.from(probe.querySelectorAll<HTMLElement>(".crumb-label"), el => el.getBoundingClientRect().width)
-    const titleWidth = probe.querySelector("h1")!.getBoundingClientRect().width
-    const separatorWidth = probe.querySelector(".separator")!.getBoundingClientRect().width
+    const titleWidth = probe.querySelector(".title-measure")!.getBoundingClientRect().width
+    const separatorWidth = probe.querySelector(".separator-measure")!.getBoundingClientRect().width
     // Ten characters keep a truncated parent useful; shorter names need less room.
     const parentCharacterFloor = probe.querySelector(".minimum-parent")!.getBoundingClientRect().width
     const minimumTitle = probe.querySelector(".minimum-title")!.getBoundingClientRect().width
@@ -71,7 +71,7 @@ onBeforeUnmount(() => {
             <h1 :title="session ? `Agent: ${session.agent}\nModels: ${session.models.join(', ')}\nSession ID: ${session.id}` : title">{{ title }}</h1>
         </nav>
         <div ref="measurements" class="measurements" aria-hidden="true" inert>
-            <span v-for="(crumb, index) in crumbs" :key="index" class="crumb-label">{{ crumb.label }}</span><span class="separator">›</span><span class="minimum-parent">0000000000</span><h1>{{ title }}</h1><h1 class="minimum-title">000</h1>
+            <span v-for="(crumb, index) in crumbs" :key="index" class="crumb-label">{{ crumb.label }}</span><span class="separator-measure">›</span><span class="minimum-parent">0000000000</span><span class="title-measure">{{ title }}</span><span class="title-measure minimum-title">000</span>
         </div>
         <slot />
         <QuickSettings class="title-menu" :context="context" :session="session" />
@@ -85,8 +85,8 @@ onBeforeUnmount(() => {
 .breadcrumbs a { display: flex; flex: none; align-items: center; height: 44px; min-width: 0; overflow: hidden; white-space: nowrap; color: var(--muted); font-size: 13px; text-decoration: none; }
 .breadcrumbs a span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .breadcrumbs a.collapsed { justify-content: center; width: 44px; font-size: 24px; }
-.separator { flex: none; padding: 0 6px; color: var(--muted); font-size: 13px; }
-h1 { font-size: 15px; line-height: 1.2; font-weight: 600; margin: 0; min-width: 3ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.separator, .separator-measure { flex: none; padding: 0 6px; color: var(--muted); font-size: 13px; }
+h1, .title-measure { font-size: 15px; line-height: 1.2; font-weight: 600; margin: 0; min-width: 3ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .measurements { position: absolute; visibility: hidden; pointer-events: none; display: flex; width: max-content; max-width: none; height: 0; overflow: hidden; font-size: 13px; }
 .measurements > * { flex: none; }
 </style>

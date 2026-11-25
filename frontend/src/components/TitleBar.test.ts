@@ -23,6 +23,13 @@ async function titleBar() {
 }
 
 describe("TitleBar breadcrumbs", () => {
+    it("renders only one heading and one link per ancestor, including after title updates", async () => {
+        const {wrapper} = await titleBar()
+        expect(wrapper.findAll("h1").map(heading => heading.text())).toEqual(["Subagent"])
+        expect(wrapper.findAll("a").map(link => link.text())).toEqual(["JailBee", "Repository", "Parent session"])
+        await wrapper.setProps({title: "Updated subagent"})
+        expect(wrapper.findAll("h1").map(heading => heading.text())).toEqual(["Updated subagent"])
+    })
     it("keeps the menu and parent navigation when the bar is hidden", async () => {
         reloadSettings()
         updateSettings({showTitleBar: false})
