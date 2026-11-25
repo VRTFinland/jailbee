@@ -1602,7 +1602,7 @@ def test_run_apply_partial_restart_failure(make_cfg, tmp_path: Path, mocker: Moc
     assert result.fully_successful is False
 
 
-@pytest.mark.parametrize("setup", ["complete", "failed", "restarted"])
+@pytest.mark.parametrize("setup", ["complete", "failed", "restarted", "identity-unavailable"])
 def test_apply_records_only_the_start_it_successfully_sets_up(make_cfg, tmp_path, mocker, setup):
     from jailbee.apply import run_apply
     from jailbee.autostart_plan import AutostartPlan
@@ -1633,14 +1633,19 @@ def test_apply_records_only_the_start_it_successfully_sets_up(make_cfg, tmp_path
 
     def boot(*args, **kwargs):
         raw["last_used_at"] = "2026-11-25T10:00:00Z"
+        if setup == "identity-unavailable":
+            # Fail only the identity capture immediately after the restart.
+            incus.list_containers.side_effect = [IncusError("query failed"), [raw]]
 
     mocker.patch("jailbee.lifecycle.boot_container", side_effect=boot)
 
     def autostart(*args, **kwargs):
         if setup == "failed":
             raise IncusError("setup failed")
-        if setup == "restarted":
+        if setup in ("restarted", "identity-unavailable"):
             raw["last_used_at"] = "2026-11-25T11:00:00Z"
+        if setup == "identity-unavailable":
+            incus.list_containers.side_effect = None
         return AutostartPlan(blocking=[], detached=[])
 
     mocker.patch("jailbee.autostart.run_autostart", side_effect=autostart)

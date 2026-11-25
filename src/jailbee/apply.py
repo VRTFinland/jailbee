@@ -978,5 +978,5 @@ def _restart_one(
         # would spawn one supervisor per container and make it lie.
         override="wait",
     )
-    if marker_written:
+    if marker_written and boot_identity is not None:
         record(incus, name, "handled", expected_start=boot_identity)
