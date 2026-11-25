@@ -136,7 +136,7 @@ def test_snapshot_carries_only_existing_resumable_repositories(mocker):
     )
     saved = g.tick(active=True, refresh=True, roots=[])
     assert isinstance(saved, Snapshot)
-    assert saved.resumable_repos == ["alpha", None]
+    assert saved.resumable_repos == ["alpha"]
     assert decode(encode(saved)) == saved
 
     path.write_text(json.dumps({"version": 1, "containers": {}}))
@@ -187,10 +187,13 @@ def test_reboot_without_saved_set_offers_resume_without_container_probes(mocker)
     incus.exec.assert_not_called()
 
 
-def test_boot_before_host_boot_without_record_does_not_offer_resume(mocker):
-    container = dataclasses.replace(_ci("alpha-x"), start_identity="2000-01-01T00:00:00Z")
-    g = _gatherer(mocker, lambda *a, **k: [RepoGroup("alpha", "/a", None, [container])], _Clock())
+def test_running_orphan_without_a_record_never_offers_resume(mocker):
+    container = dataclasses.replace(
+        _ci("lost-x"), repo="lost", start_identity="2026-11-25T09:00:00Z"
+    )
+    g = _gatherer(mocker, lambda *a, **k: [RepoGroup("lost", None, None, [container])], _Clock())
     snapshot = g.tick(active=True, refresh=True, roots=[])
+
     assert isinstance(snapshot, Snapshot)
     assert snapshot.resumable_repos == []
 

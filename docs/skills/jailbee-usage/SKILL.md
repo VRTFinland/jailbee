@@ -65,8 +65,9 @@ excluded repos and orphans remain untouched, with their saved entries left for
 a local resume. Global offers Resume for eligible saved containers, or running
 in-scope containers whose Incus start identity differs from the host's handled
 boot record. Completed/skipped setup records that start and hides Resume until
-the next boot. Starts since host boot without a record offer recovery once after
-upgrading; Resume verifies or completes setup and backfills the record. Refresh
+the next boot, including after successful `jailbee apply` restarts. Running
+containers without a record offer recovery once after upgrading; Resume verifies
+or completes setup and backfills the record. Orphan groups never offer Resume. Refresh
 does not probe guest boot markers.
 An unreadable journal keeps Resume available locally to report the error.
 Actual host reboot and

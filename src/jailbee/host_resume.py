@@ -71,33 +71,15 @@ def _read_set() -> ResumeSet:
         raise ValueError(f"Cannot read {path}: {exc}") from exc
 
 
-def host_boot_time() -> float | None:
-    """Host boot epoch from the kernel, or None when the clock is unavailable."""
-    try:
-        return next(
-            float(line.split()[1])
-            for line in Path("/proc/stat").read_text().splitlines()
-            if line.startswith("btime ")
-        )
-    except (OSError, ValueError, IndexError, StopIteration):
-        return None
-
-
-def _needs_setup(container: ContainerInfo, state: ResumeSet, boot: float | None) -> bool:
+def _needs_setup(container: ContainerInfo, state: ResumeSet) -> bool:
     identity = container.start_identity
-    if identity is None:
-        return False
-    if container.name in state.handled:
-        return state.handled[container.name] != identity
-    # Upgrade recovery: Incus has already started this instance since host boot,
-    # but an older JailBee could not have recorded completion on the host.
-    from datetime import datetime
-
-    return boot is None or datetime.fromisoformat(identity).timestamp() >= boot
+    # Missing records offer one-time upgrade recovery. Every running instance
+    # necessarily started after host boot; no separate host clock is needed.
+    return identity is not None and state.handled.get(container.name) != identity
 
 
 def resumable_repos(groups: list[RepoGroup]) -> list[str | None]:
-    """Resume candidates; None denotes local-only recovery (orphans or read errors)."""
+    """Resume candidates; None denotes local-only journal error recovery."""
     from jailbee.config import ORPHAN_BASE_PREFIX
 
     try:
@@ -105,21 +87,19 @@ def resumable_repos(groups: list[RepoGroup]) -> list[str | None]:
     except (OSError, ValueError):
         # Keep the command reachable locally so it can report the journal error.
         return [None]
-    boot = host_boot_time()
     saved = [
         g
         for g in groups
-        if g.prefix != ORPHAN_BASE_PREFIX
+        if g.repo_root is not None
+        and g.prefix != ORPHAN_BASE_PREFIX
         and any(
             c.name in state.containers
             or (c.name in state.stopping and c.state != "Running")
-            or (c.state == "Running" and _needs_setup(c, state, boot))
+            or (c.state == "Running" and _needs_setup(c, state))
             for c in g.containers
         )
     ]
-    return [g.prefix for g in saved if g.repo_root is not None] + (
-        [None] if any(g.repo_root is None for g in saved) else []
-    )
+    return [g.prefix for g in saved]
 
 
 def _write_set(state: ResumeSet) -> None:
@@ -420,7 +400,7 @@ def _resume(
                 ok = False
                 continue
             if container.state == "Running" and name not in pending:
-                from jailbee.boot_state import MARKER
+                from jailbee.boot_state import MARKER, current_start
 
                 # The marker also covers empty plans and intentional skips.
                 # Older boots have no marker: retain tmux as a fallback.
@@ -440,6 +420,9 @@ def _resume(
                 from jailbee.autostart_plan import AutostartTrigger, plan_autostart
                 from jailbee.autostart_profiles import profiled_config
 
+                # A probe spanning a restart cannot acknowledge either boot.
+                if current_start(incus, name) != container.start_identity:
+                    continue
                 if present in ("present", "handled", "skipped"):
                     if container.start_identity is not None:
                         remember_boot(name, container.start_identity)

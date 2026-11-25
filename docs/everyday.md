@@ -120,9 +120,10 @@ for an existing saved container or a running container needing boot setup in an
 eligible repository. The host records each completed or skipped start in the
 same journal, keyed by Incus `last_used_at`. A changed start identity offers
 Resume without probing inside containers on each refresh; a matching record
-hides it in steady state. After upgrading from a version without these records,
-a container started since host boot is offered once, until Resume verifies or
-completes its setup. Destroy and local Resume prune vanished boot records.
+hides it in steady state, including after successful `jailbee apply` restarts.
+After upgrading from a version without these records, a running container is
+offered once, until Resume verifies or completes its setup. Orphan groups never
+offer Resume. Destroy and local Resume prune vanished boot records.
 
 ## Snapshots and rollback
 

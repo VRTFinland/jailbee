@@ -1602,6 +1602,62 @@ def test_run_apply_partial_restart_failure(make_cfg, tmp_path: Path, mocker: Moc
     assert result.fully_successful is False
 
 
+@pytest.mark.parametrize("setup", ["complete", "failed", "restarted", "identity-unavailable"])
+def test_apply_records_only_the_start_it_successfully_sets_up(make_cfg, tmp_path, mocker, setup):
+    from jailbee.apply import run_apply
+    from jailbee.autostart_plan import AutostartPlan
+    from jailbee.dashboard.model import RepoGroup
+    from jailbee.global_config import GlobalConfig
+    from jailbee.host_resume import resumable_repos
+    from jailbee.lifecycle import list_containers
+
+    cfg = make_cfg(tmp_path, container_prefix="myrepo")
+    incus = MagicMock(spec=Incus)
+    raw = {
+        "name": "myrepo-work",
+        "status": "Running",
+        "profiles": ["myrepo-base"],
+        "last_used_at": "2026-11-25T09:00:00Z",
+    }
+    incus.list_containers.return_value = [raw]
+    incus.config_get.return_value = ""
+    incus.exec.return_value = "recorded"
+    incus.profile_show.return_value = "config: {}\ndevices: {}\n"
+    incus.network_acl_list.return_value = []
+    incus.network_get.return_value = ""
+    mocker.patch("jailbee.lifecycle.current_network_mode", return_value="strict")
+    mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/repo")
+    mocker.patch("jailbee.hosts.sync_hosts")
+    mocker.patch("jailbee.egress_proxy.sync_container")
+    mocker.patch("jailbee.autostart.inject_github_token")
+
+    def boot(*args, **kwargs):
+        raw["last_used_at"] = "2026-11-25T10:00:00Z"
+        if setup == "identity-unavailable":
+            # Fail only the identity capture immediately after the restart.
+            incus.list_containers.side_effect = [IncusError("query failed"), [raw]]
+
+    mocker.patch("jailbee.lifecycle.boot_container", side_effect=boot)
+
+    def autostart(*args, **kwargs):
+        if setup == "failed":
+            raise IncusError("setup failed")
+        if setup in ("restarted", "identity-unavailable"):
+            raw["last_used_at"] = "2026-11-25T11:00:00Z"
+        if setup == "identity-unavailable":
+            incus.list_containers.side_effect = None
+        return AutostartPlan(blocking=[], detached=[])
+
+    mocker.patch("jailbee.autostart.run_autostart", side_effect=autostart)
+
+    result = run_apply(cfg, incus, GlobalConfig(), assume_yes=True)
+
+    assert result.fully_successful is (setup != "failed")
+    assert resumable_repos(
+        [RepoGroup("myrepo", str(tmp_path), None, list_containers(cfg, incus))]
+    ) == ([] if setup == "complete" else ["myrepo"])
+
+
 def test_run_apply_all_restarts_succeed_is_fully_successful(
     make_cfg, tmp_path: Path, mocker: MockerFixture
 ) -> None:

@@ -256,8 +256,9 @@ visible repositories: excluded repos and orphans are untouched, including
 saved resume entries. This applies even with `restrict_host: false`; a local
 invocation remains host-wide. Resume uses the state service snapshot: it appears
 for an eligible saved container, or a running in-scope container whose Incus
-start identity differs from its host-side completed/skipped boot record. A start
-since host boot without a record is offered once for upgrade recovery. Matching
+start identity differs from its host-side completed/skipped boot record. A running
+container without a record is offered once for upgrade recovery; orphan groups
+never offer Resume. Matching
 records hide Resume in steady state; refresh never probes guest boot markers.
 An unreadable journal offers local-only Resume so the
 command can report the error.

@@ -262,6 +262,37 @@ def test_resume_backfills_handled_boot_and_hides_upgrade_offer(host, mocker, mar
     assert candidates() == []
 
 
+@pytest.mark.parametrize("marker", ["handled", "skipped", "present", "missing"])
+def test_resume_does_not_acknowledge_a_start_that_changed_during_the_probe(host, mocker, marker):
+    from jailbee.config import Autostart
+    from jailbee.dashboard.model import RepoGroup
+    from jailbee.host_resume import resumable_repos
+    from jailbee.lifecycle import list_containers
+
+    cfg, _, incus, _ = host
+    cfg = cfg.model_copy(update={"autostart": Autostart()})
+    mocker.patch("jailbee.cli._load_orphan_base_or_exit", return_value=cfg)
+    raw = incus.list_containers.return_value[0]
+    incus.list_containers.return_value = [raw]
+    original = "2026-11-25T09:00:00Z"
+    raw["last_used_at"] = original
+
+    def probe(*args, **kwargs):
+        raw["last_used_at"] = "2026-11-25T10:00:00Z"
+        return marker
+
+    incus.exec.side_effect = probe
+    result = CliRunner().invoke(app, ["resume"])
+
+    assert result.exit_code == 0, result.output
+    # Neither the listed start nor the new one was verified by this probe.
+    for identity in [raw["last_used_at"], original]:
+        raw["last_used_at"] = identity
+        assert resumable_repos(
+            [RepoGroup("one", str(cfg.repo_root), None, list_containers(cfg, incus))]
+        ) == ["one"]
+
+
 @pytest.mark.parametrize("marker", ["handled", "skipped"])
 def test_resume_honours_this_boot_decision_even_without_tmux(host, mocker, marker):
     _, _, incus, _ = host
