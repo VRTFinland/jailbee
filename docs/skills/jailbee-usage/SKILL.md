@@ -67,9 +67,11 @@ in-scope containers whose Incus start identity differs from the host's handled
 boot record. Completed/skipped setup records that start and hides Resume until
 the next boot, including after successful `jailbee apply` restarts. Running
 containers without a record offer recovery once after upgrading; Resume verifies
-or completes setup and backfills the record. Orphan groups never offer Resume. Refresh
-does not probe guest boot markers.
-An unreadable journal keeps Resume available locally to report the error.
+or completes setup and backfills the record. Unregistered orphan groups never
+offer Resume. A registered repo with an unloadable config offers local-only
+Resume for saved containers or running containers needing setup, so the command
+can report the config error and recovery hint. Refresh does not probe guest boot
+markers. An unreadable journal keeps Resume available locally to report the error.
 Actual host reboot and
 raw `incus stop` smoke tests remain unverified.
 

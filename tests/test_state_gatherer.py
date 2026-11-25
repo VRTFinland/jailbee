@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import dataclasses
+import json
+
+import pytest
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -196,6 +199,76 @@ def test_running_orphan_without_a_record_never_offers_resume(mocker):
 
     assert isinstance(snapshot, Snapshot)
     assert snapshot.resumable_repos == []
+
+
+@pytest.mark.parametrize("registered", [True, False])
+@pytest.mark.parametrize("saved", [False, True])
+@pytest.mark.parametrize("healthy_repo", [False, True])
+def test_broken_config_resume_is_local_only_and_requires_registration(
+    tmp_path, mocker, make_cfg, db_session, registered, saved, healthy_repo
+):
+    from jailbee.dashboard.menus import global_menu_actions
+    from jailbee.dashboard.model import RepoTarget, gather_live
+    from jailbee.db.models import RegisteredRepo
+    from jailbee.state_service.protocol import decode, encode
+
+    root = tmp_path / "broken"
+    (root / ".jailbee").mkdir(parents=True)
+    (root / ".jailbee" / "config.yaml").write_text("invalid: [")
+    if registered:
+        db_session.add(
+            RegisteredRepo(
+                container_prefix="alpha", repo_root=str(root), registered_at=datetime.now(UTC)
+            )
+        )
+    db_session.commit()
+    mocker.patch("jailbee.db.get_engine", return_value=db_session.get_bind())
+    mocker.patch("jailbee.remote_ssh.repo_scope.get_engine", return_value=db_session.get_bind())
+    mocker.patch(
+        "jailbee.config.load_orphan_base_config", return_value=make_cfg(tmp_path / "base")
+    )
+    container = dataclasses.replace(
+        _ci("alpha-x"),
+        state="Stopped" if saved else "Running",
+        start_identity="2026-11-25T09:00:00Z",
+    )
+    if saved:
+        from jailbee.db import state_dir
+
+        path = state_dir() / "resume-set.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"version": 1, "containers": {"alpha-x": str(root)}}))
+    roots = [root]
+    if healthy_repo:
+        from jailbee.config import load_repo_config
+
+        healthy_root = tmp_path / "healthy"
+        cfg = make_cfg(healthy_root)
+        mocker.patch(
+            "jailbee.dashboard.model.load_repo_config",
+            side_effect=lambda path: cfg if path == healthy_root else load_repo_config(path),
+        )
+        roots.append(healthy_root)
+    mocker.patch(
+        "jailbee.dashboard.model.list_containers",
+        side_effect=lambda *a, **kw: [container] if kw["all_repos"] else [],
+    )
+    g = _gatherer(mocker, gather_live, _Clock())
+
+    snapshot = g.tick(active=True, refresh=True, roots=roots)
+
+    assert isinstance(snapshot, Snapshot)
+    assert snapshot.resumable_repos == ([None] if registered else [])
+    assert (("Resume…", "global-resume") in global_menu_actions(
+        resumable_repos=snapshot.resumable_repos
+    )) is registered
+    for transport in ("ssh", "web"):
+        assert ("Resume…", "global-resume") not in global_menu_actions(
+            transport=transport, resumable_repos=snapshot.resumable_repos
+        )
+    # A failed config must not enable ordinary repository actions.
+    assert all(RepoTarget.of(group) is None for group in snapshot.groups if group.prefix == "alpha")
+    assert decode(encode(snapshot)) == snapshot
 
 
 def test_orphan_placeholder_never_becomes_a_resume_repository(mocker):

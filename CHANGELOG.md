@@ -51,8 +51,9 @@ before editing `## Unreleased`.
   successful `apply` restarts; orphan groups never offer Resume, and a restart
   during a recovery probe cannot acknowledge a stale start. Records keep unplanned
   reboot recovery reachable without per-container boot probes; older starts without
-  records offer one-time upgrade recovery. Unreadable journals
-  keep local recovery visible; stale stopping entries do not count as saved work.
+  records offer one-time upgrade recovery. Unreadable journals and registered
+  repos with unloadable configs keep local recovery visible so Resume can report
+  the error; stale stopping entries do not count as saved work.
   Remote SSH and web command policy permit stop-all and
   resume within visible repositories, leaving excluded repos, orphans and their
   saved entries untouched; remote policy hides disallowed entries.

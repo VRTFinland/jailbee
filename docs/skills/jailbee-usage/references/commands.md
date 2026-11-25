@@ -1227,9 +1227,12 @@ start identity differs from the host's completed/skipped boot record. A matching
 record hides Resume in steady state, including after successful `jailbee apply`
 restarts. After upgrading from an older version, running containers without a
 record offer it once; Resume verifies or completes setup and records that start.
-Orphan groups never offer Resume. No guest boot marker is probed on refresh. Stale interrupted-stop entries for running containers do not
-count as saved work. An unreadable journal offers local-only Resume so the
-command can report the error. Remote policy hides disallowed commands and
+Unregistered orphan groups never offer Resume. Registered repos with unloadable
+configs offer local-only Resume for saved containers or running containers
+needing setup, so the command can report the error and recovery hint. No guest
+boot marker is probed on refresh. Stale interrupted-stop entries for running
+containers do not count as saved work. An unreadable journal offers local-only
+Resume so the command can report the error. Remote policy hides disallowed commands and
 limits stop/resume to visible repositories. Escape or
 an outside click closes it. `Enter`, then `g` still opens `Git →` (repo: Agent).
 With a container highlighted, `l` opens `Lifecycle →`, `t`

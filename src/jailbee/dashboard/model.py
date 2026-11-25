@@ -222,6 +222,9 @@ class RepoGroup:
     # Outbox "Sent" log records of every container of this repo (destroyed ones
     # included); set by the state service's gatherer, 0 = none.
     sent_count: int = 0
+    # Registered root whose config failed to load. Keep repo_root None so
+    # ordinary repository actions stay disabled; local Resume can report it.
+    unavailable_repo_root: str | None = None
 
 
 def _github_slug_of(cfg: Config) -> str | None:
@@ -431,7 +434,8 @@ def gather_rows(
     orphan bucket. An unloadable config is skipped (read-only — the registry
     is never pruned here). A final ``all_repos=True`` scan surfaces
     jailbee-managed containers whose repo we could not load, as view-only
-    orphan groups.
+    groups. Registered roots with failed configs are retained separately for
+    local-only Resume error recovery; ordinary repo actions stay disabled.
 
     Each repo's upgrade/deprecation advisories are gathered here too, from one
     state-DB session shared by the whole gather. The config load runs inside
@@ -508,6 +512,7 @@ def _gather_rows(
 
     groups: list[RepoGroup] = []
     covered: set[str] = set()
+    failed_roots: set[Path] = set()
     base_cfg = None
     # Collected, not printed: `clear_emit_caches` re-arms the once-per-process
     # emitters on every gather, so a legacy global key would hit the log each tick.
@@ -527,6 +532,7 @@ def _gather_rows(
                 notices.clear_emit_caches()
                 cfg = load_repo_config(root)
         except Exception:  # OSError, YAML parse, Pydantic validation, no scratch
+            failed_roots.add(root.resolve())
             continue
         advisories = _repo_advisories(stack, sessions, cfg, root, raised)
         if base_cfg is None:
@@ -616,6 +622,21 @@ def _gather_rows(
             )
         )
 
+    unavailable: dict[str, str] = {}
+    if failed_roots:
+        from jailbee.remote_ssh.repo_scope import registered_repos
+
+        unavailable = {
+            repo.prefix: str(repo.root)
+            for repo in registered_repos()
+            if repo.root.resolve() in failed_roots
+        }
+    if base_cfg is None and unavailable:
+        from jailbee.config import load_orphan_base_config
+
+        # No loaded repo is required to list the failed registered repos' rows.
+        base_cfg = load_orphan_base_config(Path.home())
+        instances = incus.list_containers()
     if base_cfg is not None:
         all_rows = list_containers(
             base_cfg,
@@ -633,7 +654,15 @@ def _gather_rows(
                 continue
             orphans.setdefault(c.repo, []).append(c)
         for prefix in sorted(orphans):
-            groups.append(RepoGroup(prefix, None, None, orphans[prefix]))
+            groups.append(
+                RepoGroup(
+                    prefix,
+                    None,
+                    None,
+                    orphans[prefix],
+                    unavailable_repo_root=unavailable.get(prefix),
+                )
+            )
 
     def _sort_key(g: RepoGroup) -> tuple[bool, str]:
         # Orphan groups are the ones with no repo root — `config_path` is no
