@@ -41,6 +41,7 @@ describe("page turns", () => {
     beforeEach(() => {
         vi.stubGlobal("matchMedia", () => ({matches: false, addEventListener() {}, removeEventListener() {}}))
         reloadSettings()
+        updateSettings({pageControls: "bar"})
     })
     afterEach(() => updateSettings({displayProfile: "normal"}))
 
@@ -55,14 +56,14 @@ describe("page turns", () => {
         updateSettings({displayProfile: "eink"})
         const wrapper = mount(Harness, {attachTo: document.body})
         await wrapper.vm.$nextTick()
-        expect(wrapper.get(".page-indicator").text()).toBe("Page 1 / 4")
+        expect(wrapper.get(".page-indicator").text()).toBe("1 / 4")
 
         await wrapper.get("button.next").trigger("click")
-        expect(wrapper.get(".page-indicator").text()).toBe("Page 2 / 4")
+        expect(wrapper.get(".page-indicator").text()).toBe("2 / 4")
         expect(scrollTo).toHaveBeenLastCalledWith(0, PAGE)
 
         await wrapper.get("button.prev").trigger("click")
-        expect(wrapper.get(".page-indicator").text()).toBe("Page 1 / 4")
+        expect(wrapper.get(".page-indicator").text()).toBe("1 / 4")
         expect(scrollTo).toHaveBeenLastCalledWith(0, 0)
     })
 
@@ -112,13 +113,134 @@ describe("page turns", () => {
         expect(y).toBe(64)
     })
 
+    it.each([
+        [100, 500, 4], [90, 450, 4], [75, 375, 5], [66, 330, 5], [50, 250, 6],
+    ] as const)("uses %i%% steps without changing the content end", async (pageStep, distance, count) => {
+        const scrollTo = fakeLayout(1750)
+        updateSettings({displayProfile: "eink", pageStep})
+        const wrapper = mount(Harness, {attachTo: document.body})
+        const pager = (wrapper.vm as unknown as {pager: Pager}).pager
+        expect(pager.pageCount.value).toBe(count)
+        pager.next()
+        expect(scrollTo).toHaveBeenLastCalledWith(0, distance)
+        pager.next()
+        expect(scrollTo).toHaveBeenLastCalledWith(0, distance * 2)
+        pager.end()
+        expect(scrollTo).toHaveBeenLastCalledWith(0, 1162)
+        expect(pager.page.value).toBe(count - 1)
+        wrapper.unmount()
+    })
+
+    it.each([
+        [100, 4, 8], [90, 3, 6], [75, 3, 6], [66, 2, 4], [50, 2, 4],
+    ] as const)("never skips a 4px landscape readable area at %i%%", async (pageStep, first, second) => {
+        const scrollTo = fakeLayout(900, 320, 60)
+        updateSettings({displayProfile: "eink", pageStep})
+        const Landscape = defineComponent({
+            setup() { const pager = usePager(() => 200); return () => h(PageNav, {pager}) },
+        })
+        const wrapper = mount(Landscape, {attachTo: document.body})
+        await wrapper.vm.$nextTick()
+        await wrapper.get("button.next").trigger("click")
+        expect(scrollTo).toHaveBeenLastCalledWith(0, first)
+        await wrapper.get("button.next").trigger("click")
+        expect(scrollTo).toHaveBeenLastCalledWith(0, second)
+        wrapper.unmount()
+    })
+
+    it.each([100, 90, 75, 66, 50] as const)("has one page for short content at %i%%", (pageStep) => {
+        fakeLayout(300)
+        updateSettings({displayProfile: "eink", pageStep})
+        const wrapper = mount(Harness, {attachTo: document.body})
+        expect((wrapper.vm as unknown as {pager: Pager}).pager.pageCount.value).toBe(1)
+        wrapper.unmount()
+    })
+
+    it.each([
+        [100, 600, 3], [90, 650, 3], [75, 725, 3], [66, 770, 4], [50, 850, 5],
+    ] as const)("anchors jumps and the last content page at %i%%", async (pageStep, previous, index) => {
+        const scrollTo = fakeLayout(1750)
+        updateSettings({displayProfile: "eink", pageStep})
+        const wrapper = mount(SpacerHarness, {attachTo: document.body})
+        const pager = (wrapper.vm as unknown as {pager: Pager}).pager
+        pager.goToElement({getBoundingClientRect: () => ({top: 1100}) as DOMRect} as Element)
+        expect(scrollTo).toHaveBeenLastCalledWith(0, 1100)
+        expect(pager.page.value).toBe(index)
+        pager.prev()
+        expect(scrollTo).toHaveBeenLastCalledWith(0, previous)
+        pager.end()
+        expect(scrollTo).toHaveBeenLastCalledWith(0, 750)
+        expect(pager.page.value).toBe(pager.pageCount.value - 1)
+        wrapper.unmount()
+    })
+
+    it("keeps a single page when a one-pixel step has no scroll range", () => {
+        fakeLayout(100, 320, 60)
+        updateSettings({displayProfile: "eink", pageStep: 50})
+        const Tiny = defineComponent({
+            setup(_, {expose}) {
+                const pager = usePager(() => 203)
+                expose({pager})
+                return () => h(PageNav, {pager})
+            },
+        })
+        const wrapper = mount(Tiny, {attachTo: document.body})
+        expect((wrapper.vm as unknown as {pager: Pager}).pager.pageCount.value).toBe(1)
+    })
+
+    it("updates the page grid immediately when the step changes", () => {
+        const scrollTo = fakeLayout(1750)
+        updateSettings({displayProfile: "eink"})
+        const wrapper = mount(Harness, {attachTo: document.body})
+        const pager = (wrapper.vm as unknown as {pager: Pager}).pager
+        updateSettings({pageStep: 50})
+        expect(pager.pageCount.value).toBe(6)
+        pager.next()
+        expect(scrollTo).toHaveBeenLastCalledWith(0, 250)
+    })
+
+    it("marks the previous bottom after an overlapping turn until the next turn or manual scroll", () => {
+        const scrollTo = fakeLayout(1750)
+        const y = clampScrolls(scrollTo, 1162)
+        updateSettings({displayProfile: "eink", pageStep: 75})
+        const wrapper = mount(Harness, {attachTo: document.body})
+        const pager = (wrapper.vm as unknown as {pager: Pager}).pager
+        expect(pager.guideTop.value).toBeNull()
+        pager.next()
+        expect(y()).toBe(375)
+        expect(pager.guideTop.value).toBe(125)
+        pager.next()
+        expect(pager.guideTop.value).toBeNull()
+        pager.next()
+        expect(pager.guideTop.value).toBe(125)
+        window.dispatchEvent(new Event("scroll"))
+        expect(pager.guideTop.value).toBeNull()
+        pager.prev()
+        pager.next()
+        expect(pager.guideTop.value).not.toBeNull()
+        pager.prev()
+        expect(pager.guideTop.value).toBeNull()
+        pager.next()
+        pager.end()
+        expect(pager.guideTop.value).toBeNull()
+    })
+
+    it("draws no guide for a full-height turn", () => {
+        clampScrolls(fakeLayout(1750), 1162)
+        updateSettings({displayProfile: "eink"})
+        const wrapper = mount(Harness, {attachTo: document.body})
+        const pager = (wrapper.vm as unknown as {pager: Pager}).pager
+        pager.next()
+        expect(pager.guideTop.value).toBeNull()
+    })
+
     it("stops at the first and last page", async () => {
         fakeLayout(1750)
         updateSettings({displayProfile: "eink"})
         const wrapper = mount(Harness, {attachTo: document.body})
         expect(wrapper.get("button.prev").attributes("disabled")).toBeDefined()
         for (let i = 0; i < 6; i++) await wrapper.get("button.next").trigger("click")
-        expect(wrapper.get(".page-indicator").text()).toBe("Page 4 / 4")
+        expect(wrapper.get(".page-indicator").text()).toBe("4 / 4")
         expect(wrapper.get("button.next").attributes("disabled")).toBeDefined()
     })
 
@@ -138,9 +260,9 @@ describe("page turns", () => {
         updateSettings({displayProfile: "eink"})
         const wrapper = mount(Harness, {attachTo: document.body})
         await wrapper.get(".tap-zone.forward").trigger("click")
-        expect(wrapper.get(".page-indicator").text()).toBe("Page 2 / 4")
+        expect(wrapper.get(".page-indicator").text()).toBe("2 / 4")
         await wrapper.get(".tap-zone.back").trigger("click")
-        expect(wrapper.get(".page-indicator").text()).toBe("Page 1 / 4")
+        expect(wrapper.get(".page-indicator").text()).toBe("1 / 4")
     })
 
     it("keeps Next enabled after a manual scroll that has not reached the bottom", async () => {
@@ -151,7 +273,7 @@ describe("page turns", () => {
         vi.spyOn(window, "scrollY", "get").mockReturnValue(750)
         window.dispatchEvent(new Event("scroll"))
         await wrapper.vm.$nextTick()
-        expect(wrapper.get(".page-indicator").text()).toBe("Page 2 / 3")
+        expect(wrapper.get(".page-indicator").text()).toBe("2 / 3")
         expect(wrapper.get("button.next").attributes("disabled")).toBeUndefined()
     })
 
@@ -162,7 +284,7 @@ describe("page turns", () => {
         vi.spyOn(window, "scrollY", "get").mockReturnValue(300)
         window.dispatchEvent(new Event("scroll"))
         await wrapper.vm.$nextTick()
-        expect(wrapper.get(".page-indicator").text()).toBe("Page 1 / 4")
+        expect(wrapper.get(".page-indicator").text()).toBe("1 / 4")
         await wrapper.get("button.next").trigger("click")
         expect(scrollTo).toHaveBeenLastCalledWith(0, 500)
     })
@@ -181,7 +303,7 @@ describe("page turns", () => {
         await wrapper.get("button.next").trigger("click")
         await wrapper.get("button.next").trigger("click")
         expect(y).toBe(1000)
-        expect(wrapper.get(".page-indicator").text()).toBe("Page 3 / 4")
+        expect(wrapper.get(".page-indicator").text()).toBe("3 / 4")
     })
 
     it("ends page turns where the content does, before trailing blank space", async () => {
@@ -191,11 +313,11 @@ describe("page turns", () => {
         updateSettings({displayProfile: "eink"})
         const wrapper = mount(SpacerHarness, {attachTo: document.body})
         await wrapper.vm.$nextTick()
-        expect(wrapper.get(".page-indicator").text()).toBe("Page 1 / 3")
+        expect(wrapper.get(".page-indicator").text()).toBe("1 / 3")
         await wrapper.get("button.next").trigger("click")
         await wrapper.get("button.next").trigger("click")
         expect(scrollTo).toHaveBeenLastCalledWith(0, 750)
-        expect(wrapper.get(".page-indicator").text()).toBe("Page 3 / 3")
+        expect(wrapper.get(".page-indicator").text()).toBe("3 / 3")
         expect(wrapper.get("button.next").attributes("disabled")).toBeDefined()
     })
 
@@ -208,7 +330,7 @@ describe("page turns", () => {
         ;(wrapper.vm as unknown as {pager: Pager}).pager.goToElement(el)
         await wrapper.vm.$nextTick()
         expect(scrollTo).toHaveBeenLastCalledWith(0, 1100)
-        expect(wrapper.get(".page-indicator").text()).toBe("Page 4 / 4")
+        expect(wrapper.get(".page-indicator").text()).toBe("4 / 4")
         await wrapper.get("button.prev").trigger("click")
         expect(scrollTo).toHaveBeenLastCalledWith(0, 600)
     })
@@ -231,10 +353,10 @@ describe("page turns", () => {
         updateSettings({displayProfile: "eink"})
         const wrapper = mount(Harness, {attachTo: document.body})
         await wrapper.vm.$nextTick()
-        expect(wrapper.get(".page-indicator").text()).toBe("Page 1 / 3")
+        expect(wrapper.get(".page-indicator").text()).toBe("1 / 3")
         for (let i = 0; i < 2; i++) await wrapper.get("button.next").trigger("click")
         expect(y()).toBe(962)
-        expect(wrapper.get(".page-indicator").text()).toBe("Page 3 / 3")
+        expect(wrapper.get(".page-indicator").text()).toBe("3 / 3")
         expect(wrapper.get("button.next").attributes("disabled")).toBeDefined()
     })
 
@@ -246,7 +368,7 @@ describe("page turns", () => {
         await wrapper.vm.$nextTick()
         for (let i = 0; i < 3; i++) await wrapper.get("button.next").trigger("click")
         expect(y()).toBe(1161.5)
-        expect(wrapper.get(".page-indicator").text()).toBe("Page 4 / 4")
+        expect(wrapper.get(".page-indicator").text()).toBe("4 / 4")
         expect(wrapper.get("button.next").attributes("disabled")).toBeDefined()
     })
 
@@ -258,9 +380,9 @@ describe("page turns", () => {
         updateSettings({displayProfile: "eink"})
         const wrapper = mount(SpacerHarness, {attachTo: document.body})
         await wrapper.vm.$nextTick()
-        expect(wrapper.get(".page-indicator").text()).toBe("Page 1 / 3")
+        expect(wrapper.get(".page-indicator").text()).toBe("1 / 3")
         for (let i = 0; i < 2; i++) await wrapper.get("button.next").trigger("click")
-        expect(wrapper.get(".page-indicator").text()).toBe("Page 3 / 3")
+        expect(wrapper.get(".page-indicator").text()).toBe("3 / 3")
         expect(wrapper.get("button.next").attributes("disabled")).toBeDefined()
     })
 
@@ -271,6 +393,6 @@ describe("page turns", () => {
         vi.spyOn(window, "scrollY", "get").mockReturnValue(PAGE * 2)
         window.dispatchEvent(new Event("scroll"))
         await wrapper.vm.$nextTick()
-        expect(wrapper.get(".page-indicator").text()).toBe("Page 3 / 4")
+        expect(wrapper.get(".page-indicator").text()).toBe("3 / 4")
     })
 })

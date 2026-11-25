@@ -4,12 +4,15 @@
 // reserved by default; a view with a sticky header reserves that too.
 import {computed, onBeforeUnmount, onMounted, ref, watch, type ComputedRef, type Ref} from "vue"
 
+import {settings} from "../settings"
 import {readableBottom} from "./readableBottom"
 
 export interface Pager {
     /** Zero-based current page. */
     page: Ref<number>
     pageCount: ComputedRef<number>
+    /** Viewport position of the previous page's bottom, or no guide. */
+    guideTop: Ref<number | null>
     next(): void
     prev(): void
     /** Jump to the last page that contains transcript content. */
@@ -34,6 +37,7 @@ const SUBPIXEL_SLACK = 1
 export function usePager(
     topInset: () => number = () => 0,
     trailingSpace: () => number = () => 0,
+    step: () => number = () => settings.pageStep / 100,
 ): Pager {
     const availableHeight = ref(1)
     function pageHeight(): number {
@@ -41,6 +45,9 @@ export function usePager(
     }
 
     const page = ref(0)
+    const guideTop = ref<number | null>(null)
+    // The turn's own scroll event must not erase its newly drawn guide.
+    let turnScroll: number | null = null
     // A jump can start a new grid at a reply rather than the document origin.
     // Page zero still starts at zero; its shortened turn never skips content.
     const gridShift = ref(0)
@@ -52,7 +59,7 @@ export function usePager(
     const anchorStop = ref(0)
     const maxScroll = computed(() => Math.max(lastStop.value, anchorStop.value))
     const pageCount = computed(
-        () => Math.ceil((maxScroll.value + gridShift.value - SUBPIXEL_SLACK) / pageHeight()) + 1,
+        () => Math.max(1, Math.ceil((maxScroll.value + gridShift.value - SUBPIXEL_SLACK) / pageHeight()) + 1),
     )
 
     function currentPage(): number {
@@ -67,12 +74,14 @@ export function usePager(
     function measure() {
         // Integer steps survive browser scroll-offset rounding without advancing
         // past the readable area or falling back onto the previous page.
-        const height = Math.max(1, Math.floor(readableBottom() - topInset()))
+        const height = Math.max(1, Math.floor((readableBottom() - topInset()) * step()))
         const scrollHeight = document.documentElement.scrollHeight
         const reachable = Math.max(0, scrollHeight - window.innerHeight)
         const contentEnd = scrollHeight - Math.max(0, trailingSpace())
         lastStop.value = Math.min(reachable, Math.max(0, Math.ceil(contentEnd - readableBottom())))
         if (height !== availableHeight.value) {
+            guideTop.value = null
+            turnScroll = null
             availableHeight.value = height
             gridShift.value = 0
             anchorStop.value = 0
@@ -81,21 +90,35 @@ export function usePager(
     }
 
     function syncFromScroll() {
+        if (turnScroll === null || Math.abs(window.scrollY - turnScroll) > SUBPIXEL_SLACK) {
+            guideTop.value = null
+        }
+        turnScroll = null
         measure()
         page.value = currentPage()
     }
 
-    watch(topInset, () => {
+    watch([topInset, step], () => {
         // A resized header changes the page grid without moving the reader.
         measure()
         page.value = currentPage()
     }, {flush: "sync"})
 
-    function goTo(index: number) {
+    function goTo(index: number, forward = false) {
         measure()
+        const hadGuide = guideTop.value !== null
+        guideTop.value = null
+        const previousY = window.scrollY
+        const previousBottom = previousY + readableBottom()
         const target = Math.min(Math.max(0, index), pageCount.value - 1)
+        const y = Math.max(0, Math.min(maxScroll.value, target * pageHeight() - gridShift.value))
         page.value = target
-        window.scrollTo(0, Math.max(0, Math.min(maxScroll.value, target * pageHeight() - gridShift.value)))
+        turnScroll = y
+        window.scrollTo(0, y)
+        if (forward && !hadGuide && step() < 1 && window.scrollY > previousY) {
+            const top = previousBottom - window.scrollY
+            if (top > topInset() && top < readableBottom()) guideTop.value = top
+        }
     }
 
     let observer: ResizeObserver | null = null
@@ -117,9 +140,10 @@ export function usePager(
     return {
         page,
         pageCount,
+        guideTop,
         next: () => {
             measure()
-            goTo(page.value + 1)
+            goTo(page.value + 1, true)
         },
         prev: () => {
             measure()
