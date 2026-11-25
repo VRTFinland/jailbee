@@ -10,6 +10,7 @@ that has drifted from the landing page.
 from __future__ import annotations
 
 import importlib.util
+import re
 from pathlib import Path
 from types import ModuleType
 
@@ -418,3 +419,48 @@ def test_the_resolver_rejects_a_page_and_an_anchor_that_do_not_exist() -> None:
     assert resolve("docs/releasing/") is not None
     assert resolve("docs/skills/jailbee-usage/SKILL/") is not None
     assert resolve("docs/README/") is not None
+
+
+_MD_LINK = re.compile(r"(?<!!)\[[^\]]*\]\(([^)\s]+)\)")
+_HTML_ID = re.compile(r'<a id="([^"]+)"')
+
+
+def _ids(page: Path) -> set[str]:
+    """Heading ids plus explicit `<a id="…">` anchors."""
+    from tests.docs_links import anchors
+
+    return anchors(page) | set(_HTML_ID.findall(page.read_text()))
+
+
+def _relative_link_errors(page: Path) -> list[str]:
+    """Each relative link of `page` whose file or heading does not exist."""
+    errors = []
+    in_code = False
+    for line in page.read_text().splitlines():
+        if line.lstrip().startswith(("```", "~~~")):
+            in_code = not in_code
+        if in_code:
+            continue
+        for target in _MD_LINK.findall(line):
+            if "://" in target or target.startswith(("mailto:", "/")):
+                continue
+            path, _, fragment = target.partition("#")
+            dest = page.parent.joinpath(path).resolve() if path else page
+            where = f"{page.relative_to(REPO_ROOT)}: {target}"
+            if not dest.exists():
+                errors.append(f"{where}: no such file")
+            elif fragment and dest.suffix == ".md" and fragment not in _ids(dest):
+                errors.append(f"{where}: no heading with id {fragment!r}")
+    return errors
+
+
+@pytest.mark.parametrize(
+    "page",
+    sorted([*DOCS.glob("*.md"), *(DOCS / "adr").glob("*.md")]),
+    ids=lambda p: str(p.relative_to(DOCS)),
+)
+def test_every_relative_link_lands(page: Path) -> None:
+    """The site build checks links only between published pages; the ADRs
+    under docs/adr/ are read on GitHub, so nothing else would catch a link
+    there that points at a moved file or a renamed heading."""
+    assert _relative_link_errors(page) == []

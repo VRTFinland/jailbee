@@ -798,8 +798,8 @@ h1 {
     border: 2px solid var(--border-strong);
 }
 /* In e-ink the bar owns the bottom edge: the buttons sit above it. */
-:root[data-profile="eink"] .jump-latest,
-:root[data-profile="eink"] .new-messages {
+[data-profile="eink"] .jump-latest,
+[data-profile="eink"] .new-messages {
     bottom: calc(var(--guard-bottom) + var(--page-nav-height) + var(--space-3));
 }
 </style>

@@ -196,19 +196,19 @@ function agentLabel(state: string): string {
 /* E-ink has no colour: phases differ by border-left style, Stopped by an open
    top/right/bottom outline instead of a fade (greys repaint badly); phases only
    style the left edge, so the two cannot be confused. */
-:root[data-theme="eink"] .row[data-phase="booting"] {
+[data-theme="eink"] .row[data-phase="booting"] {
     border-left-style: dashed;
 }
-:root[data-theme="eink"] .row[data-phase="autostart"] {
+[data-theme="eink"] .row[data-phase="autostart"] {
     border-left-style: dotted;
 }
-:root[data-theme="eink"] .row[data-phase="job"] {
+[data-theme="eink"] .row[data-phase="job"] {
     border-left-style: double;
 }
-:root[data-theme="eink"] .row[data-phase="failed"] {
+[data-theme="eink"] .row[data-phase="failed"] {
     border-left-width: 8px;
 }
-:root[data-theme="eink"] .row[data-state="Stopped"] {
+[data-theme="eink"] .row[data-state="Stopped"] {
     opacity: 1;
     border-top-style: none;
     border-right-style: none;

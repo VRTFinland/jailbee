@@ -55,28 +55,29 @@
     --md-shape-extra-large: 28px;
     --md-shape-full: 9999px;
 
-    /* Hit targets: no control under 44px; list rows 48px for a fine pointer,
-       56px for a coarse one (below). */
+    /* Hit targets. `min`: the smallest a control may be, on any pointer.
+       `row`: a list row, 48px for a fine pointer and 56px for a coarse one
+       (below). */
     --md-target-min: 44px;
-    --md-target-small: 44px;
-    --md-target-medium: 48px;
-    --md-target-large: 56px;
     --md-target-row: 48px;
 
-    /* Spacing (4px grid). */
-    --md-space-1: 0.25rem;
-    --md-space-2: 0.5rem;
-    --md-space-3: 0.75rem;
-    --md-space-4: 1rem;
-    --md-space-5: 1.5rem;
-    --md-space-6: 2rem;
+    /* Spacing on a 4px grid, each named by its px size at the default 16px
+       root (`--md-space-16` is 1rem), so a name never hides its value. In rem,
+       so the body-size setting scales them. */
+    --md-space-4: 0.25rem;
+    --md-space-8: 0.5rem;
+    --md-space-12: 0.75rem;
+    --md-space-16: 1rem;
+    --md-space-24: 1.5rem;
+    --md-space-32: 2rem;
 
-    /* Layers, bottom to top. */
+    /* Layers, bottom to top. A modal's scrim sits under its dialog; a menu or
+       select opened from a dialog sits above both. */
     --md-layer-raised: 10;
     --md-layer-sticky: 20;
-    --md-layer-popover: 40;
-    --md-layer-dialog: 50;
-    --md-layer-scrim: 100;
+    --md-layer-scrim: 30;
+    --md-layer-dialog: 40;
+    --md-layer-popover: 50;
 
     /* Motion: brief state transitions; zero under reduced motion and e-ink. */
     --md-motion-duration: 150ms;
@@ -102,6 +103,8 @@
     --md-on-surface-variant: #43474e;
     --md-outline: #74777f;
     --md-outline-variant: #c4c6cf;
+    /* A border only e-ink draws: it has no tints to tell surfaces apart. */
+    --md-hairline: transparent;
     --md-primary: #3a5f94;
     --md-on-primary: #ffffff;
     --md-primary-container: #d5e3ff;
@@ -138,6 +141,7 @@
     --md-on-surface-variant: #c4c6cf;
     --md-outline: #8e9099;
     --md-outline-variant: #43474e;
+    --md-hairline: transparent;
     --md-primary: #a7c8ff;
     --md-on-primary: #04305f;
     --md-primary-container: #224876;
@@ -174,6 +178,7 @@
     --md-on-surface-variant: #000000;
     --md-outline: #000000;
     --md-outline-variant: #000000;
+    --md-hairline: #000000;
     --md-primary: #000000;
     --md-on-primary: #ffffff;
     --md-primary-container: #ffffff;
@@ -217,10 +222,10 @@
     --phase-failed: var(--md-phase-failed);
     --font-body: var(--md-font-body);
     --font-mono: var(--md-font-mono);
-    --space-1: var(--md-space-1);
-    --space-2: var(--md-space-2);
-    --space-3: var(--md-space-4);
-    --space-4: var(--md-space-5);
+    --space-1: var(--md-space-4);
+    --space-2: var(--md-space-8);
+    --space-3: var(--md-space-16);
+    --space-4: var(--md-space-24);
     --radius: var(--md-shape-small);
 }
 /* Dark cards sit one tone above the page, as in the approved mockup. */
@@ -241,11 +246,10 @@
     --quick-trigger-size: 2.75rem;
     --quick-trigger-top: 0.5rem;
 }
-:root[data-theme="eink"] a,
 [data-theme="eink"] a {
     text-decoration: underline;
 }
-:root[data-theme="eink"] .notice {
+[data-theme="eink"] .notice {
     border: 1px solid #000;
 }
 
@@ -309,21 +313,37 @@ body {
     max-width: calc(100vw - var(--page-controls-width) - 3 * var(--space-2));
 }
 
+/* Theme and profile scoping (#167): a theme or display-profile difference is
+   a token (custom properties inherit from the nearest `[data-theme]` or
+   `[data-profile]`, so a /ui gallery panel shows its own), or failing that a
+   rule `[data-profile="eink"] .x` / `[data-theme="eink"] .x` without `:root`.
+   Never `:root[data-…] .x`: no panel can scope it. `:root` stays only for what
+   exists once per page (body padding, the page controls and what is placed
+   around them). Exception: the generated `highlight.css` (Pygments) keys code
+   colours to the page's theme; the gallery shows no highlighted code. */
+
 /* E-ink never animates, nor does anything under reduced motion; edge tap
-   zones need margins clear of links. */
+   zones need margins clear of links. The motion token follows the nearest
+   profile; the blanket stop below skips a normal-profile scope inside an
+   e-ink one (a gallery panel on an e-ink page). A browser without complex
+   `:not()` drops the blanket stop; transitions on the token still stop. */
 [data-profile="eink"] {
     --md-motion-duration: 0ms;
 }
+[data-profile="normal"] {
+    --md-motion-duration: 150ms;
+}
 [data-profile="eink"],
-[data-profile="eink"] *,
-[data-profile="eink"] *::before,
-[data-profile="eink"] *::after {
+[data-profile="eink"] *:not([data-profile="normal"], [data-profile="eink"] [data-profile="normal"] *),
+[data-profile="eink"] *:not([data-profile="normal"], [data-profile="eink"] [data-profile="normal"] *)::before,
+[data-profile="eink"] *:not([data-profile="normal"], [data-profile="eink"] [data-profile="normal"] *)::after {
     transition: none !important;
     animation: none !important;
     scroll-behavior: auto !important;
 }
 @media (prefers-reduced-motion: reduce) {
-    :root {
+    :root,
+    [data-profile] {
         --md-motion-duration: 0ms;
     }
     *,

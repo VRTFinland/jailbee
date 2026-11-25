@@ -72,7 +72,7 @@ describe("row phase styling", () => {
     })
 
     it("tells phases apart in e-ink by edge shape, not colour", () => {
-        const eink = (p: string) => decls(rows, `:root[data-theme="eink"] .row[data-phase="${p}"]`)
+        const eink = (p: string) => decls(rows, `[data-theme="eink"] .row[data-phase="${p}"]`)
         expect(eink("booting")["border-left-style"]).toBe("dashed")
         expect(eink("autostart")["border-left-style"]).toBe("dotted")
         expect(eink("job")["border-left-style"]).toBe("double")
@@ -80,7 +80,7 @@ describe("row phase styling", () => {
     })
 
     it("marks a Stopped row in e-ink with an open outline no phase edge can mimic", () => {
-        const d = decls(rows, ':root[data-theme="eink"] .row[data-state="Stopped"]')
+        const d = decls(rows, '[data-theme="eink"] .row[data-state="Stopped"]')
         expect(d.opacity).toBe("1")
         for (const side of ["top", "right", "bottom"]) expect(d[`border-${side}-style`], side).toBe("none")
         expect(d["border-left-style"]).toBeUndefined()

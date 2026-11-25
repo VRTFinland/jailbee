@@ -46,5 +46,5 @@ header { display: flex; align-items: center; justify-content: space-between; }
 .jump-panel > button { display: block; width: 100%; text-align: left; border-bottom: 1px solid var(--border); }
 button { min-height: 44px; padding: var(--space-2); color: inherit; background: transparent; border: 0; font: inherit; cursor: pointer; }
 .excerpt { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-:root[data-profile="eink"] .jump-backdrop { background: transparent; }
+[data-profile="eink"] .jump-backdrop { background: transparent; }
 </style>
