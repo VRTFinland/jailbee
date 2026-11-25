@@ -25,14 +25,22 @@ def start_identity(raw: object) -> str | None:
     return raw if parsed.year > 1 and parsed.tzinfo is not None else None
 
 
-def _current_start(incus: Incus, name: str) -> str | None:
-    for raw in incus.list_containers():
+def current_start(incus: Incus, name: str) -> str | None:
+    """Best-effort identity captured before any boot setup is run."""
+    try:
+        instances = incus.list_containers()
+    except (IncusError, OSError):
+        return None
+    for raw in instances:
         if raw.get("name") == name and raw.get("status") == "Running":
             return start_identity(raw.get("last_used_at"))
     return None
 
 
-def record(incus: Incus, name: str, decision: Literal["started", "handled", "skipped"]) -> bool:
+def record(
+    incus: Incus, name: str, decision: Literal["started", "handled", "skipped"],
+    *, expected_start: str | None = None,
+) -> bool:
     """Best-effort boot state; an unfinished start stays eligible for resume.
 
     Complete only a recorded start. A detached continuation then avoids a
@@ -54,7 +62,9 @@ def record(incus: Incus, name: str, decision: Literal["started", "handled", "ski
     try:
         # Capture before the guest write so a concurrent restart cannot make
         # completion of the old boot acknowledge the new start.
-        identity = _current_start(incus, name) if decision != "started" else None
+        identity = current_start(incus, name) if decision != "started" else None
+        if expected_start is not None and identity != expected_start:
+            return False
         written = incus.exec(name, ["bash", "-c", script])
         if identity is not None and written == "recorded":
             from jailbee.host_resume import remember_boot

@@ -53,9 +53,11 @@ def test_job_file_round_trip_preserves_the_effective_autostart(tmp_path):
         override=None,
         log_path="/tmp/x.log",
         progress_path="/tmp/x.progress.json",
+        boot_identity="2099-11-25T09:00:00Z",
     )
     restored = bg.dict_to_autostart_job(json.loads(json.dumps(payload)))
 
+    assert restored.boot_identity == "2099-11-25T09:00:00Z"
     assert restored.container_name == "c1"
     assert restored.from_trigger == "on_start"
     assert restored.repo_dir == "/home/dev/repo"
@@ -343,6 +345,31 @@ def test_detached_boot_is_completed_only_after_all_stages_succeed(
         assert not path.exists()
     else:
         assert json.loads(path.read_text())["handled"] == {"c1": "2099-11-25T09:00:00Z"}
+
+
+def test_detached_setup_cannot_acknowledge_another_start(tmp_path, mocker, make_cfg):
+    from dataclasses import replace
+
+    from jailbee import autostart as autostart_mod
+    from jailbee.dashboard.model import RepoGroup
+    from jailbee.host_resume import resumable_repos
+    from jailbee.lifecycle import ContainerInfo
+
+    block = Autostart.model_validate({"on_start": [_stage("deps", detach=True)]})
+    cfg = _cfg_with(make_cfg, tmp_path, block)
+    incus = mocker.MagicMock()
+    incus.exec.return_value = "recorded"
+    incus.list_containers.return_value = [{
+        "name": "c1", "status": "Running", "last_used_at": "2099-11-26T09:00:00Z",
+    }]
+    mocker.patch("jailbee.autostart.run_stages")
+    mocker.patch("jailbee.autostart.agent_autostart_steps", return_value=[])
+    spec = replace(_spec(tmp_path, block), boot_identity="2099-11-25T09:00:00Z")
+
+    autostart_mod.run_detached(cfg, incus, spec)
+
+    container = ContainerInfo("c1", "Running", None, None, None, start_identity="2099-11-26T09:00:00Z")
+    assert resumable_repos([RepoGroup("repo", str(tmp_path), None, [container])]) == ["repo"]
 
 
 def test_run_detached_runs_only_the_stages_past_the_boundary(tmp_path, mocker, make_cfg):

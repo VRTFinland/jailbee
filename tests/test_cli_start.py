@@ -27,7 +27,10 @@ def _host_autostart_config(mocker):
 
 
 @pytest.mark.parametrize("skip", [False, True])
-def test_start_records_boot_decision_even_when_no_tmux_is_needed(mocker, make_cfg, tmp_path, skip):
+@pytest.mark.parametrize("reboot_during_setup", [False, True])
+def test_start_records_boot_decision_even_when_no_tmux_is_needed(
+    mocker, make_cfg, tmp_path, skip, reboot_during_setup
+):
     from jailbee.boot_state import MARKER
     from jailbee.incus import Incus
 
@@ -56,6 +59,11 @@ def test_start_records_boot_decision_even_when_no_tmux_is_needed(mocker, make_cf
         }
     ]
 
+    if reboot_during_setup:
+        def restart(*args, **kwargs):
+            incus.list_containers.return_value[0]["last_used_at"] = "2099-11-26T09:00:00Z"
+        mocker.patch("jailbee.autostart.inject_github_token", side_effect=restart)
+
     result = runner.invoke(
         app, ["start", "myrepo-work", "--no-background"] + (["--no-autostart"] if skip else [])
     )
@@ -69,13 +77,13 @@ def test_start_records_boot_decision_even_when_no_tmux_is_needed(mocker, make_cf
         resumable_repos(
             [RepoGroup("myrepo", str(tmp_path), None, list_containers(cfg, incus, all_repos=True))]
         )
-        == []
+        == (["myrepo"] if reboot_during_setup else [])
     )
     expected = "skipped" if skip else "handled"
     assert any(
         MARKER in " ".join(call.args[1]) and expected in " ".join(call.args[1])
         for call in incus.exec.call_args_list
-    )
+    ) is not reboot_during_setup
 
 
 def test_start_calls_apply_hosts_for_strict_container(mocker):

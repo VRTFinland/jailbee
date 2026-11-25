@@ -2489,8 +2489,9 @@ def _new_container(
             groups.set_container_group(cfg, incus, name, wanted)
 
     incus.start(name)
-    from jailbee.boot_state import record
+    from jailbee.boot_state import current_start, record
 
+    boot_identity = current_start(incus, name)
     marker_written = record(incus, name, "started")
     # Clear a failed-refresh guard only after the repaired disk is mounted.
     sync_pr_bindings(incus, name, cfg=cfg)
@@ -2812,16 +2813,20 @@ def _new_container(
             if start_plan.detached:
                 detached_from = AutostartTrigger.ON_START.value
         if detached_from is not None and on_detach is not None:
+            from dataclasses import replace
+
+            handoff = start_plan if detached_from == AutostartTrigger.ON_START.value else create_plan
+            handoff = replace(handoff, boot_identity=boot_identity)
             on_detach(
                 effective_cfg.autostart,
                 detached_from,
                 repo_dir,
                 bool(effective_cfg.services),
-                start_plan if detached_from == AutostartTrigger.ON_START.value else None,
+                handoff,
             )
 
     if detached_from is None and marker_written:
-        record(incus, name, "handled" if opts.autostart else "skipped")
+        record(incus, name, "handled" if opts.autostart else "skipped", expected_start=boot_identity)
     return name
 
 
