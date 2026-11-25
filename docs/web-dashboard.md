@@ -134,6 +134,10 @@ screenshots. For intended design changes, run `make web-e2e-snapshots`, review
 the PNG diff and commit the references; see "Gallery screenshot references"
 in `tests_e2e/README.md` of your checkout.
 
+Before changing the browser app's look, read `frontend/DESIGN.md` in your
+checkout: which UI primitive to use, the design token families, the e-ink
+rules, and how to add a primitive.
+
 The **Web dashboard** GitHub Actions workflow runs both targets for pull
 requests and pushes to `main` or `dev` that change the frontend, web server,
 transcript reader, browser tests or their shared fixtures, dependency
