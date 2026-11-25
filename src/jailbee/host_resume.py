@@ -71,7 +71,19 @@ def _read_set() -> ResumeSet:
         raise ValueError(f"Cannot read {path}: {exc}") from exc
 
 
-def _needs_setup(container: ContainerInfo, state: ResumeSet) -> bool:
+def host_boot_time() -> float | None:
+    """Host boot epoch from the kernel, or None when the clock is unavailable."""
+    try:
+        return next(
+            float(line.split()[1])
+            for line in Path("/proc/stat").read_text().splitlines()
+            if line.startswith("btime ")
+        )
+    except (OSError, ValueError, IndexError, StopIteration):
+        return None
+
+
+def _needs_setup(container: ContainerInfo, state: ResumeSet, boot: float | None) -> bool:
     identity = container.start_identity
     if identity is None:
         return False
@@ -81,15 +93,7 @@ def _needs_setup(container: ContainerInfo, state: ResumeSet) -> bool:
     # but an older JailBee could not have recorded completion on the host.
     from datetime import datetime
 
-    try:
-        boot = next(
-            float(line.split()[1])
-            for line in Path("/proc/stat").read_text().splitlines()
-            if line.startswith("btime ")
-        )
-    except (OSError, ValueError, StopIteration):
-        return True  # No host boot clock: prefer one recovery offer.
-    return datetime.fromisoformat(identity).timestamp() >= boot
+    return boot is None or datetime.fromisoformat(identity).timestamp() >= boot
 
 
 def resumable_repos(groups: list[RepoGroup]) -> list[str | None]:
@@ -101,6 +105,7 @@ def resumable_repos(groups: list[RepoGroup]) -> list[str | None]:
     except (OSError, ValueError):
         # Keep the command reachable locally so it can report the journal error.
         return [None]
+    boot = host_boot_time()
     saved = [
         g
         for g in groups
@@ -108,7 +113,7 @@ def resumable_repos(groups: list[RepoGroup]) -> list[str | None]:
         and any(
             c.name in state.containers
             or (c.name in state.stopping and c.state != "Running")
-            or (c.state == "Running" and _needs_setup(c, state))
+            or (c.state == "Running" and _needs_setup(c, state, boot))
             for c in g.containers
         )
     ]
