@@ -116,7 +116,7 @@ def global_menu_actions(
     remote: bool = False,
     resumable_repos: Sequence[str | None] = (),
 ) -> list[tuple[str, str]]:
-    """Global leaves, filtered by command policy and the snapshot's saved repos."""
+    """Global leaves, filtered by command policy and snapshot resume candidates."""
     from jailbee.remote_ssh.repo_scope import scope_for_session
 
     excluded: set[str] = set()

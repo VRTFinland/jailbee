@@ -77,10 +77,10 @@ def _ci(name, git=None):
     return ContainerInfo(name, "Running", "strict", None, None, repo="alpha", git_status=git)
 
 
-def _gatherer(mocker, gather, clock, sent_counts=lambda: SentCounts(), wall_clock=None):
+def _gatherer(mocker, gather, clock, sent_counts=lambda: SentCounts(), wall_clock=None, incus=None):
     mocker.patch("jailbee.state_service.gatherer.sample_activity")
     return Gatherer(
-        mocker.Mock(),
+        incus if incus is not None else mocker.Mock(),
         CAD,
         sent_counts=sent_counts,
         gather=gather,
@@ -116,9 +116,13 @@ def test_snapshot_carries_only_existing_resumable_repositories(mocker):
     path = state_dir() / "resume-set.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     groups = [
-        RepoGroup("alpha", "/a", None, [_ci("alpha-x")]),
-        RepoGroup("beta", "/b", None, [dataclasses.replace(_ci("beta-x"), repo="beta")]),
-        RepoGroup("lost", None, None, [dataclasses.replace(_ci("lost-x"), repo="lost")]),
+        RepoGroup("alpha", "/a", None, [dataclasses.replace(_ci("alpha-x"), state="Stopped")]),
+        RepoGroup(
+            "beta", "/b", None, [dataclasses.replace(_ci("beta-x"), repo="beta", state="Stopped")]
+        ),
+        RepoGroup(
+            "lost", None, None, [dataclasses.replace(_ci("lost-x"), repo="lost", state="Stopped")]
+        ),
     ]
     g = _gatherer(mocker, lambda *a, **k: groups, _Clock())
     first = g.tick(active=True, refresh=True, roots=[])
@@ -139,6 +143,57 @@ def test_snapshot_carries_only_existing_resumable_repositories(mocker):
     empty = g.tick(active=True, refresh=True, roots=[])
     assert isinstance(empty, Snapshot)
     assert empty.resumable_repos == []
+
+
+def test_reboot_without_saved_set_offers_resume_without_container_probes(mocker):
+    from jailbee.dashboard.menus import global_menu_actions
+
+    groups = [RepoGroup("alpha", "/a", None, [_ci("alpha-x")])]
+    incus = mocker.Mock()
+    g = _gatherer(mocker, lambda *a, **k: groups, _Clock(), incus=incus)
+    snapshot = g.tick(active=True, refresh=True, roots=[])
+
+    assert isinstance(snapshot, Snapshot)
+    assert snapshot.resumable_repos == ["alpha"]
+    assert ("Resume…", "global-resume") in global_menu_actions(
+        resumable_repos=snapshot.resumable_repos
+    )
+    incus.exec.assert_not_called()
+
+
+def test_unreadable_resume_journal_offers_local_recovery_only(mocker):
+    from jailbee.dashboard.menus import global_menu_actions
+    from jailbee.db import state_dir
+
+    path = state_dir() / "resume-set.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("broken json")
+    g = _gatherer(mocker, lambda *a, **k: [], _Clock())
+    snapshot = g.tick(active=True, refresh=True, roots=[])
+
+    assert isinstance(snapshot, Snapshot)
+    assert ("Resume…", "global-resume") in global_menu_actions(
+        resumable_repos=snapshot.resumable_repos
+    )
+    assert ("Resume…", "global-resume") not in global_menu_actions(
+        transport="ssh", resumable_repos=snapshot.resumable_repos
+    )
+
+
+def test_stale_stopping_entry_for_running_container_does_not_offer_resume(mocker):
+    import json
+
+    from jailbee.db import state_dir
+
+    path = state_dir() / "resume-set.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"version": 1, "containers": {}, "stopping": {"alpha-x": "/a"}}))
+    groups = [RepoGroup("alpha", "/a", None, [_ci("alpha-x")])]
+    g = _gatherer(mocker, lambda *a, **k: groups, _Clock())
+    snapshot = g.tick(active=True, refresh=True, roots=[])
+
+    assert isinstance(snapshot, Snapshot)
+    assert snapshot.resumable_repos == []
 
 
 def test_a_base_gather_carries_the_last_git_status_forward(mocker):

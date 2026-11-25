@@ -1221,9 +1221,14 @@ Enter. `g` / F10 / the title's left-edge ☰ opens Global: Stop all…, Resume�
 Accounts (`A`), Notifications (`Q`), Global config (`E`), Settings (F2), Help, Quit.
 Stop all and Resume run `jailbee stop --all` / `jailbee resume` through the
 action runner, with CLI questions as modals and results in Notifications; no
-selected repo is needed. Resume appears only for an eligible existing saved
-container, using the state service snapshot. Remote policy hides disallowed
-commands and limits stop/resume to visible repositories. Escape or
+selected repo is needed. Resume uses the state service snapshot: eligible saved
+containers offer it, as do running in-scope containers when the journal is empty.
+This conservative fallback keeps unplanned reboot recovery reachable without
+probing each container's boot marker on every refresh; the command may report
+nothing to resume. Stale interrupted-stop entries for running containers do not
+count as saved work. An unreadable journal offers local-only Resume so the
+command can report the error. Remote policy hides disallowed commands and
+limits stop/resume to visible repositories. Escape or
 an outside click closes it. `Enter`, then `g` still opens `Git →` (repo: Agent).
 With a container highlighted, `l` opens `Lifecycle →`, `t`
 attaches tmux, `s` opens a shell (or starts a stopped container), `p` opens
