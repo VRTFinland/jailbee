@@ -254,8 +254,12 @@ other end is not at this host.
 leaves (`stop` and `resume`). Remotely they affect only containers owned by
 visible repositories: excluded repos and orphans are untouched, including
 saved resume entries. This applies even with `restrict_host: false`; a local
-invocation remains host-wide. Resume appears in the global menu only when an
-eligible existing container is saved in the state service's snapshot.
+invocation remains host-wide. Resume uses the state service snapshot: it appears
+for an eligible saved container, or a running in-scope container when the resume
+journal is empty (so recovery after an unplanned host reboot stays reachable).
+The latter is a conservative hint, not a boot-marker probe: the command may
+report nothing to resume. An unreadable journal offers local-only Resume so the
+command can report the error.
 
 While `restrict_host` is on, the commands that manage the host itself are
 refused in every mode, `full` and an allowlist naming them included:

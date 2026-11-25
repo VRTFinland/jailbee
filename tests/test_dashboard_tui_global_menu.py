@@ -105,11 +105,15 @@ def test_restrictive_ssh_menu_hides_disallowed_commands_on_the_pilot(mocker):
 
 
 def test_ssh_menu_omits_terminal_config_editor_even_when_command_policy_allows_it(mocker):
+    from tests.dashboard_pilot import FakeStateClient
+
     policy = RemoteSSHConfig(restrict_host=False, commands={"mode": "full"})
-    run = drive(mocker, ["g"], [], remote=True, transport="ssh", ssh_policy=policy)
+    client = FakeStateClient([])
+    client.resumable_repos = ["public"]
+    run = drive(mocker, ["g"], [], remote=True, transport="ssh", ssh_policy=policy, client=client)
     verbs = [item[1] for item in run.trace[1].overlay.actions]
     assert "global-stop-all" in verbs
-    assert "global-resume" not in verbs
+    assert "global-resume" in verbs
     assert "global-config-edit-global" not in verbs
 
 
@@ -141,10 +145,9 @@ def test_web_global_actions_omit_terminal_only_entries_and_top_level_settings():
 @pytest.mark.parametrize(
     "repos, expected", [((), False), (("secret",), False), (("public",), True)]
 )
-@pytest.mark.parametrize("transport", ["ssh", "web"])
-def test_resume_is_offered_only_for_an_eligible_saved_repo(repos, expected, transport):
+def test_resume_is_offered_only_for_an_eligible_saved_repo(repos, expected):
     policy = RemoteSSHConfig(commands={"mode": "full"}, excluded_repos=["secret"])
-    actions = menus.global_menu_actions(policy, transport=transport, resumable_repos=repos)
+    actions = menus.global_menu_actions(policy, transport="ssh", resumable_repos=repos)
     assert (
         ("Resume…", "global-resume") in actions
         if expected
@@ -191,6 +194,25 @@ def test_terminal_menu_uses_resumable_snapshot_fact(mocker, repos, expected):
     run = drive(mocker, ["g"], [], client=client)
     verbs = {verb for _, verb in run.trace[1].overlay.actions}
     assert ("global-resume" in verbs) == expected
+
+
+def test_ssh_terminal_menu_uses_only_allowed_resume_candidates(mocker):
+    from tests.dashboard_pilot import FakeStateClient
+
+    policy = RemoteSSHConfig(commands={"mode": "full"}, excluded_repos=["secret"])
+    client = FakeStateClient([])
+    client.resumable_repos = ["secret", "public"]
+
+    def only_excluded(app):
+        client.resumable_repos = ["secret"]
+        client.seq += 1
+
+    run = drive(
+        mocker, ["g", only_excluded], [], client=client,
+        transport="ssh", remote=True, ssh_policy=policy
+    )
+    assert "global-resume" in {v for _, v in run.trace[1].overlay.actions}
+    assert "global-resume" not in {v for _, v in run.trace[2].overlay.actions}
 
 
 def test_open_terminal_menu_tracks_resume_set_changes(mocker):

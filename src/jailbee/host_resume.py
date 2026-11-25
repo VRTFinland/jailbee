@@ -65,13 +65,26 @@ def _read_set() -> ResumeSet:
 
 
 def resumable_repos(groups: list[RepoGroup]) -> list[str | None]:
-    """Saved repos for the shared snapshot; None denotes local-only orphan entries."""
+    """Resume candidates; None denotes local-only recovery (orphans or read errors)."""
     try:
         state = _read_set()
     except (OSError, ValueError):
-        return []
+        # Keep the command reachable locally so it can report the journal error.
+        return [None]
+    # The volatile boot marker is not part of the shared inventory. With no
+    # saved intent, keep reboot recovery reachable without an exec per tick.
     names = state.containers.keys() | state.stopping.keys()
-    saved = [g for g in groups if any(c.name in names for c in g.containers)]
+    empty = not names
+    saved = [
+        g
+        for g in groups
+        if any(
+            c.name in state.containers
+            or (c.name in state.stopping and c.state != "Running")
+            or (empty and c.state == "Running")
+            for c in g.containers
+        )
+    ]
     return [g.prefix for g in saved if g.repo_root is not None] + (
         [None] if any(g.repo_root is None for g in saved) else []
     )
@@ -140,14 +153,17 @@ def remove(name: str) -> None:
 
 
 def _configs(cfg: Config, failures: dict[Path, str] | None = None) -> dict[str, Config]:
-    from jailbee.config import ConfigError, load_repo_config
+    from jailbee.config import ORPHAN_BASE_PREFIX, ConfigError, load_repo_config
     from jailbee.dashboard.model import registered_repo_roots
     from jailbee.remote_ssh.repo_scope import registered_repos, scope_for_session
     from jailbee.remote_ssh.session import is_remote_session
 
     scope = scope_for_session() if is_remote_session() else None
     configs = (
-        {cfg.container_prefix: cfg} if scope is None or scope.allows(cfg.container_prefix) else {}
+        {cfg.container_prefix: cfg}
+        if cfg.container_prefix != ORPHAN_BASE_PREFIX
+        and (scope is None or scope.allows(cfg.container_prefix))
+        else {}
     )
     roots = (
         [repo.root for repo in registered_repos(scope=scope)]
@@ -165,7 +181,9 @@ def _configs(cfg: Config, failures: dict[Path, str] | None = None) -> dict[str, 
             else:
                 failures[root] = str(exc)
             continue
-        if scope is None or scope.allows(other.container_prefix):
+        if other.container_prefix != ORPHAN_BASE_PREFIX and (
+            scope is None or scope.allows(other.container_prefix)
+        ):
             configs[other.container_prefix] = other
     return configs
 

@@ -62,7 +62,10 @@ restart check remains unverified in this environment. For a host reboot, use
 [host-wide lifecycle](references/commands.md#host-reboot). Both commands work
 over remote SSH and web command policy within visible repositories only;
 excluded repos and orphans remain untouched, with their saved entries left for
-a local resume. Resume is offered in Global only for an eligible saved container.
+a local resume. Global offers Resume for eligible saved containers, or running
+in-scope containers when the journal is empty (unplanned reboot recovery).
+This cheap hint does not probe boot markers; Resume may report nothing to do.
+An unreadable journal keeps Resume available locally to report the error.
 Actual host reboot and
 raw `incus stop` smoke tests remain unverified.
 

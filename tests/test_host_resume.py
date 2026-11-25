@@ -674,6 +674,87 @@ def test_remote_stop_does_not_load_or_report_an_excluded_broken_repository(
     assert other.repo_root not in [c.args[0] for c in loader.call_args_list]
 
 
+@pytest.mark.parametrize("command", [["stop", "--all", "--yes"], ["resume"]])
+def test_remote_global_action_never_treats_orphan_placeholder_as_repo(
+    host, mocker, monkeypatch, command
+):
+    from jailbee.config import ORPHAN_BASE_PREFIX
+
+    cfg, _, incus, _ = host
+    register_host_repos(host)
+    base = cfg.model_copy(update={"container_prefix": ORPHAN_BASE_PREFIX})
+    mocker.patch("jailbee.cli._load_orphan_base_or_exit", return_value=base)
+    monkeypatch.setenv("JAILBEE_REMOTE_TRANSPORT", "ssh")
+    monkeypatch.setenv("JAILBEE_REMOTE_EXCLUDED_REPOS", "[]")
+    incus.list_containers.return_value = [
+        {"name": "jailbee-orphan-work", "status": "Running", "profiles": ["jailbee-orphan-base"]}
+    ]
+    incus.exec.return_value = "missing"
+    boot = mocker.patch("jailbee.lifecycle.boot_container")
+    mocker.patch("jailbee.create_flow.preflight_cache_pools")
+    post = mocker.patch("jailbee.cli._post_start_actions")
+
+    result = CliRunner().invoke(app, command)
+
+    assert result.exit_code == 0, result.output
+    assert "jailbee-orphan-work" not in result.output
+    incus.stop.assert_not_called()
+    incus.exec.assert_not_called()
+    boot.assert_not_called()
+    post.assert_not_called()
+
+
+@pytest.mark.parametrize("transport", ["ssh", "web"])
+def test_unrestricted_remote_stop_without_exclusions_still_skips_orphans(host, monkeypatch, transport):
+    from jailbee.remote_ssh.session import child_environment
+
+    cfg, other, incus, _ = host
+    register_host_repos(host)
+    for key, value in child_environment({}, transport=transport, restricted=False).items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.delenv("JAILBEE_REMOTE_RESTRICTED", raising=False)
+    incus.list_containers.return_value.append(
+        {"name": "lost-work", "status": "Running", "profiles": ["lost-base"]}
+    )
+
+    result = CliRunner().invoke(app, ["stop", "--all", "--yes"])
+
+    assert result.exit_code == 0, result.output
+    assert [c.args[0] for c in incus.stop.call_args_list] == ["one-work", "two-child", "one-mount"]
+    assert recorded() == {
+        "one-work": str(cfg.repo_root), "two-child": str(other.repo_root), "one-mount": str(cfg.repo_root)
+    }
+    assert "lost-work" not in result.output
+
+
+@pytest.mark.parametrize("transport", ["ssh", "web"])
+def test_remote_resume_recovers_only_in_scope_interrupted_stops(host, mocker, monkeypatch, transport):
+    cfg, other, incus, _ = host
+    register_host_repos(host)
+    monkeypatch.setenv("JAILBEE_REMOTE_TRANSPORT", transport)
+    monkeypatch.setenv("JAILBEE_REMOTE_EXCLUDED_REPOS", '["two"]')
+    retained = {"two-child": str(other.repo_root), "lost-work": "/lost"}
+    path = state_dir() / "resume-set.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"version": 1, "containers": {}, "stopping": retained | {"one-off": str(cfg.repo_root)}}))
+    incus.list_containers.return_value.append(
+        {"name": "lost-work", "status": "Stopped", "profiles": ["lost-base"]}
+    )
+    boot = mocker.patch("jailbee.lifecycle.boot_container")
+    mocker.patch("jailbee.create_flow.preflight_cache_pools")
+    post = mocker.patch("jailbee.cli._post_start_actions")
+
+    result = CliRunner().invoke(app, ["resume"])
+
+    assert result.exit_code == 0, result.output
+    assert [c.args[2] for c in boot.call_args_list] == ["one-off"]
+    assert [c.args[2] for c in post.call_args_list] == ["one-off"]
+    assert recorded() == {}
+    assert json.loads(path.read_text())["stopping"] == retained
+    assert {c.args[0] for c in incus.exec.call_args_list} <= {"one-work", "one-mount"}
+    assert "two-child" not in result.output and "lost-work" not in result.output
+
+
 def test_host_lifecycle_is_allowed_in_restricted_remote_sessions():
     from jailbee.config.models_remote import RemoteCommandPolicy
     from jailbee.remote_ssh.repo_scope import RemoteRepoScope
