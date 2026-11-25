@@ -265,7 +265,8 @@ def test_automatic_destroy_preparation_failure_does_not_block_other_children(
     st = BrokerStore(store_path(tmp_path))
     for child in (rig.child, other):
         st.insert_item(
-            "orch-uuid", rig.sender.full,
+            "orch-uuid",
+            rig.sender.full,
             {"id": child.short, "type": "message", "kind": "idle", "from": child.short},
             now=1,
         )
@@ -418,14 +419,18 @@ def test_retry_checks_child_identity_before_settling_snapshot(tmp_path, seams, p
     rig.sender.config["volatile.uuid"] = "orch-uuid"
     st = BrokerStore(store_path(tmp_path))
     st.insert_item(
-        "orch-uuid", rig.sender.full,
-        {"id": "idle", "type": "message", "kind": "idle", "from": "c1"}, now=1,
+        "orch-uuid",
+        rig.sender.full,
+        {"id": "idle", "type": "message", "kind": "idle", "from": "c1"},
+        now=1,
     )
     path = idle_cleanup.prepare(rig.ctx(), rig.child)
     assert path is not None
     st.insert_item(
-        "orch-uuid", rig.sender.full,
-        {"id": "later-idle", "type": "message", "kind": "idle", "from": "c1"}, now=2,
+        "orch-uuid",
+        rig.sender.full,
+        {"id": "later-idle", "type": "message", "kind": "idle", "from": "c1"},
+        now=2,
     )
     idle_cleanup.retry(tmp_path, {rig.child.full: present_uuid})
     alive = present_uuid == "child-uuid"
@@ -445,8 +450,10 @@ def test_tick_after_snapshot_crash_does_not_ack_a_living_child(tmp_path, seams):
     rig.sender.config["volatile.uuid"] = "orch-uuid"
     st = BrokerStore(store_path(tmp_path))
     st.insert_item(
-        "orch-uuid", rig.sender.full,
-        {"id": "idle", "type": "message", "kind": "idle", "from": "c1"}, now=1,
+        "orch-uuid",
+        rig.sender.full,
+        {"id": "idle", "type": "message", "kind": "idle", "from": "c1"},
+        now=1,
     )
     path = idle_cleanup.prepare(rig.ctx(), rig.child)
     assert path is not None
@@ -456,7 +463,10 @@ def test_tick_after_snapshot_crash_does_not_ack_a_living_child(tmp_path, seams):
         for child in (rig.sender, rig.child)
     ]
     broker.tick(
-        rig.incus, root=tmp_path, journal=Journal(tmp_path), now=rig.ctx().now,
+        rig.incus,
+        root=tmp_path,
+        journal=Journal(tmp_path),
+        now=rig.ctx().now,
         memory=broker_state.BrokerMemory(),
     )
     assert path.exists()
@@ -478,8 +488,10 @@ def test_retry_quarantines_unusable_intents_once(tmp_path, seams, monkeypatch, c
     rig.sender.config["volatile.uuid"] = "orch-uuid"
     st = BrokerStore(store_path(tmp_path))
     st.insert_item(
-        "orch-uuid", rig.sender.full,
-        {"id": "idle", "type": "message", "kind": "idle", "from": "c1"}, now=1,
+        "orch-uuid",
+        rig.sender.full,
+        {"id": "idle", "type": "message", "kind": "idle", "from": "c1"},
+        now=1,
     )
     path = idle_cleanup.prepare(rig.ctx(), rig.child)
     assert path is not None
