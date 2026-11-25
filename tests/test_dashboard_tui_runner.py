@@ -161,9 +161,11 @@ def test_outbox_publish_uses_runner_modal_and_keeps_queue_result(mocker, tmp_pat
 
 @pytest.mark.parametrize(("index", "argv"), [(0, ["stop", "--all"]), (1, ["resume"])])
 def test_global_lifecycle_runs_without_a_repo_and_uses_prompt_channel(mocker, index, argv):
-    from tests.dashboard_pilot import Pick, _apply
+    from tests.dashboard_pilot import FakeStateClient, Pick, _apply
 
-    app = make_app(mocker, [])
+    client = FakeStateClient([])
+    client.resumable_repos = ["alpha"]
+    app = make_app(mocker, [], client=client)
     app.threaded_actions = True
     app.action_runner = drunner.run_action
     spawn = Spawns([_prompt(question="Proceed on the host?", default=False)])
