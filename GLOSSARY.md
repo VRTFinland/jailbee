@@ -103,6 +103,10 @@ _Avoid_: log, chat log, history
 The per-agent reader that finds and interprets one agent's transcripts.
 _Avoid_: transcript adapter, parser
 
+**Transcript reader**:
+The web dashboard view that shows one transcript as a document.
+_Avoid_: reading view, session page
+
 **Session attribution**:
 The recorded link between an agent session and the container it ran in.
 

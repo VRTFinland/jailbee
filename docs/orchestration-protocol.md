@@ -190,7 +190,8 @@ children never can. The target file is read from the requester's own outbox.
 
 `outbox` is `issue` or `pr`. `manifest` matches
 `^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.json$`, never a path or `.progress.json`.
-Use `jailbee inbox send publish --issue NAME --wait` or `--pr NAME --wait`.
+Use `jailbee inbox send publish --issue NAME --wait --until done` or
+`--pr NAME --wait --until done`; plain `--wait` returns at `started`.
 Issue action kinds and repo coverage must all be granted. Source PR manifests
 need `pull_requests` (own branches only, no force); review manifests need
 `pr_reviews` (bound PRs in the own repo only); a `comment_edit` action also needs `pr_comment_edits`; a `state` action (close or reopen) needs `pr_state`, and a manifest of only `state` actions needs `pr_state` alone (no `pr_reviews`) for any numbered PR of the own repo, bound or not; that consent relaxes only the PR lock, so a manifest naming another repository is refused before any `gh` call. Missing `publish` grants nothing.
