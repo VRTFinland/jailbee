@@ -126,7 +126,7 @@ const jumpLabel = computed(() => jumpAction.value === null ? null : {
 }[jumpAction.value])
 
 function measureVisibility() {
-    const headerRect = header.value?.$el.getBoundingClientRect()
+    const headerRect = header.value?.element()?.getBoundingClientRect()
     const banner = document.querySelector<HTMLElement>(".outdated")
     readableTop.value = settings.showTitleBar && headerRect
         ? Math.max(0, headerRect.bottom)
@@ -210,6 +210,7 @@ function markScrollKey(event: KeyboardEvent) {
 
 watch(shown, () => void nextTick(measureVisibility))
 watch(eink, () => void nextTick(measureVisibility))
+watch(() => settings.showTitleBar, () => void nextTick(measureVisibility))
 
 let layoutObserver: ResizeObserver | null = null
 onMounted(() => {
@@ -224,7 +225,8 @@ onMounted(() => {
     if (typeof ResizeObserver !== "undefined") {
         layoutObserver = new ResizeObserver(measureVisibility)
         layoutObserver.observe(document.body)
-        if (header.value) layoutObserver.observe(header.value.$el)
+        const bar = header.value?.element()
+        if (bar) layoutObserver.observe(bar)
     }
 })
 onBeforeUnmount(() => {

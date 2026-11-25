@@ -111,6 +111,11 @@ function number(event: Event): number {
                 {{ PROFILE_LABELS[p] }}
             </label>
             <label class="choice">
+                <input type="checkbox" :checked="settings.showTitleBar"
+                    @change="updateSettings({showTitleBar: ($event.target as HTMLInputElement).checked})" />
+                Show title bar
+            </label>
+            <label class="choice">
                 <input
                     type="checkbox"
                     :checked="settings.einkFollow"

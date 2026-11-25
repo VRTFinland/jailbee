@@ -22,6 +22,12 @@ async function menu(context: "containers" | "session" | null = null) {
 }
 
 describe("Quick settings", () => {
+    it("offers the parent link when the title bar is hidden", async () => {
+        settings.showTitleBar = false
+        const wrapper = await menu()
+        await wrapper.setProps({parent: {label: "work", to: "/"}} as never)
+        expect(wrapper.get("a").text()).toBe("Back to work")
+    })
     it("shows session metadata only when supplied", async () => {
         const wrapper = await menu("session")
         await wrapper.setProps({session: {agent: "codex", models: ["model-a", "model-b"], id: "session-123"}} as never)

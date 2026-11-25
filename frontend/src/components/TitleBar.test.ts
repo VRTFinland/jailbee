@@ -2,6 +2,7 @@ import {flushPromises, mount} from "@vue/test-utils"
 import {afterEach, describe, expect, it} from "vitest"
 import {createMemoryHistory, createRouter} from "vue-router"
 import TitleBar from "./TitleBar.vue"
+import {reloadSettings, updateSettings} from "../settings"
 
 const mounted: {unmount(): void}[] = []
 afterEach(() => { for (const wrapper of mounted.splice(0)) wrapper.unmount() })
@@ -22,6 +23,17 @@ async function titleBar() {
 }
 
 describe("TitleBar breadcrumbs", () => {
+    it("keeps the menu and parent navigation when the bar is hidden", async () => {
+        reloadSettings()
+        updateSettings({showTitleBar: false})
+        const {wrapper, router} = await titleBar()
+        expect(wrapper.find("header").exists()).toBe(false)
+        await wrapper.get('[aria-label="Quick settings"]').trigger("click")
+        await wrapper.get("a").trigger("click")
+        await flushPromises()
+        expect(router.currentRoute.value.path).toBe("/parent")
+        updateSettings({showTitleBar: true})
+    })
     it("links each named ancestor to its route and updates the current title", async () => {
         const {wrapper, router} = await titleBar()
         const links = wrapper.get('nav[aria-label="Breadcrumb"]').findAll("a")

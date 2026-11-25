@@ -62,6 +62,30 @@ def test_title_bar_on_every_signed_in_view(
         assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
 
 
+def test_hidden_title_bar_menu_and_parent_navigation(page: Page, chrome_server: E2EServer) -> None:
+    page.set_viewport_size({"width": 390, "height": 844})
+    log_in_with_pin(page, chrome_server.url, chrome_server.pin.current)
+    page.evaluate("localStorage.setItem('jailbee.showTitleBar', '0')")
+    base = f"/repos/work/sessions/claude/{SESSION_ID}"
+    for path in ["/", "/repos/work", "/containers/work-main", base, f"{base}/subagents/{SUBAGENT_ID}", "/settings"]:
+        page.goto(f"{chrome_server.url}/#{path}")
+        page.reload()
+        expect(page.locator(".title-bar")).to_have_count(0)
+        trigger = page.get_by_role("button", name="Quick settings")
+        expect(trigger).to_be_visible()
+        box = trigger.bounding_box()
+        assert box is not None and box["x"] + box["width"] > 350
+    for path, label, target in [
+        (f"{base}/subagents/{SUBAGENT_ID}", SESSION_TITLE, base),
+        (base, "work", "/repos/work"),
+        ("/repos/work", "JailBee", "/"),
+    ]:
+        page.goto(f"{chrome_server.url}/#{path}")
+        page.get_by_role("button", name="Quick settings").click()
+        page.get_by_role("link", name=f"Back to {label}").click()
+        expect(page).to_have_url(f"{chrome_server.url}/#{target}")
+
+
 def test_breadcrumbs_navigate_to_each_parent(page: Page, chrome_server: E2EServer) -> None:
     page.set_viewport_size({"width": 1280, "height": 844})
     log_in_with_pin(page, chrome_server.url, chrome_server.pin.current)

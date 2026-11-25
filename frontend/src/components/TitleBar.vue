@@ -1,9 +1,12 @@
 <script setup lang="ts">
 import {computed, nextTick, onBeforeUnmount, onMounted, ref, watch} from "vue"
 import QuickSettings from "./QuickSettings.vue"
+import {settings} from "../settings"
 import type {RouteLocationRaw} from "vue-router"
 
 const props = defineProps<{title: string; crumbs?: {label: string; to: RouteLocationRaw}[]; context?: "containers" | "session" | null; session?: {agent: string; models: string[]; id: string} | null}>()
+const bar = ref<HTMLElement | null>(null)
+defineExpose({element: () => bar.value})
 const breadcrumb = ref<HTMLElement | null>(null)
 const measurements = ref<HTMLElement | null>(null)
 const firstCrumb = ref(0)
@@ -41,13 +44,17 @@ onMounted(() => {
     measure()
     if (typeof ResizeObserver !== "undefined") {
         observer = new ResizeObserver(measure)
-        observer.observe(breadcrumb.value!)
-        observer.observe(measurements.value!)
+        if (breadcrumb.value) observer.observe(breadcrumb.value)
+        if (measurements.value) observer.observe(measurements.value)
     }
     window.addEventListener("resize", measure)
     window.addEventListener("orientationchange", measure)
 })
-watch(() => [props.title, props.crumbs], () => nextTick(measure), {deep: true})
+watch(() => [props.title, props.crumbs, settings.showTitleBar], () => nextTick(() => {
+    if (breadcrumb.value) observer?.observe(breadcrumb.value)
+    if (measurements.value) observer?.observe(measurements.value)
+    measure()
+}), {deep: true})
 onBeforeUnmount(() => {
     observer?.disconnect()
     window.removeEventListener("resize", measure)
@@ -56,7 +63,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-    <header class="title-bar">
+    <header v-if="settings.showTitleBar" ref="bar" class="title-bar">
         <nav ref="breadcrumb" aria-label="Breadcrumb" class="breadcrumbs">
             <template v-for="crumb in visibleCrumbs" :key="crumb.label">
                 <router-link :to="crumb.to" :title="crumb.label" :aria-label="crumb.label" :class="{collapsed}" :style="parentWidth === null ? undefined : {maxWidth: `${parentWidth}px`}"><span>{{ collapsed ? '‹' : crumb.label }}</span></router-link><span v-if="!collapsed" class="separator" aria-hidden="true">›</span>
@@ -69,6 +76,7 @@ onBeforeUnmount(() => {
         <slot />
         <QuickSettings class="title-menu" :context="context" :session="session" />
     </header>
+    <QuickSettings v-else :context="context" :session="session" :parent="crumbs?.at(-1)" />
 </template>
 
 <style scoped>

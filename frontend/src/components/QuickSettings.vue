@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import {computed, inject, nextTick, onBeforeUnmount, onMounted, ref, watch} from "vue"
-import {useRoute} from "vue-router"
+import {useRoute, type RouteLocationRaw} from "vue-router"
 import {FONT_SIZE_RANGE, settings, THEMES, THEME_LABELS, updateSettings} from "../settings"
 
-const props = defineProps<{context?: "containers" | "session" | null; session?: {agent: string; models: string[]; id: string} | null}>()
+const props = defineProps<{context?: "containers" | "session" | null; session?: {agent: string; models: string[]; id: string} | null; parent?: {label: string; to: RouteLocationRaw}}>()
 const route = useRoute()
 const openSettings = inject<(trigger: HTMLElement | null) => void>("open-settings", () => {})
 function showSettings() {
@@ -138,6 +138,7 @@ onBeforeUnmount(() => {
         </button>
         <div v-if="open" class="quick-backdrop" @click="close()" />
         <section v-if="open" ref="panel" class="quick-panel" role="dialog" aria-label="Quick settings" aria-modal="true" tabindex="-1">
+            <router-link v-if="!settings.showTitleBar && parent" class="menu-row" :to="parent.to" @click="close(false)">Back to {{ parent.label }}</router-link>
             <div v-if="session" class="menu-row session-info" aria-label="Session">
                 <strong>Session</strong><span>Agent: {{ session.agent }}</span><span>Models: {{ session.models.join(", ") || "—" }}</span><span>Session ID: {{ session.id }}</span>
             </div>
