@@ -751,11 +751,14 @@ and keeps drawing while it runs; the status line names the running command.
 
 - **Questions are dashboard modals.** Every question the command would ask
   at a terminal arrives over the prompt channel and is shown as a modal:
-  Yes/No for a confirmation, a list for a single choice, a checkbox list for
-  a multiple choice (Space toggles, Enter confirms; none ticked is a valid
-  answer), an input field for text and a masked one for a secret. A
-  destructive confirmation is titled `DESTRUCTIVE:`, has a red border and
-  focuses "No". The dashboard asks exactly what the CLI would ask: a value
+  a compact "No" / "Yes" list for a confirmation, a list for a single choice,
+  a checkbox list for a multiple choice (Space toggles, Enter confirms; none
+  ticked is a valid answer), an input field for text and a masked one for a
+  secret. Confirmations highlight the default answer across the full row:
+  Up/Down moves, Enter chooses, and y/n answers immediately. Tab, Shift-Tab,
+  Left and Right also switch the answer. A destructive confirmation is titled
+  `DESTRUCTIVE:`, has a red border and title, and always starts on "No";
+  neither answer row is coloured red. The dashboard asks exactly what the CLI would ask: a value
   a repo config settles without asking is not asked here either.
 - **Cancel means cancel.** Esc or Ctrl-C in a modal has the effect of Esc or
   Ctrl-C at the CLI prompt. Quitting the dashboard with a question open

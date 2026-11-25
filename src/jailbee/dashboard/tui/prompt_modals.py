@@ -16,10 +16,10 @@ from rich.text import Text
 from textual import events
 from textual.app import ComposeResult
 from textual.binding import Binding, BindingType
-from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.containers import Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.suggester import SuggestFromList
-from textual.widgets import Button, Input, OptionList, SelectionList, Static
+from textual.widgets import Input, OptionList, SelectionList, Static
 from textual.widgets.option_list import Option
 from textual.widgets.selection_list import Selection
 
@@ -38,7 +38,6 @@ PromptModal .context { color: ansi_bright_black; }
 PromptModal .hint { color: ansi_bright_black; }
 PromptModal .error { color: ansi_red; }
 PromptModal .detail { margin: 1 0; }
-PromptModal .buttons { height: auto; align-horizontal: right; }
 PromptModal OptionList, PromptModal SelectionList { height: auto; max-height: 16; }
 PromptModal Input { margin: 1 0 0 0; }
 OutputScreen { align: center middle; background: ansi_default 40%; }
@@ -101,27 +100,25 @@ class PromptModal(ModalScreen[Any]):
 
 
 class ConfirmModal(PromptModal):
-    """Yes / No. Destructive: error-styled, and "No" holds the focus."""
+    """No / Yes rows. Destructive questions start with "No" highlighted."""
 
-    hint = "y / n, Enter picks the focused button, Esc cancels"
+    hint = "y / n, Up/Down move, Enter chooses, Esc cancels"
 
     def heading(self) -> str:
         return ("DESTRUCTIVE: " if self.prompt.destructive else "") + self.prompt.question
 
     def body(self) -> ComposeResult:
-        with Horizontal(classes="buttons"):
-            yield Button("Yes", id="yes", variant="error" if self.prompt.destructive else "primary")
-            yield Button("No", id="no")
+        yield OptionList(Option("No", id="no"), Option("Yes", id="yes"), compact=True)
 
     def on_mount(self) -> None:
-        # A destructive question defaults to No (the channel already says so).
-        yes = self.prompt.default is True and not self.prompt.destructive
         # Exit may prune the dialog while its screen is still mounting.
-        self.query("#yes" if yes else "#no").focus()
+        for widget in self.query(OptionList):
+            widget.highlighted = int(self.prompt.default is True and not self.prompt.destructive)
+            widget.focus()
 
-    def on_button_pressed(self, event: Button.Pressed) -> None:
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
         event.stop()
-        self.dismiss(event.button.id == "yes")
+        self.dismiss(event.option_id == "yes")
 
     def on_key(self, event: events.Key) -> None:
         if event.key in ("y", "n"):
@@ -129,7 +126,9 @@ class ConfirmModal(PromptModal):
             self.dismiss(event.key == "y")
         elif event.key in ("left", "right", "tab", "shift+tab"):
             event.stop()
-            self.query_one("#no" if self.query_one("#yes").has_focus else "#yes").focus()
+            event.prevent_default()
+            choices = self.query_one(OptionList)
+            choices.highlighted = 0 if choices.highlighted == 1 else 1
 
 
 class ChooseOneModal(PromptModal):
