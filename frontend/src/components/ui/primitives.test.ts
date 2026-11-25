@@ -29,15 +29,19 @@ describe("Button", () => {
         expect(wrapper.get("button").attributes("data-variant")).toBe("tonal")
     })
 
-    it("emits clicks while enabled and none when disabled", async () => {
+    it("emits clicks while enabled", async () => {
         const enabled = mount(Button, {slots: {default: "Go"}})
         await enabled.get("button").trigger("click")
         expect(enabled.emitted("click")).toHaveLength(1)
+    })
 
+    // A disabled button gets no clicks from the browser; VTU's trigger skips
+    // disabled elements too, so an `emitted` check could never fail. The
+    // attribute is what the component controls.
+    it("is a disabled button when disabled", () => {
         const disabled = mount(Button, {props: {disabled: true}, slots: {default: "Go"}})
         expect(disabled.get("button").attributes("disabled")).toBeDefined()
-        await disabled.get("button").trigger("click")
-        expect(disabled.emitted("click")).toBeUndefined()
+        expect(mount(Button, {slots: {default: "Go"}}).get("button").attributes("disabled")).toBeUndefined()
     })
 
     it("can submit a form", () => {
@@ -63,15 +67,17 @@ describe("IconButton", () => {
         expect(wrapper.get("svg").attributes("aria-hidden")).toBe("true")
     })
 
-    it("emits clicks while enabled and none when disabled", async () => {
+    it("emits clicks while enabled", async () => {
         const enabled = mount(IconButton, {props: {icon: "close", label: "Close"}})
         await enabled.get("button").trigger("click")
         expect(enabled.emitted("click")).toHaveLength(1)
+    })
 
+    it("is a disabled button when disabled", () => {
         const disabled = mount(IconButton, {props: {icon: "close", label: "Close", disabled: true}})
         expect(disabled.get("button").attributes("disabled")).toBeDefined()
-        await disabled.get("button").trigger("click")
-        expect(disabled.emitted("click")).toBeUndefined()
+        expect(mount(IconButton, {props: {icon: "close", label: "Close"}}).get("button").attributes("disabled"))
+            .toBeUndefined()
     })
 })
 
@@ -105,12 +111,11 @@ describe("Switch", () => {
         expect(control.attributes("aria-checked")).toBe("false")
     })
 
-    it("does not toggle when disabled", async () => {
+    it("is a disabled button when disabled", () => {
         const wrapper = mount(Switch, {props: {modelValue: false, label: "Follow live", disabled: true}})
-        const control = wrapper.get('[role="switch"]')
-        expect(control.attributes("disabled")).toBeDefined()
-        await control.trigger("click")
-        expect(wrapper.emitted("update:modelValue")).toBeUndefined()
+        expect(wrapper.get('[role="switch"]').attributes("disabled")).toBeDefined()
+        expect(mount(Switch, {props: {modelValue: false, label: "Follow live"}}).get('[role="switch"]')
+            .attributes("disabled")).toBeUndefined()
     })
 })
 
