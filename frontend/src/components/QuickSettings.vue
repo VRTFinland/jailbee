@@ -3,7 +3,7 @@ import {computed, nextTick, onBeforeUnmount, onMounted, ref, watch} from "vue"
 import {useRoute} from "vue-router"
 import {FONT_SIZE_RANGE, settings, THEMES, THEME_LABELS, updateSettings} from "../settings"
 
-const props = defineProps<{context?: "containers" | "session" | null}>()
+const props = defineProps<{context?: "containers" | "session" | null; session?: {agent: string; models: string[]; id: string} | null}>()
 const route = useRoute()
 const fonts = [{field: "bodyFontSize", label: "Body", name: "body"}, {field: "codeFontSize", label: "Code", name: "code"}] as const
 const filters = [{mode: "all", label: "All"}, {mode: "running", label: "Running"}, {mode: "active", label: "Active"}] as const
@@ -128,11 +128,14 @@ onBeforeUnmount(() => {
     <div class="quick-settings">
         <button ref="trigger" type="button" class="quick-trigger" aria-label="Quick settings"
             aria-haspopup="dialog" :aria-expanded="open" :aria-describedby="filtered ? 'filter-description' : undefined" @click="toggle">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16" /></svg>
+            <span aria-hidden="true">&#8942;</span>
             <span v-if="filtered" id="filter-description" class="filter-marker"><span class="visually-hidden">Container filter enabled</span></span>
         </button>
         <div v-if="open" class="quick-backdrop" @click="close()" />
         <section v-if="open" ref="panel" class="quick-panel" role="dialog" aria-label="Quick settings" aria-modal="true" tabindex="-1">
+            <div v-if="session" class="menu-row session-info" aria-label="Session">
+                <strong>Session</strong><span>Agent: {{ session.agent }}</span><span>Models: {{ session.models.join(", ") || "—" }}</span><span>Session ID: {{ session.id }}</span>
+            </div>
             <div v-for="font in fonts" :key="font.field" class="menu-row font-row">
                 <span>{{ font.label }}: {{ settings[font.field] }}px</span>
                 <button type="button" :aria-label="`Decrease ${font.name} font size`"
@@ -171,11 +174,14 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.quick-settings { position: fixed; top: calc(var(--app-banner-height, 0px) + var(--quick-trigger-top)); left: 0.75rem; z-index: 40; }
+.quick-settings { position: relative; flex: none; z-index: 40; margin-left: auto; }
+.session-info { flex-direction: column; align-items: flex-start; overflow-wrap: anywhere; user-select: text; }
+.quick-trigger span { font-size: 24px; line-height: 1; }
+.quick-settings:not(.title-menu) { position: fixed; top: calc(var(--app-banner-height, 0px) + var(--quick-trigger-top)); right: 0.75rem; }
 .quick-trigger { position: relative; display: grid; place-items: center; width: var(--quick-trigger-size); height: var(--quick-trigger-size); color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
 .quick-trigger svg { width: 1.25rem; fill: none; stroke: currentColor; stroke-width: 2; }
 .quick-backdrop { position: fixed; inset: 0; background: rgb(0 0 0 / 20%); z-index: -1; }
-.quick-panel { position: absolute; top: calc(var(--quick-trigger-size) + 0.25rem); left: 0; width: min(22rem, calc(100vw - 2rem)); padding: 0.5rem; border: 1px solid var(--border-strong); border-radius: var(--radius); background: var(--surface); color: var(--text); box-shadow: 0 4px 16px rgb(0 0 0 / 20%); }
+.quick-panel { position: absolute; top: calc(var(--quick-trigger-size) + 0.25rem); right: 0; width: min(22rem, calc(100vw - 2rem)); padding: 0.5rem; border: 1px solid var(--border-strong); border-radius: var(--radius); background: var(--surface); color: var(--text); box-shadow: 0 4px 16px rgb(0 0 0 / 20%); }
 .menu-row { display: flex; align-items: center; gap: 0.5rem; box-sizing: border-box; width: 100%; min-height: 2.75rem; padding: 0.25rem 0.5rem; margin: 0; color: inherit; text-decoration: none; font: inherit; border: 0; background: transparent; text-align: left; }
 .menu-row[hidden], .menu-pages[hidden] { display: none; }
 .menu-row[aria-pressed="true"] { background: var(--notice-bg); outline: 2px solid var(--accent); outline-offset: -2px; }

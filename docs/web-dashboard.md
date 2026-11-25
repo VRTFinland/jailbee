@@ -71,7 +71,7 @@ coloured edge and a phase label, and a Stopped container is dimmed. The e-ink
 theme has no colour, so phases differ by edge style (dashed, dotted, double,
 heavy) and the label, and a Stopped row is drawn without top, right and bottom edges instead of a fade.
 
-The left-edge **☰** (Quick settings) menu filters front-page and repository container lists
+The right-edge **⋮** (Quick settings) menu filters front-page and repository container lists
 by **All**, **Running** (Incus state Running), or **Active** (a non-grey
 agent marker in the terminal dashboard: busy, waiting, shell, API errors, or
 idle with a real event less than 30 minutes old). Recent-idle membership is
@@ -429,7 +429,7 @@ allowed, so the current dashboard only reads.
 
 ## Themes and display profile
 
-Open **Quick settings** from the **☰** menu at the left edge of the title bar on any page.
+Open **Quick settings** from the **⋮** menu at the right edge of the title bar on any page.
 Body and code font-size steppers apply immediately; the theme button cycles
 **Auto / Light / Dark / E-ink**. Auto follows the device's colour scheme, including
 changes while the page is open. Theme colours and display profile remain independent.
@@ -555,3 +555,5 @@ cannot be embedded in another page.
 Keep authentication on behind a proxy. Every request the server sees comes
 from the proxy, which is why [source addresses are never trusted](security.md#web-dashboard-authentication).
 An SSH tunnel (`ssh -L 8910:127.0.0.1:8910 host`) works the same way.
+
+The compact title bar provides breadcrumb links to parent views. In a transcript, the title tooltip and the Session section of Quick settings show the agent, models and session ID.

@@ -97,7 +97,7 @@ describe("SessionView", () => {
 
         expect(fetchMock.mock.calls[0][0]).toBe("/api/repos/alpha/sessions/claude/s-1?meta=hidden")
         expect(wrapper.get("h1").text()).toBe("Fix the login bug")
-        expect(wrapper.get("h1").attributes("title")).toBe("Fix the login bug")
+        expect(wrapper.get("h1").attributes("title")).toContain("Session ID: s-1")
         const answers = wrapper.findAll(".entry.assistant")
         expect(answers).toHaveLength(2)
         expect(answers[0].html()).toContain("<h2>Plan</h2>")
@@ -236,7 +236,7 @@ describe("SessionView", () => {
         })
         const {wrapper} = await mountSession(vi.fn().mockResolvedValue(jsonResponse(200, transcript)))
         expect(wrapper.get("header h1").text()).toBe("Fix the login bug")
-        expect(wrapper.get("header .session-meta").text()).toContain("claude-opus-5-5")
+        expect(wrapper.get("header h1").attributes("title")).toContain("claude-opus-5-5")
         expect(wrapper.find(".jump-latest").exists()).toBe(true)
 
         answerTop = 130
@@ -254,7 +254,7 @@ describe("SessionView", () => {
         const {wrapper, router} = await mountSession(
             vi.fn().mockResolvedValue(jsonResponse(200, transcript)),
         )
-        await wrapper.get("a.back").trigger("click")
+        await wrapper.get('a[href="/repos/alpha"]').trigger("click")
         await flushPromises()
         expect(router.currentRoute.value.name).toBe("repo")
         expect(router.currentRoute.value.params.prefix).toBe("alpha")

@@ -15,7 +15,7 @@ from tests_e2e.test_session_reading import open_transcript, record, wait_for_scr
 
 
 @pytest.mark.parametrize("width", [1280, 390], ids=["desktop", "phone"])
-def test_hamburger_is_at_left_edge_and_does_not_overlap_title(logged_in: Page, width: int) -> None:
+def test_menu_is_at_right_edge_and_does_not_overlap_title(logged_in: Page, width: int) -> None:
     page = logged_in
     page.set_viewport_size({"width": width, "height": 600})
     icon = page.get_by_role("button", name="Quick settings", exact=True)
@@ -24,13 +24,15 @@ def test_hamburger_is_at_left_edge_and_does_not_overlap_title(logged_in: Page, w
     icon_box = icon.bounding_box()
     heading_box = heading.bounding_box()
     assert icon_box is not None and heading_box is not None
-    assert icon_box["x"] < 24
-    assert icon_box["x"] + icon_box["width"] <= heading_box["x"]
+    assert icon_box["x"] + icon_box["width"] <= width
+    assert heading_box["x"] + heading_box["width"] <= icon_box["x"]
+    assert page.locator(".title-bar").bounding_box()["height"] <= 44
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
     open_quick_settings(page)
     panel = page.get_by_role("dialog", name="Quick settings")
     panel_box = panel.bounding_box()
     assert panel_box is not None
-    assert panel_box["x"] == icon_box["x"]
+    assert panel_box["x"] + panel_box["width"] == icon_box["x"] + icon_box["width"]
     assert panel_box["x"] + panel_box["width"] <= width
 
 

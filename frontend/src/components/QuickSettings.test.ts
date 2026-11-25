@@ -22,6 +22,15 @@ async function menu(context: "containers" | "session" | null = null) {
 }
 
 describe("Quick settings", () => {
+    it("shows session metadata only when supplied", async () => {
+        const wrapper = await menu("session")
+        await wrapper.setProps({session: {agent: "codex", models: ["model-a", "model-b"], id: "session-123"}} as never)
+        expect(wrapper.get('[aria-label="Session"]').text()).toContain("codex")
+        expect(wrapper.get('[aria-label="Session"]').text()).toContain("model-a, model-b")
+        expect(wrapper.get('[aria-label="Session"]').text()).toContain("session-123")
+        await wrapper.setProps({session: null} as never)
+        expect(wrapper.find('[aria-label="Session"]').exists()).toBe(false)
+    })
     it("edits shared persisted font sizes live and cycles Auto, Light, Dark and E-ink", async () => {
         startSettings()
         const wrapper = await menu()

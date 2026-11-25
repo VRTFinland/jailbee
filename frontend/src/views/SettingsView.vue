@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import TitleBar from "../components/TitleBar.vue"
 // Per-device display settings, kept in this browser, plus the name of this
 // login session, which lives on the server (`GET/PUT /api/session`).
 import {onMounted, ref} from "vue"
@@ -58,10 +59,7 @@ function number(event: Event): number {
 
 <template>
     <div class="page">
-        <header class="bar">
-            <router-link class="back" :to="{name: 'front'}">&larr; JailBee</router-link>
-            <h1>Settings</h1>
-        </header>
+        <TitleBar title="Settings" :crumbs="[{label: 'JailBee', to: {name: 'front'}}]" />
         <p class="muted">Display choices are kept on this device only.</p>
 
         <fieldset>

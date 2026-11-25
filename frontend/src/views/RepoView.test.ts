@@ -115,7 +115,7 @@ describe("RepoView", () => {
         const {wrapper, router} = await mountRepo(
             vi.fn().mockResolvedValue(jsonResponse(200, {sessions})),
         )
-        await wrapper.get("a.back").trigger("click")
+        await wrapper.get('a[href="/"]').trigger("click")
         await flushPromises()
         expect(router.currentRoute.value.name).toBe("front")
     })

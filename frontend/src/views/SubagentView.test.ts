@@ -126,7 +126,7 @@ describe("subagent transcripts", () => {
             "/repos/alpha/sessions/claude/s-1/subagents/a1b2c3",
             vi.fn().mockResolvedValue(jsonResponse(200, child)),
         )
-        await wrapper.get("a.back-to-session").trigger("click")
+        await wrapper.get('a[href="/repos/alpha/sessions/claude/s-1"]').trigger("click")
         await flushPromises()
         expect(router.currentRoute.value.name).toBe("session")
         expect(router.currentRoute.value.params.sessionId).toBe("s-1")

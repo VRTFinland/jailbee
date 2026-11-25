@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import TitleBar from "../components/TitleBar.vue"
 // One agent session as a readable document. Every `html` field is rendered
 // and sanitised by the server; it is inserted as is.
 import {computed, nextTick, onBeforeUnmount, onMounted, ref, watch} from "vue"
@@ -18,7 +19,7 @@ import type {
 } from "../protocol"
 import {settings} from "../settings"
 
-const header = ref<HTMLElement | null>(null)
+const header = ref<InstanceType<typeof TitleBar> | null>(null)
 // The sticky header's bottom edge: below an app banner, not just its height.
 const readableTop = ref(0)
 const transcriptEl = ref<HTMLElement | null>(null)
@@ -52,6 +53,12 @@ const sessionRef = computed(() => ({
 const transcript = ref<TranscriptView | null>(null)
 const error = ref<string | null>(null)
 const thinking = computed(() => settings.showThinking)
+const parentTitle = ref("Parent session")
+const crumbs = computed(() => [
+    {label: "JailBee", to: {name: "front"}},
+    {label: prefix.value, to: {name: "repo", params: {prefix: prefix.value}}},
+    ...(agentId.value === null ? [] : [{label: parentTitle.value, to: {name: "session", params: sessionRef.value}}]),
+])
 const title = computed(() => transcript.value?.title || (agentId.value === null ? "Untitled session" : "Subagent"))
 
 /** Tool results and subagent refs, by the call they belong to. */
@@ -117,7 +124,7 @@ const jumpLabel = computed(() => jumpAction.value === null ? null : {
 }[jumpAction.value])
 
 function measureVisibility() {
-    const headerRect = header.value?.getBoundingClientRect()
+    const headerRect = header.value?.$el.getBoundingClientRect()
     readableTop.value = headerRect ? Math.max(0, headerRect.bottom) : 0
     const content = transcriptEl.value?.getBoundingClientRect()
     atTranscriptEnd.value = !!content && content.bottom <= readableBottom() + 1
@@ -193,7 +200,7 @@ onMounted(() => {
     if (typeof ResizeObserver !== "undefined") {
         layoutObserver = new ResizeObserver(measureVisibility)
         layoutObserver.observe(document.body)
-        if (header.value) layoutObserver.observe(header.value)
+        if (header.value) layoutObserver.observe(header.value.$el)
     }
 })
 onBeforeUnmount(() => {
@@ -381,7 +388,13 @@ async function load() {
     }
 }
 
-onMounted(load)
+onMounted(() => {
+    void load()
+    if (agentId.value !== null) {
+        const path = [prefix.value, "sessions", agent.value, sessionId.value].map(encodeURIComponent).join("/")
+        void apiFetch<TranscriptView>(`/api/repos/${path}?meta=hidden`).then(view => { parentTitle.value = view.title || "Untitled session" }).catch(() => {})
+    }
+})
 // Changing Agent context re-reads the transcript and resubscribes with the new mode.
 watch(
     () => settings.agentContext,
@@ -396,30 +409,8 @@ watch(
 
 <template>
     <div class="page" :style="{'--session-readable-top': `${readableTop}px`}">
-        <header ref="header" class="session-header">
-            <div class="bar">
-            <router-link
-                v-if="agentId !== null"
-                class="back back-to-session"
-                :to="{name: 'session', params: sessionRef}"
-            >
-                &larr; Parent session
-            </router-link>
-            <router-link v-else class="back" :to="{name: 'repo', params: {prefix}}">
-                &larr; {{ prefix }}
-            </router-link>
-            </div>
-            <template v-if="transcript">
-                <h1 :title="title">{{ title }}</h1>
-                <p class="session-meta muted">
-                    <span>{{ transcript.agent }}</span>
-                    <span v-if="transcript.models.length" class="mono" :title="transcript.models.join(', ')">{{
-                        transcript.models.join(", ")
-                    }}</span>
-                </p>
-            </template>
-            <p v-if="dashboard && !dashboard.state.connected" class="notice">Connecting…</p>
-        </header>
+        <TitleBar ref="header" :title="title" :crumbs="crumbs" context="session" :session="transcript ? {agent: transcript.agent, models: transcript.models, id: transcript.session_id} : null" />
+        <p v-if="dashboard && !dashboard.state.connected" class="notice">Connecting…</p>
         <p v-if="error" class="notice">{{ error }}</p>
         <p v-else-if="transcript === null" class="muted">Loading…</p>
         <template v-else>

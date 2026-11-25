@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import TitleBar from "../components/TitleBar.vue"
 import {computed} from "vue"
 import {useRouter} from "vue-router"
 import {logout} from "../api"
@@ -34,14 +35,14 @@ async function signOut() {
 
 <template>
     <div class="page">
-        <header class="bar">
-            <h1>JailBee</h1>
+        <TitleBar title="JailBee" context="containers" />
+        <div class="bar">
             <span class="device" v-if="device">{{ device }}</span>
             <button v-if="eink" class="refresh link" type="button" @click="refresh">
                 Refresh
             </button>
             <button class="link" type="button" @click="signOut">Log out</button>
-        </header>
+        </div>
 
         <p v-if="!connected" class="notice">Connecting…</p>
         <p v-else-if="status" class="notice">{{ status }}</p>

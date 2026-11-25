@@ -10,6 +10,8 @@ before editing `## Unreleased`.
 
 ### Added
 
+- Compact web dashboard title bars with breadcrumb navigation and session details in the right-hand menu.
+
 - `agents.models` and `agents.model_policy` describe user-defined model aliases
   and selection rules, with field-level repo overrides. In any container,
   `jailbee agent models [--json]` reads this guidance live through the broker;

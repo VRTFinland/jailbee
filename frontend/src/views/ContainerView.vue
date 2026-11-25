@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import TitleBar from "../components/TitleBar.vue"
 import {computed, nextTick, ref, watch} from "vue"
 import {useRoute, useRouter} from "vue-router"
 import {apiFetch, Unauthorized} from "../api"
@@ -120,10 +121,7 @@ watch([name, historyPage, historyQuery], async ([selected, page, query], previou
 
 <template>
     <div class="page">
-        <header class="bar">
-            <router-link class="back" :to="{name: 'front'}">&larr; Repositories</router-link>
-            <h1>{{ name }}</h1>
-        </header>
+        <TitleBar :title="name" :crumbs="[{label: 'JailBee', to: {name: 'front'}}]" />
         <p v-if="info?.child" class="parent">
             Child of <router-link v-if="info.child.orchestrator" :to="{name: 'container', params: {name: info.child.orchestrator}}">{{ info.child.orchestrator_short_name }}</router-link><span v-else>{{ info.child.orchestrator_short_name }}</span>
             · {{ info.child.state }}<template v-if="info.child.runner"> · {{ info.child.runner }}</template>

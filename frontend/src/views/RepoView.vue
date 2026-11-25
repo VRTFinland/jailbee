@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import TitleBar from "../components/TitleBar.vue"
 import {computed, nextTick, onMounted, ref} from "vue"
 import {useRoute, useRouter} from "vue-router"
 import {apiFetch, Unauthorized} from "../api"
@@ -51,10 +52,7 @@ onMounted(async () => {
 
 <template>
     <div class="page">
-        <header class="bar">
-            <router-link class="back" :to="{name: 'front'}">&larr; Repositories</router-link>
-            <h1>{{ prefix }}</h1>
-        </header>
+        <TitleBar :title="prefix" :crumbs="[{label: 'JailBee', to: {name: 'front'}}]" context="containers" />
         <section v-if="containers && containers.repos.length" aria-label="Containers">
             <h2>Containers</h2>
             <RepoList :view="containers" :show-headings="false" :listed-containers="listedContainers" />
