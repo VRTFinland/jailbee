@@ -6,14 +6,23 @@ import pytest
 from playwright.sync_api import Page, expect
 
 
+@pytest.mark.parametrize(
+    "theme,background,outline",
+    [
+        ("Light", "rgb(231, 232, 238)", "rgb(25, 28, 32)"),
+        ("Dark", "rgb(40, 42, 47)", "rgb(226, 226, 233)"),
+    ],
+)
 @pytest.mark.parametrize("profile", ["normal", "e-ink"])
-def test_portalled_overlays_keep_the_panel_theme_and_profile(logged_in: Page, profile: str) -> None:
+def test_portalled_overlays_keep_the_panel_theme_and_profile(
+    logged_in: Page, profile: str, theme: str, background: str, outline: str
+) -> None:
     page = logged_in
     page.emulate_media(reduced_motion="no-preference")
     page.goto(f"{page.url.split('#')[0]}#/ui")
     # An inner normal panel must override even an e-ink page profile.
     page.locator("html").evaluate("el => el.dataset.profile = 'eink'")
-    panel = page.get_by_role("region", name=f"Dark theme, {profile} profile", exact=True)
+    panel = page.get_by_role("region", name=f"{theme} theme, {profile} profile", exact=True)
     panel.get_by_role("button", name="Open centred dialog", exact=True).click()
     dialog = page.get_by_role("dialog", name="Destroy dev-plan?")
     expect(dialog).to_be_visible()
@@ -25,12 +34,18 @@ def test_portalled_overlays_keep_the_panel_theme_and_profile(logged_in: Page, pr
                 border: s.borderTopColor, shadow: s.boxShadow, scrim: scrim.backgroundColor};
         }"""
     )
-    assert styles["background"] == "rgb(40, 42, 47)"
+    assert styles["background"] == background
+    box = dialog.bounding_box()
+    assert box is not None
+    viewport = page.viewport_size
+    assert viewport is not None
+    assert abs(box["x"] + box["width"] / 2 - viewport["width"] / 2) < 1
+    assert abs(box["y"] + box["height"] / 2 - viewport["height"] / 2) < 1
     assert styles["shadow"] == "none"
     if profile == "e-ink":
         assert styles["scrim"] == "rgba(0, 0, 0, 0)"
         assert styles["animation"] == "0s"
-        assert styles["border"] == "rgb(0, 0, 0)"
+        assert styles["border"] == outline
     else:
         assert styles["animation"] == "0.15s"
         assert styles["scrim"] == "rgba(0, 0, 0, 0.32)"

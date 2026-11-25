@@ -11,8 +11,9 @@
     background: transparent;
 }
 .ui-overlay-scope[data-profile="eink"] .ui-dialog,
-.ui-overlay-scope[data-profile="eink"] .ui-popup {
-    border: 1px solid var(--md-eink-overlay-outline);
+.ui-overlay-scope[data-profile="eink"] .ui-popup,
+.ui-popup.ui-overlay-scope[data-profile="eink"] {
+    border: 1px solid var(--md-on-surface);
     animation: none;
 }
 .ui-popup {
@@ -35,15 +36,20 @@
     display: flex;
     align-items: center;
     gap: var(--md-space-8);
-    min-height: var(--md-target-min);
+    min-height: var(--md-target-row);
     padding: var(--md-space-8) var(--md-space-12);
     border-radius: var(--md-shape-small);
     cursor: pointer;
 }
-.ui-option[data-highlighted],
+.ui-option[data-highlighted] {
+    background: var(--md-surface-container-highest);
+}
 .ui-option[data-state="checked"] {
     background: var(--md-primary-container);
     color: var(--md-on-primary-container);
+}
+.ui-option[data-variant="danger"] {
+    color: var(--md-error);
 }
 .ui-option[data-disabled] {
     cursor: default;

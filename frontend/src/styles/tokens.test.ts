@@ -7,6 +7,10 @@ import {describe, expect, it} from "vitest"
 // `[data-theme="<theme>"]` rules only for that theme, in source order.
 const source = readFileSync("src/styles/tokens.css", "utf8")
 
+it("keeps dialog centering geometry out of the design-scale tokens", () => {
+    expect(source).not.toContain("--md-dialog-center")
+})
+
 type Theme = "light" | "dark" | "eink"
 const THEMES: Theme[] = ["light", "dark", "eink"]
 

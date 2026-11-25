@@ -17,10 +17,10 @@
     pointer-events: none;
     transition: opacity var(--md-motion-duration) var(--md-motion-easing);
 }
-.ui-state-layer:hover:not(:disabled)::before {
+.ui-state-layer:hover:not(:disabled, [data-disabled])::before {
     opacity: var(--md-state-hover-opacity);
 }
-.ui-state-layer:active:not(:disabled)::before {
+.ui-state-layer:active:not(:disabled, [data-disabled])::before {
     opacity: var(--md-state-pressed-opacity);
 }
 .ui-focus-ring:focus-visible {

@@ -95,7 +95,7 @@ describe("GalleryView", () => {
         expect(follow[1].attributes("aria-checked")).toBe("false")
     })
 
-    it("offers working overlays and labelled fields in every panel", async () => {
+    it("offers overlay triggers and labelled fields in every panel", () => {
         const wrapper = mountGallery()
         for (const panel of wrapper.findAll("section[aria-label]")) {
             expect(panel.text()).toContain("Open centred dialog")
