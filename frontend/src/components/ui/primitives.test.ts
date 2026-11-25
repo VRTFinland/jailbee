@@ -1,5 +1,6 @@
 import {describe, expect, it} from "vitest"
 import {mount} from "@vue/test-utils"
+import {createMemoryHistory, createRouter} from "vue-router"
 import Button from "./Button.vue"
 import IconButton from "./IconButton.vue"
 import Switch from "./Switch.vue"
@@ -157,5 +158,58 @@ describe("ListRow", () => {
         expect(plain.attributes("aria-current")).toBeUndefined()
         const selected = mount(ListRow, {props: {title: "a", selected: true}})
         expect(selected.attributes("aria-current")).toBe("true")
+    })
+
+    it("carries block content in its body below the title and secondary line", () => {
+        const wrapper = mount(ListRow, {
+            props: {title: "dev-plan", secondary: "waiting for you"},
+            slots: {default: '<p class="orchestration">Orchestrator · 2 children</p><dl><dt>Sync</dt><dd>ok</dd></dl>'},
+        })
+        const body = wrapper.get(".list-row-body")
+        expect(body.element.tagName).toBe("DIV")
+        expect(body.get(".orchestration").text()).toBe("Orchestrator · 2 children")
+        expect(body.get("dl dd").text()).toBe("ok")
+        expect(mount(ListRow, {props: {title: "a"}}).find(".list-row-body").exists()).toBe(false)
+    })
+
+    describe("with a route", () => {
+        function linked(props: Record<string, unknown>, slots: Record<string, string> = {}) {
+            const router = createRouter({history: createMemoryHistory(), routes: [
+                {path: "/", component: {template: "<div />"}},
+                {path: "/c/:name", name: "container", component: {template: "<div />"}},
+            ]})
+            return {router, wrapper: mount(ListRow, {props, slots, global: {plugins: [router]}})}
+        }
+
+        it("makes the title a link to the route, which the whole row opens", async () => {
+            const {router, wrapper} = linked({title: "dev-plan", to: {name: "container", params: {name: "dev-plan"}}})
+            const link = wrapper.get("a.list-row-link")
+            expect(link.attributes("href")).toBe("/c/dev-plan")
+            expect(link.text()).toBe("dev-plan")
+            expect(wrapper.classes()).toContain("linked")
+            await link.trigger("click")
+            await router.isReady()
+            await new Promise((resolve) => setTimeout(resolve))
+            expect(router.currentRoute.value.fullPath).toBe("/c/dev-plan")
+        })
+
+        it("puts aria-current on the link, not the list item", () => {
+            const {wrapper} = linked({title: "a", to: "/c/a", selected: true})
+            expect(wrapper.get("a").attributes("aria-current")).toBe("true")
+            expect(wrapper.attributes("aria-current")).toBeUndefined()
+            const {wrapper: plain} = linked({title: "a", to: "/c/a"})
+            expect(plain.get("a").attributes("aria-current")).toBeUndefined()
+        })
+
+        it("keeps trailing controls and body links outside the row link", () => {
+            const {wrapper} = linked({title: "a", to: "/c/a"}, {
+                trailing: '<button type="button">Actions</button>',
+                default: '<p>Child of <a href="#/c/ork">ork</a></p>',
+            })
+            const rowLink = wrapper.get("a.list-row-link")
+            expect(rowLink.find("button").exists()).toBe(false)
+            expect(rowLink.find("a").exists()).toBe(false)
+            expect(wrapper.findAll("a")).toHaveLength(2)
+        })
     })
 })

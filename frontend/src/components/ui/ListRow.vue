@@ -1,24 +1,41 @@
 <script setup lang="ts">
-// A list row (#167): a title, an optional secondary line and a trailing slot
-// (a StatusChip, a Switch, an IconButton). The selected row is tonal and
-// carries `aria-current`; its outline is the hairline token, drawn only in
-// e-ink, where the tonal fill is white. The row
-// is 48px tall for a fine pointer and 56px for a coarse one.
+// A list row (#167): a title, an optional secondary line, block content in
+// the default slot (orchestration lines, `<dl>` cells) and a trailing slot (a
+// StatusChip, a Switch, an IconButton). The selected row is tonal and carries
+// `aria-current`; its outline is the hairline token, drawn only in e-ink,
+// where the tonal fill is white. The row is 48px tall for a fine pointer and
+// 56px for a coarse one.
+//
+// With `to`, the title is a router link whose hit area stretches over the
+// whole row, with the state layer and focus ring on the row; `aria-current`
+// moves to the link. Trailing controls and links in the body stay outside
+// that link (no interactive content nested in an anchor) and above its area.
+import type {RouteLocationRaw} from "vue-router"
+
 defineProps<{
     title?: string
     secondary?: string
     selected?: boolean
+    to?: RouteLocationRaw
 }>()
 </script>
 
 <template>
-    <li class="list-row" :class="{selected}" :aria-current="selected ? 'true' : undefined">
-        <span class="list-row-title"><slot name="title">{{ title }}</slot></span>
+    <li class="list-row" :class="{selected, linked: to !== undefined, 'ui-state-layer': to !== undefined}"
+        :aria-current="selected && to === undefined ? 'true' : undefined">
+        <span class="list-row-title">
+            <router-link v-if="to !== undefined" :to="to" class="list-row-link"
+                :aria-current="selected ? 'true' : undefined"><slot name="title">{{ title }}</slot></router-link>
+            <slot v-else name="title">{{ title }}</slot>
+        </span>
         <span v-if="secondary || $slots.secondary" class="list-row-secondary"><slot name="secondary">{{
             secondary }}</slot></span>
+        <div v-if="$slots.default" class="list-row-body"><slot /></div>
         <span v-if="$slots.trailing" class="list-row-trailing"><slot name="trailing" /></span>
     </li>
 </template>
+
+<style src="./state-layer.css"></style>
 
 <style scoped>
 .list-row {
@@ -49,8 +66,26 @@ defineProps<{
     line-height: var(--md-type-title-small-line-height);
     font-weight: var(--md-type-title-small-weight);
 }
-.list-row-title :slotted(a) {
+.list-row-title :slotted(a),
+.list-row-link {
     color: inherit;
+}
+.list-row-link {
+    text-decoration: none;
+}
+/* The link's hit area is the whole row. */
+.list-row-link::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+}
+.list-row-link:focus-visible {
+    outline: none;
+}
+.list-row.linked:has(.list-row-link:focus-visible) {
+    outline: var(--md-focus-ring-width) solid var(--md-primary);
+    outline-offset: var(--md-focus-ring-offset);
 }
 .list-row-secondary {
     grid-column: 1;
@@ -61,6 +96,18 @@ defineProps<{
 }
 .list-row.selected .list-row-secondary {
     color: inherit;
+}
+.list-row-body {
+    grid-column: 1 / -1;
+    min-width: 0;
+    font-size: var(--md-type-body-small-size);
+    line-height: var(--md-type-body-small-line-height);
+}
+/* Positioned after the link in source order, so they paint above its area. */
+.list-row-body :deep(a),
+.list-row-body :deep(button),
+.list-row-trailing {
+    position: relative;
 }
 .list-row-trailing {
     grid-column: 2;
