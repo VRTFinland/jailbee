@@ -92,6 +92,11 @@
     --md-layer-dialog: 40;
     --md-layer-popover: 50;
 
+    /* Centred dialog geometry; the drawer and phone sheet anchor to edges. */
+    --md-eink-overlay-outline: #000000;
+    --md-dialog-center: 50%;
+    --md-dialog-center-offset: -50% -50%;
+
     /* State layers: Material 3 hover and pressed overlays of the content
        colour, and the keyboard focus ring. The e-ink theme drops the layers
        (no tints); the ring stays. Disabled controls fade their content and
@@ -129,6 +134,7 @@
     --md-outline-variant: #c4c6cf;
     /* A border only e-ink draws: it has no tints to tell surfaces apart. */
     --md-hairline: transparent;
+    --md-scrim: rgb(0 0 0 / 32%);
     --md-primary: #3a5f94;
     --md-on-primary: #ffffff;
     --md-primary-container: #d5e3ff;
@@ -166,6 +172,7 @@
     --md-outline: #8e9099;
     --md-outline-variant: #43474e;
     --md-hairline: transparent;
+    --md-scrim: rgb(0 0 0 / 32%);
     --md-primary: #a7c8ff;
     --md-on-primary: #04305f;
     --md-primary-container: #224876;
@@ -203,6 +210,7 @@
     --md-outline: #000000;
     --md-outline-variant: #000000;
     --md-hairline: #000000;
+    --md-scrim: transparent;
     --md-primary: #000000;
     --md-on-primary: #ffffff;
     --md-primary-container: #ffffff;

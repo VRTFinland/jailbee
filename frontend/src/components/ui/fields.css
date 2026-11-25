@@ -1,0 +1,39 @@
+.ui-field {
+    display: grid;
+    gap: var(--md-space-4);
+    min-width: 0;
+    font-family: var(--md-font-body);
+    color: var(--md-on-surface);
+}
+.ui-field-label {
+    font-size: var(--md-type-label-large-size);
+    line-height: var(--md-type-label-large-line-height);
+    font-weight: var(--md-type-label-large-weight);
+}
+.ui-input {
+    box-sizing: border-box;
+    min-width: 0;
+    width: 100%;
+    min-height: var(--md-target-min);
+    padding: var(--md-space-8) var(--md-space-12);
+    border: 1px solid var(--md-outline);
+    border-radius: var(--md-shape-small);
+    background: var(--md-surface-container-lowest);
+    color: var(--md-on-surface);
+    font-family: var(--md-font-body);
+    font-size: var(--md-type-body-large-size);
+    line-height: var(--md-type-body-large-line-height);
+}
+.ui-input[aria-invalid="true"] { border-color: var(--md-error); }
+.ui-input:disabled {
+    opacity: var(--md-disabled-content-opacity);
+    cursor: default;
+}
+.ui-field-help,
+.ui-field-error {
+    margin: 0;
+    font-size: var(--md-type-body-small-size);
+    line-height: var(--md-type-body-small-line-height);
+}
+.ui-field-help { color: var(--md-on-surface-variant); }
+.ui-field-error { color: var(--md-error); }

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from typing import Literal
 
 import pytest
 from playwright.sync_api import Page, expect
@@ -71,6 +72,45 @@ def test_gallery_snapshot(
             )
         except AssertionError as error:
             failures.append(str(error))
+    # Open real portalled primitives rather than imitating them in gallery markup.
+    overlays: list[tuple[str, str, Literal["dialog", "menu", "listbox"]]] = [
+        ("dialog", "Open centred dialog", "dialog"),
+        ("drawer", "Open drawer", "dialog"),
+        ("menu", "Container actions", "menu"),
+        ("select", "Theme", "listbox"),
+    ]
+    for name, trigger, role in overlays:
+        control = panel.get_by_role(
+            "combobox" if name == "select" else "button", name=trigger, exact=True
+        )
+        control.click()
+        overlay = page.get_by_role(role)
+        expect(overlay).to_be_visible()
+        if role == "dialog":
+            box = overlay.bounding_box()
+            assert box is not None
+            if width == 390:
+                assert abs(box["y"] + box["height"] - 844) < 2
+                assert abs(box["width"] - width) < 2
+            elif name == "drawer":
+                assert abs(box["x"] + box["width"] - width) < 2
+                assert abs(box["height"] - 844) < 2
+            else:
+                assert abs(box["x"] + box["width"] / 2 - width / 2) < 2
+                assert abs(box["y"] + box["height"] / 2 - 844 / 2) < 2
+        reference = references / f"{stem}-open-{name}.png"
+        expected.add(reference)
+        try:
+            assert_image_matches(
+                overlay.screenshot(animations="disabled", caret="hide", scale="css"),
+                reference=reference,
+                output=Path(output_path) / f"open-{name}",
+                update=update,
+            )
+        except AssertionError as error:
+            failures.append(str(error))
+        page.keyboard.press("Escape")
+        expect(overlay).not_to_be_visible()
     # A reference of a removed or renamed group is dead weight in the repo.
     for orphan in sorted(set(references.glob(f"{stem}-*.png")) - expected):
         if update:

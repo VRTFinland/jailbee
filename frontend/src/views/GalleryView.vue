@@ -2,9 +2,13 @@
 // The design system gallery (#167, `/ui`): the visual reference every view is
 // checked against. Each panel scopes one theme and one display profile, so the
 // whole system is judged on one screen. Behind login; linked from no menu.
-// Later tickets add the overlay primitives to every panel.
+// Portalled overlays preserve the sample panel's theme and display profile.
 import {reactive} from "vue"
 import Button from "../components/ui/Button.vue"
+import Dialog from "../components/ui/Dialog.vue"
+import Field from "../components/ui/Field.vue"
+import Menu from "../components/ui/Menu.vue"
+import Select from "../components/ui/Select.vue"
 import Icon from "../components/ui/Icon.vue"
 import IconButton from "../components/ui/IconButton.vue"
 import ListRow from "../components/ui/ListRow.vue"
@@ -55,6 +59,10 @@ const BUTTON_VARIANTS = ["primary", "tonal", "text", "danger"] as const
 /** The one live sample switch of each panel, keyed by panel. */
 const followLive = reactive<Record<string, boolean>>(Object.fromEntries(
     THEMES.flatMap((t) => PROFILES.map((p) => [`${t.id}-${p.id}`, false])),
+))
+
+const selectedTheme = reactive<Record<string, string>>(Object.fromEntries(
+    THEMES.flatMap((t) => PROFILES.map((p) => [`${t.id}-${p.id}`, "light"])),
 ))
 
 /** The linked sample rows' chips, through the same mapping the views use. */
@@ -209,6 +217,43 @@ function typeStyle(token: string): Record<string, string> {
                     </div>
 
                     <div class="group">
+                        <h3 class="group-title">Fields</h3>
+                        <div class="field-samples">
+                            <Field label="Container name" model-value="dev-plan" help="Use a short, descriptive name." />
+                            <Field label="Invalid name" error="A name is required." />
+                            <Field label="Disabled field" model-value="read-only" disabled />
+                            <Select label="Theme" v-model="selectedTheme[`${theme.id}-${profile.id}`]" :options="[
+                                {value: 'light', label: 'Light'}, {value: 'dark', label: 'Dark'},
+                                {value: 'eink', label: 'E-ink'}]" />
+                            <Select label="Disabled select" model-value="light" :options="[{value: 'light', label: 'Light'}]" disabled />
+                        </div>
+                    </div>
+
+                    <div class="group">
+                        <h3 class="group-title">Overlays</h3>
+                        <div class="samples">
+                            <Dialog title="Destroy dev-plan?" description="The container and its uncommitted work are deleted.">
+                                <template #trigger><Button>Open centred dialog</Button></template>
+                                <template #default="{close}">
+                                    <div class="samples">
+                                        <Button variant="text" @click="close">Cancel</Button>
+                                        <Button variant="danger" @click="close">Destroy</Button>
+                                    </div>
+                                </template>
+                            </Dialog>
+                            <Dialog title="Container settings" description="Preferences for dev-plan." placement="drawer">
+                                <template #trigger><Button>Open drawer</Button></template>
+                                <Field label="Drawer name" model-value="dev-plan" />
+                            </Dialog>
+                            <Menu label="Container actions" :items="[
+                                {value: 'shell', label: 'Shell'}, {value: 'logs', label: 'Logs'},
+                                {value: 'stop', label: 'Stop', disabled: true}]">
+                                <template #trigger><Button>Container actions</Button></template>
+                            </Menu>
+                        </div>
+                    </div>
+
+                    <div class="group">
                         <h3 class="group-title">Shape scale</h3>
                         <ul class="shapes">
                             <li
@@ -303,6 +348,10 @@ function typeStyle(token: string): Record<string, string> {
 }
 .samples + .samples {
     margin-top: var(--md-space-8);
+}
+.field-samples {
+    display: grid;
+    gap: var(--md-space-16);
 }
 .rows {
     list-style: none;

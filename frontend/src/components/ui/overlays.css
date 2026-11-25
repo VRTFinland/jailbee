@@ -1,0 +1,51 @@
+/* Shared by portalled overlay primitives, never a view-level dependency. */
+.ui-overlay-scope {
+    font-family: var(--md-font-body);
+    color: var(--md-on-surface);
+}
+@keyframes ui-overlay-appear {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+.ui-overlay-scope[data-profile="eink"] .ui-dialog-scrim {
+    background: transparent;
+}
+.ui-overlay-scope[data-profile="eink"] .ui-dialog,
+.ui-overlay-scope[data-profile="eink"] .ui-popup {
+    border: 1px solid var(--md-eink-overlay-outline);
+    animation: none;
+}
+.ui-popup {
+    z-index: var(--md-layer-popover);
+    min-width: 12rem;
+    max-width: min(90vw, 24rem);
+    max-height: var(--reka-popper-available-height);
+    overflow: auto;
+    padding: var(--md-space-4);
+    border: 1px solid var(--md-hairline);
+    border-radius: var(--md-shape-medium);
+    background: var(--md-surface-container);
+    color: var(--md-on-surface);
+    font-family: var(--md-font-body);
+    font-size: var(--md-type-body-medium-size);
+    line-height: var(--md-type-body-medium-line-height);
+    animation: ui-overlay-appear var(--md-motion-duration) var(--md-motion-easing);
+}
+.ui-option {
+    display: flex;
+    align-items: center;
+    gap: var(--md-space-8);
+    min-height: var(--md-target-min);
+    padding: var(--md-space-8) var(--md-space-12);
+    border-radius: var(--md-shape-small);
+    cursor: pointer;
+}
+.ui-option[data-highlighted],
+.ui-option[data-state="checked"] {
+    background: var(--md-primary-container);
+    color: var(--md-on-primary-container);
+}
+.ui-option[data-disabled] {
+    cursor: default;
+    opacity: var(--md-disabled-content-opacity);
+}
