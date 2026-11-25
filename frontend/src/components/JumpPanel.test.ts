@@ -5,13 +5,12 @@ import JumpPanel from "./JumpPanel.vue"
 
 it("extracts prompt text without activating elements in the live document", async () => {
     const activated = vi.fn()
-    if (!customElements.get("prompt-probe")) {
-        customElements.define("prompt-probe", class extends HTMLElement {
-            constructor() { super(); activated() }
-        })
-    }
+    const tag = `prompt-probe-${crypto.randomUUID()}`
+    customElements.define(tag, class extends HTMLElement {
+        constructor() { super(); activated() }
+    })
     const wrapper = mount(JumpPanel, {props: {entries: [
-        {kind: "user", id: "u1", timestamp: null, html: "<prompt-probe>Read <strong>this</strong> &amp; that</prompt-probe>", meta: false, label: null, expandable: false},
+        {kind: "user", id: "u1", timestamp: null, html: `<${tag}>Read <strong>this</strong> &amp; that</${tag}>`, meta: false, label: null, expandable: false},
     ]}})
     expect(wrapper.get("button.excerpt").text()).toBe("Read this & that")
     expect(activated).not.toHaveBeenCalled()

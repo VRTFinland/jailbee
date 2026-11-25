@@ -99,6 +99,26 @@ async def session_transcript(
     )
 
 
+@router.get("/api/repos/{prefix}/sessions/{agent}/{session_id}/summary")
+async def session_summary(
+    prefix: str, agent: str, session_id: str, ctx: Context, _auth: RequireSession
+) -> SessionView:
+    if not ctx.scope.allows(prefix):
+        raise HTTPException(status_code=404, detail="Unknown session")
+    await ctx.homes_ready()
+    rows = await run_in_threadpool(ctx.repo_sessions.rows, prefix, [(agent, session_id)])
+    row = rows.get((agent, session_id))
+    if row is None:
+        raise HTTPException(status_code=404, detail="Unknown session")
+    return SessionView(
+        session_id=row.session_id,
+        agent=row.agent,
+        title=row.title,
+        last_activity=row.last_activity,
+        models=list(row.models),
+    )
+
+
 @router.get("/api/repos/{prefix}/sessions/{agent}/{session_id}/subagents/{agent_id}")
 async def subagent_transcript(
     prefix: str,

@@ -76,7 +76,7 @@ describe("RepoView", () => {
     it("does not show transcript metadata in the repository menu", async () => {
         const {wrapper} = await mountRepo(vi.fn().mockResolvedValue(jsonResponse(200, {sessions})))
         await wrapper.get('[aria-label="Quick settings"]').trigger("click")
-        expect(wrapper.get('[role="dialog"]').exists()).toBe(true)
+        expect(wrapper.get('[role="dialog"]').attributes("aria-label")).toBe("Quick settings")
         expect(wrapper.find('[aria-label="Session"]').exists()).toBe(false)
         wrapper.unmount()
     })

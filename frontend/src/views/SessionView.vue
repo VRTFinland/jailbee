@@ -16,7 +16,7 @@ import type {
     RenderedEntry,
     RenderedSubagent,
     RenderedToolResult,
-    SessionList,
+    SessionSummary,
     TranscriptView,
 } from "../protocol"
 import {settings} from "../settings"
@@ -462,9 +462,9 @@ async function load() {
 onMounted(() => {
     void load()
     if (agentId.value !== null) {
-        void apiFetch<SessionList>(`/api/repos/${encodeURIComponent(prefix.value)}/sessions`).then(view => {
-            const parent = view.sessions.find(session => session.agent === agent.value && session.session_id === sessionId.value)
-            if (parent) parentTitle.value = parent.title || "Untitled session"
+        const path = [prefix.value, "sessions", agent.value, sessionId.value].map(encodeURIComponent).join("/")
+        void apiFetch<SessionSummary>(`/api/repos/${path}/summary`).then(parent => {
+            parentTitle.value = parent.title || "Untitled session"
         }).catch(() => {})
     }
 })

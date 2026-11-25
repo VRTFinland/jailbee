@@ -36,6 +36,19 @@ def breadcrumb_page(make_server: Callable[..., E2EServer], page: Page, tmp_path:
     return page
 
 
+def test_parent_title_needs_neither_the_parent_document_nor_the_repository_list(
+    breadcrumb_page: Page,
+) -> None:
+    page = breadcrumb_page
+    page.route("**/api/repos/work/sessions", lambda route: route.fulfill(json={"sessions": []}))
+    page.route(f"**/api/repos/work/sessions/claude/{SESSION_ID}?*", lambda route: route.fulfill(json={"title": "Wrong parent"}))
+    page.reload()
+    expect(page.get_by_role("heading", name=SUBAGENT_TITLE, exact=True)).to_be_visible()
+    expect(page.get_by_role("navigation", name="Breadcrumb").get_by_role(
+        "link", name=SESSION_TITLE, exact=True
+    )).to_be_visible()
+
+
 def test_narrow_parent_collapses_and_navigates_without_a_viewport_breakpoint(
     breadcrumb_page: Page,
 ) -> None:

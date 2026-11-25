@@ -53,7 +53,7 @@ describe("remembered session position", () => {
         const to = vi.spyOn(window, "scrollTo").mockImplementation(() => {})
         const wrapper = await open()
         if (expected) expect((scroll.mock.instances[0] as Element | undefined)?.id).toBe(expected)
-        else expect(to).toHaveBeenCalledWith(0, 0)
+        else expect(to).toHaveBeenLastCalledWith(0, 0)
         wrapper.unmount()
     })
 
