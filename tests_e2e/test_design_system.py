@@ -184,3 +184,13 @@ def test_transitions_stay_brief_and_stop_under_reduced_motion_and_eink(logged_in
     assert eink_panels.evaluate_all(
         "(els) => els.map((e) => getComputedStyle(e).transitionDuration)"
     ) == ["0s"] * 15
+
+
+def test_the_inter_licence_ships_next_to_the_font(server: E2EServer, page: Page) -> None:
+    """The OFL requires the licence to travel with the font: the build puts it
+    beside the bundled woff2 in the app's assets, which the wheel carries."""
+    response = page.request.get(f"{server.url.split('#')[0].rstrip('/')}/assets/Inter-OFL.txt")
+    assert response.ok, response.status
+    text = response.text()
+    assert "SIL Open Font License, Version 1.1" in text
+    assert "The Inter Project Authors" in text
