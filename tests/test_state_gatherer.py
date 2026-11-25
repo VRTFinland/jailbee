@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import dataclasses
 import json
-
-import pytest
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+
+import pytest
 
 from jailbee.dashboard.model import RepoGroup
 from jailbee.db import get_engine
@@ -224,9 +224,7 @@ def test_broken_config_resume_is_local_only_and_requires_registration(
     db_session.commit()
     mocker.patch("jailbee.db.get_engine", return_value=db_session.get_bind())
     mocker.patch("jailbee.remote_ssh.repo_scope.get_engine", return_value=db_session.get_bind())
-    mocker.patch(
-        "jailbee.config.load_orphan_base_config", return_value=make_cfg(tmp_path / "base")
-    )
+    mocker.patch("jailbee.config.load_orphan_base_config", return_value=make_cfg(tmp_path / "base"))
     container = dataclasses.replace(
         _ci("alpha-x"),
         state="Stopped" if saved else "Running",
@@ -259,9 +257,10 @@ def test_broken_config_resume_is_local_only_and_requires_registration(
 
     assert isinstance(snapshot, Snapshot)
     assert snapshot.resumable_repos == ([None] if registered else [])
-    assert (("Resume…", "global-resume") in global_menu_actions(
-        resumable_repos=snapshot.resumable_repos
-    )) is registered
+    assert (
+        ("Resume…", "global-resume")
+        in global_menu_actions(resumable_repos=snapshot.resumable_repos)
+    ) is registered
     for transport in ("ssh", "web"):
         assert ("Resume…", "global-resume") not in global_menu_actions(
             transport=transport, resumable_repos=snapshot.resumable_repos
