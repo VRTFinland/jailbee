@@ -1870,7 +1870,8 @@ a reply, a comment) shows the preview in the list's place; Esc goes back. Off a 
 dashboard's container menu opens the same box for its container. Dashboard
 publication uses the shared action runner: questions are modals, output and
 URLs or failure reasons stay in the notification queue, including over SSH.
-PR creations use it too; only the standalone manager hands over a terminal. The
+Quitting the terminal dashboard cancels pending questions, even while a modal
+is still opening. PR creations use it too; only the standalone manager hands over a terminal. The
 Qt dashboard has a native window for it. Over remote SSH the manager is
 read-only. The scriptable forms address a proposal as `pr/<manifest>.json` or
 `issue/<manifest>.json`:

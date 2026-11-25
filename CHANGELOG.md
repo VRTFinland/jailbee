@@ -237,7 +237,9 @@ before editing `## Unreleased`.
   and returning from a tmux hand-off opens the queue when any do. The list
   keeps its cursor on the same entry while output streams, a background action
   keeps running during a tmux hand-off, and an action whose worker crashes
-  settles instead of staying running. Background
+  settles instead of staying running. Quitting while a question is still mounting
+  cancels it without a teardown traceback
+  ([#146](https://github.com/VRTFinland/jailbee/issues/146)). Background
   lifecycle jobs (create, start/restart, autostart, destroy), whoever started them, are listed
   there too as read-only rows with a way to open the job log; they count in the badge
   and go when the job does (a hidden repo's jobs are left out, and a failed job

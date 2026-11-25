@@ -98,6 +98,58 @@ def test_quit_driver_waits_for_mounted_question_before_exiting(mocker, tmp_path)
     assert not spawn.child._thread.is_alive()
 
 
+@pytest.mark.parametrize("kind", ["confirm", "choose_one", "choose_many", "text", "secret"])
+def test_exit_while_prompt_is_mounting_does_not_report_an_exception(mocker, tmp_path, kind):
+    app = make_app(mocker, [_group(tmp_path)])
+    app.threaded_actions = True
+    app.action_runner = drunner.run_action
+    prompt = _prompt(
+        kind=kind,
+        default=False if kind == "confirm" else None,
+        destructive=kind == "confirm",
+        options=(WireOption("0", "first", "first", ""),) if "choose" in kind else (),
+    )
+    spawn = Spawns([prompt])
+    app.action_spawn = spawn
+    errors = mocker.spy(app, "_handle_exception")
+
+    async def main():
+        mounting = asyncio.Event()
+        release = asyncio.Event()
+        modal_type = type(pm.modal_for(prompt))
+        mount = modal_type.on_mount
+        held = None
+        mounted = asyncio.Event()
+
+        async def held_mount(modal):
+            nonlocal held
+            held = modal
+            mounting.set()
+            await release.wait()
+            mount(modal)
+            mounted.set()
+
+        mocker.patch.object(modal_type, "on_mount", held_mount)
+        async with app.run_test():
+            app.run_actions([drunner.ActionRun(["merge", "alpha-x"], tmp_path)], lambda _: None)
+            await mounting.wait()
+            try:
+                app.exit()
+                # Force pruning before releasing mount instead of relying on
+                # Textual's shutdown scheduling to hit the race by chance.
+                await held.remove_children()
+            finally:
+                release.set()
+
+        assert mounted.is_set(), "the gated mount must finish, not just be cancelled"
+
+    asyncio.run(asyncio.wait_for(main(), _RUN_SECONDS))
+    errors.assert_not_called()
+    assert isinstance(spawn.child.answers[0], Cancel)
+    spawn.child._thread.join(_JOIN_SECONDS)
+    assert not spawn.child._thread.is_alive()
+
+
 def _drive(
     mocker: Any,
     tmp_path: Path,
