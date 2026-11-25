@@ -1,4 +1,4 @@
-import {readFileSync} from "node:fs"
+import {readdirSync, readFileSync} from "node:fs"
 import {describe, expect, it} from "vitest"
 
 // jsdom does not evaluate custom properties, so the token file is read as
@@ -109,6 +109,10 @@ const PAIRS: [string, string][] = [
     ["--md-primary", "--md-surface-container-low"],
     ["--md-on-primary", "--md-primary"],
     ["--md-on-primary-container", "--md-primary-container"],
+    // Notices sit on the primary container and carry body, muted and link text.
+    ["--md-on-surface", "--md-primary-container"],
+    ["--md-on-surface-variant", "--md-primary-container"],
+    ["--md-primary", "--md-primary-container"],
     ["--md-error", "--md-surface"],
     ["--md-on-error", "--md-error"],
     ["--md-on-error-container", "--md-error-container"],
@@ -175,10 +179,10 @@ describe("design tokens", () => {
         "--phase-failed": "--md-phase-failed",
         "--font-body": "--md-font-body",
         "--font-mono": "--md-font-mono",
-        "--space-1": "--md-space-1",
-        "--space-2": "--md-space-2",
-        "--space-3": "--md-space-4",
-        "--space-4": "--md-space-5",
+        "--space-1": "--md-space-4",
+        "--space-2": "--md-space-8",
+        "--space-3": "--md-space-16",
+        "--space-4": "--md-space-24",
         "--radius": "--md-shape-small",
     }
 
@@ -218,6 +222,44 @@ describe("design tokens", () => {
         expect(resolve("light", "--md-target-min")).toBe("44px")
         expect(resolve("light", "--md-target-row")).toBe("48px")
         expect(source).toMatch(/@media \(pointer: coarse\)\s*\{\s*:root\s*\{\s*--md-target-row:\s*56px;/)
+    })
+
+    it("has one hit-target token per use, none duplicating another", () => {
+        const targets = [...declared("light").keys()].filter((n) => n.startsWith("--md-target-")).sort()
+        expect(targets).toEqual(["--md-target-min", "--md-target-row"])
+    })
+
+    // Spacing tokens are named by their size in px at the default 16px root,
+    // so `--md-space-16` is 1rem: a name never hides its value, and a
+    // mechanical rename to an index (`--space-3` -> `--md-space-3`) lands on
+    // an undefined token, which the test below rejects.
+    it("names each spacing token by its px size", () => {
+        const spaces = [...declared("light").keys()].filter((n) => n.startsWith("--md-space-"))
+        expect(spaces.length).toBeGreaterThanOrEqual(6)
+        for (const name of spaces) {
+            const px = Number(name.slice("--md-space-".length))
+            expect(resolve("light", name), name).toBe(`${px / 16}rem`)
+        }
+    })
+
+    it("defines every --md token the app's sources use", () => {
+        const files = (readdirSync("src", {recursive: true}) as string[])
+            .filter((f) => /\.(vue|css|ts)$/.test(f) && !f.endsWith(".test.ts"))
+        const defined = new Set(declared("light").keys())
+        const missing: string[] = []
+        for (const file of files) {
+            for (const [, name] of readFileSync(`src/${file}`, "utf8").matchAll(/var\((--md-[\w-]+)[,)]/g)) {
+                if (!defined.has(name)) missing.push(`${file}: ${name}`)
+            }
+        }
+        expect(missing).toEqual([])
+    })
+
+    it("stacks layers so a dialog sits above its own scrim and a menu above both", () => {
+        const layer = (n: string) => Number(resolve("light", `--md-layer-${n}`))
+        const order = ["raised", "sticky", "scrim", "dialog", "popover"].map(layer)
+        expect(order).toEqual([...order].sort((a, b) => a - b))
+        expect(new Set(order).size).toBe(order.length)
     })
 
     it("uses the bundled Inter as the body font", () => {

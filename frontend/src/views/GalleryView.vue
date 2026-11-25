@@ -107,10 +107,10 @@ function typeStyle(token: string): Record<string, string> {
 
 <style scoped>
 .gallery {
-    padding: var(--md-space-4);
+    padding: var(--md-space-16);
 }
 .gallery-title {
-    margin: 0 0 var(--md-space-4);
+    margin: 0 0 var(--md-space-16);
     font-size: var(--md-type-title-large-size);
     line-height: var(--md-type-title-large-line-height);
     font-weight: var(--md-type-title-large-weight);
@@ -118,11 +118,11 @@ function typeStyle(token: string): Record<string, string> {
 .panels {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(min(100%, 22rem), 1fr));
-    gap: var(--md-space-4);
+    gap: var(--md-space-16);
 }
 .panel {
     min-width: 0;
-    padding: var(--md-space-4);
+    padding: var(--md-space-16);
     background: var(--md-surface);
     color: var(--md-on-surface);
     border: 1px solid var(--md-outline-variant);
@@ -130,16 +130,16 @@ function typeStyle(token: string): Record<string, string> {
     font-family: var(--md-font-body);
 }
 .panel-title {
-    margin: 0 0 var(--md-space-3);
+    margin: 0 0 var(--md-space-12);
     font-size: var(--md-type-title-medium-size);
     line-height: var(--md-type-title-medium-line-height);
     font-weight: var(--md-type-title-medium-weight);
 }
 .group + .group {
-    margin-top: var(--md-space-4);
+    margin-top: var(--md-space-16);
 }
 .group-title {
-    margin: 0 0 var(--md-space-2);
+    margin: 0 0 var(--md-space-8);
     color: var(--md-on-surface-variant);
     font-size: var(--md-type-label-large-size);
     line-height: var(--md-type-label-large-line-height);
@@ -151,18 +151,18 @@ function typeStyle(token: string): Record<string, string> {
     margin: 0;
     padding: 0;
     display: grid;
-    gap: var(--md-space-2);
+    gap: var(--md-space-8);
 }
 .swatch-item {
     display: flex;
     align-items: center;
-    gap: var(--md-space-2);
+    gap: var(--md-space-8);
     min-width: 0;
 }
 .swatch {
     flex: none;
     width: var(--md-target-min);
-    height: var(--md-space-5);
+    height: var(--md-space-24);
     border: 1px solid var(--md-outline);
     border-radius: var(--md-shape-small);
 }
@@ -174,7 +174,7 @@ function typeStyle(token: string): Record<string, string> {
     overflow-wrap: anywhere;
 }
 .type-sample {
-    margin: 0 0 var(--md-space-1);
+    margin: 0 0 var(--md-space-4);
 }
 .shapes {
     grid-template-columns: repeat(auto-fill, minmax(5rem, 1fr));
@@ -182,7 +182,7 @@ function typeStyle(token: string): Record<string, string> {
 .shape {
     display: grid;
     place-items: center;
-    min-height: var(--md-target-large);
+    min-height: var(--md-target-row);
     background: var(--md-primary-container);
     color: var(--md-on-primary-container);
     font-size: var(--md-type-label-medium-size);
