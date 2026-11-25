@@ -11,6 +11,7 @@ from jailbee.orchestration.view import ChildView, GrantView
 from tests.web_fakes import container, repo_group, snapshot_of
 from tests_e2e.flows import open_settings
 from tests_e2e.server import E2EServer
+from tests_e2e.test_session_reading import wait_for_scroll_settled
 
 
 @pytest.mark.parametrize("width", [1280, 390])
@@ -168,6 +169,7 @@ def test_related_container_navigation_resets_eink_page_and_scroll(
     page.get_by_role("navigation", name="Pages").get_by_role(
         "button", name=re.compile("Next")
     ).click()
+    wait_for_scroll_settled(page)
     expect(page.locator(".page-indicator")).to_contain_text("2 /")
     page.get_by_role("region", name="Children").get_by_role(
         "link", name="task-20", exact=True
