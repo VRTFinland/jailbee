@@ -157,7 +157,7 @@ def test_hidden_session_title_keeps_page_turns_contiguous(
 
 
 @pytest.mark.parametrize("step", [90, 75, 66, 50])
-def test_guide_marks_previous_bottom_then_disappears_on_turn_or_scroll(
+def test_guide_marks_every_previous_bottom_then_disappears_on_backward_turn_or_scroll(
     page: Page, make_server: Callable[..., E2EServer], tmp_path: Path, step: int
 ) -> None:
     page.set_viewport_size({"width": 390, "height": 800})
@@ -174,12 +174,15 @@ def test_guide_marks_previous_bottom_then_disappears_on_turn_or_scroll(
     expect(guide).to_have_css("height", "1px")
     expect(guide).to_have_css("background-color", "rgb(0, 0, 0)")
     expect(guide).to_have_css("pointer-events", "none")
-    page.keyboard.press("m")
-    wait_for_scroll_settled(page)
-    expect(guide).to_have_count(0)
-    page.keyboard.press("m")
-    wait_for_scroll_settled(page)
-    expect(guide).to_be_visible()
+    for _ in range(3):
+        before = reading_area(page)
+        page.keyboard.press("m")
+        wait_for_scroll_settled(page)
+        expect(guide).to_be_visible()
+        after = reading_area(page)
+        assert guide.evaluate("el => el.getBoundingClientRect().top") == pytest.approx(
+            before["y"] + before["bottom"] - after["y"], abs=1
+        )
     page.mouse.wheel(0, 10)
     expect(guide).to_have_count(0)
     page.keyboard.press("m")

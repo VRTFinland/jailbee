@@ -106,7 +106,6 @@ export function usePager(
 
     function goTo(index: number, forward = false) {
         measure()
-        const hadGuide = guideTop.value !== null
         guideTop.value = null
         const previousY = window.scrollY
         const previousBottom = previousY + readableBottom()
@@ -115,7 +114,7 @@ export function usePager(
         page.value = target
         turnScroll = y
         window.scrollTo(0, y)
-        if (forward && !hadGuide && step() < 1 && window.scrollY > previousY) {
+        if (forward && step() < 1 && window.scrollY > previousY) {
             const top = previousBottom - window.scrollY
             if (top > topInset() && top < readableBottom()) guideTop.value = top
         }
