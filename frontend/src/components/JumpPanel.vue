@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import {computed, nextTick, onMounted, ref} from "vue"
+import {computed, nextTick, onBeforeUnmount, onMounted, ref} from "vue"
 import type {RenderedEntry} from "../protocol"
 
-const props = defineProps<{entries: RenderedEntry[]}>()
+const props = defineProps<{entries: RenderedEntry[]; origin?: HTMLElement | null}>()
 const emit = defineEmits<{close: []; select: [target: string]}>()
 const closeButton = ref<HTMLButtonElement | null>(null)
 const prompts = computed(() => props.entries.filter(e => e.kind === "user" && !e.meta).map(e => {
@@ -11,11 +11,25 @@ const prompts = computed(() => props.entries.filter(e => e.kind === "user" && !e
     return {id: e.id, text: (node.textContent ?? "").replace(/\s+/g, " ").trim() || "(empty prompt)"}
 }))
 onMounted(() => void nextTick(() => closeButton.value?.focus()))
+onBeforeUnmount(() => props.origin?.focus({preventScroll: true}))
+function trapFocus(event: KeyboardEvent) {
+    if (event.key !== "Tab") return
+    const buttons = Array.from((event.currentTarget as HTMLElement).querySelectorAll<HTMLButtonElement>("button:not(:disabled)"))
+    const first = buttons[0]
+    const last = buttons[buttons.length - 1]
+    if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault()
+        last?.focus()
+    } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault()
+        first?.focus()
+    }
+}
 </script>
 
 <template>
     <div class="jump-backdrop" @click.self="emit('close')">
-        <section class="jump-panel" role="dialog" aria-modal="true" aria-label="Jump to" @keydown.esc.stop="emit('close')">
+        <section class="jump-panel" role="dialog" aria-modal="true" aria-label="Jump to" @keydown="trapFocus" @keydown.esc.stop="emit('close')">
             <header><strong>Jump to</strong><button ref="closeButton" type="button" @click="emit('close')">Close</button></header>
             <button type="button" @click="emit('select', 'start')">Start</button>
             <button type="button" @click="emit('select', 'latest')">Latest answer</button>

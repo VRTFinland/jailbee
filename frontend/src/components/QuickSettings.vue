@@ -6,10 +6,10 @@ import {FONT_SIZE_RANGE, settings, THEMES, THEME_LABELS, updateSettings} from ".
 const props = defineProps<{context?: "containers" | "session" | null; session?: {agent: string; models: string[]; id: string} | null; parent?: {label: string; to: RouteLocationRaw}}>()
 const route = useRoute()
 const openSettings = inject<(trigger: HTMLElement | null) => void>("open-settings", () => {})
-const openJump = inject<() => void>("open-jump", () => {})
+const openJump = inject<(origin: HTMLElement | null) => void>("open-jump", () => {})
 function showJump() {
     void close(false)
-    openJump()
+    openJump(trigger.value)
 }
 function showSettings() {
     void close(false)

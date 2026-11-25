@@ -38,13 +38,19 @@ const eink = computed(() => settings.displayProfile === "eink")
 /** E-ink: live entries wait here until the reader taps the notice. */
 const pending = ref<RenderedEntry[]>([])
 const jumpPanelOpen = ref(false)
-provide("open-jump", () => { jumpPanelOpen.value = true })
+const jumpOrigin = ref<HTMLElement | null>(null)
+function openJump(origin: HTMLElement | null = document.activeElement as HTMLElement | null) {
+    if (jumpPanelOpen.value) return
+    jumpOrigin.value = origin
+    jumpPanelOpen.value = true
+}
+provide("open-jump", openJump)
 function jumpKey(event: KeyboardEvent) {
     const target = event.target
     if (event.key !== "j" || event.ctrlKey || event.metaKey || event.altKey ||
         (target instanceof HTMLElement && (target.isContentEditable || !!target.closest('input, textarea, select, [contenteditable="true"]')))) return
     event.preventDefault()
-    jumpPanelOpen.value = true
+    openJump()
 }
 
 const route = useRoute()
@@ -568,8 +574,8 @@ watch(
                 {{ jumpLabel }}
             </button>
         </template>
-        <PageNav :pager="pager" jump-enabled @jump="jumpPanelOpen = true" />
-        <JumpPanel v-if="jumpPanelOpen" :entries="shown" @close="jumpPanelOpen = false" @select="selectJump" />
+        <PageNav :pager="pager" jump-enabled @jump="openJump()" />
+        <JumpPanel v-if="jumpPanelOpen" :entries="shown" :origin="jumpOrigin" @close="jumpPanelOpen = false" @select="selectJump" />
     </div>
 </template>
 
