@@ -14,6 +14,7 @@ import SessionView from "./views/SessionView.vue"
 import SettingsView from "./views/SettingsView.vue"
 import LoginView from "./views/LoginView.vue"
 import SetupView from "./views/SetupView.vue"
+import GalleryView from "./views/GalleryView.vue"
 
 export const routes: RouteRecordRaw[] = [
     {path: "/login", name: "login", component: LoginView, meta: {public: true}},
@@ -28,6 +29,8 @@ export const routes: RouteRecordRaw[] = [
         component: SessionView,
     },
     {path: "/settings", name: "settings", component: SettingsView},
+    // The design system gallery (#167): behind login, linked from no menu.
+    {path: "/ui", name: "gallery", component: GalleryView},
     {path: "/:pathMatch(.*)*", redirect: "/"},
 ]
 

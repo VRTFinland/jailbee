@@ -1,6 +1,6 @@
 import {describe, expect, it, vi} from "vitest"
 import {createMemoryHistory} from "vue-router"
-import {setToken} from "./api"
+import {clearToken, setToken} from "./api"
 import {createAppRouter, takeResumePath} from "./router"
 
 describe("server mode routing", () => {
@@ -89,5 +89,28 @@ describe("resume path", () => {
         setToken("t")
         await router.push("/settings")
         expect(takeResumePath()).toBe("/")
+    })
+})
+
+describe("the /ui gallery route", () => {
+    it("opens the gallery for a signed-in user", async () => {
+        setToken("session")
+        vi.stubGlobal("fetch", vi.fn(async () => Response.json({mode: "dashboard"})))
+        const router = createAppRouter(createMemoryHistory())
+
+        await router.push("/ui")
+
+        expect(router.currentRoute.value.name).toBe("gallery")
+    })
+
+    it("sends a visitor without a session to the login page", async () => {
+        clearToken()
+        vi.stubGlobal("fetch", vi.fn(async (url: string) =>
+            Response.json(url === "/api/mode" ? {mode: "dashboard"} : {auth_disabled: false})))
+        const router = createAppRouter(createMemoryHistory())
+
+        await router.push("/ui")
+
+        expect(router.currentRoute.value.name).toBe("login")
     })
 })
