@@ -237,6 +237,71 @@ def test_destroy_settles_only_its_childs_idle_notices(tmp_path, seams, automatic
     assert st.get("orch-uuid", "idle").acked_at == (None if fails else rig.ctx().now.timestamp())
 
 
+@pytest.mark.parametrize("failure", ["store", "snapshot"])
+def test_automatic_destroy_preparation_failure_does_not_block_other_children(
+    tmp_path, seams, monkeypatch, caplog, failure
+):
+    from dataclasses import replace
+
+    from jailbee.orchestration import finishing
+    from jailbee.orchestration.store import BrokerStore, StoreError, store_path
+
+    rig = Rig(
+        tmp_path,
+        config={
+            labels.LAST_IMPORT: "aaa",
+            labels.STOPPED_HEAD: "aaa",
+            labels.PENDING_DESTROY: "aaa",
+            "volatile.uuid": "child-uuid",
+        },
+    )
+    rig.sender.config["volatile.uuid"] = "orch-uuid"
+    other = replace(rig.child, full="proj-c2", short="c2")
+    ctx = rig.ctx()
+    ctx.nodes[other.full] = other
+    rig.incus.list_containers.return_value = [
+        {"name": child.full, "config": child.config} for child in (rig.child, other)
+    ]
+    st = BrokerStore(store_path(tmp_path))
+    for child in (rig.child, other):
+        st.insert_item(
+            "orch-uuid", rig.sender.full,
+            {"id": child.short, "type": "message", "kind": "idle", "from": child.short},
+            now=1,
+        )
+    if failure == "store":
+        real_unacked = BrokerStore.unacked
+
+        def unacked(self, *args, **kwargs):
+            if not getattr(unacked, "failed", False):
+                unacked.failed = True
+                raise StoreError("locked")
+            return real_unacked(self, *args, **kwargs)
+
+        monkeypatch.setattr(BrokerStore, "unacked", unacked)
+    else:
+        from jailbee.orchestration import idle_cleanup
+
+        real_write = idle_cleanup.atomic_write_text
+        writes = []
+
+        def write(path, text):
+            writes.append(path)
+            if len(writes) == 1:
+                raise OSError("disk full")
+            real_write(path, text)
+
+        monkeypatch.setattr(idle_cleanup, "atomic_write_text", write)
+
+    finishing.settle_destroys(ctx)
+
+    seams["destroy"].assert_called_once_with(rig.cfg, rig.incus, other.full, force=True)
+    assert [item.id for item in st.unacked("orch-uuid")] == ["c1"]
+    assert ctx.nodes.get(rig.child.full) == rig.child
+    assert "idle cleanup" in caplog.text
+    rig.incus.config_unset_checked.assert_not_called()
+
+
 @pytest.mark.parametrize("automatic,failure", [(False, "store"), (False, "spool"), (True, "store")])
 def test_destroy_retries_idle_cleanup_after_io_failure(
     tmp_path, seams, monkeypatch, automatic, failure
