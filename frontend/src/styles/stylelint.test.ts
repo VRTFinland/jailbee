@@ -28,6 +28,11 @@ it("rejects raw colours, font sizes and shapes in an unlisted Vue component", as
 })
 
 it("lints the real tree with only the explicitly exempted legacy files", async () => {
+    const config = await stylelint.resolveConfig(path.join(frontend, "src/views/GalleryView.vue"), {configFile})
+    expect(config).toBeDefined()
+    for (const exception of config?.ignoreFiles ?? []) {
+        expect(exception).not.toMatch(/[*!?{\[]/)
+    }
     const result = await stylelint.lint({cwd: frontend, configFile, files: "src/**/*.{css,vue}"})
     expect(result.results.flatMap((file) => file.warnings)).toEqual([])
     expect(result.errored).toBe(false)
@@ -59,6 +64,11 @@ it.each([
     "border-start-start-radius: 50%;",
     "color: var(--md-on-surface, red);",
     "background: linear-gradient(red, blue);",
+    "--local-radius: 5px; border-radius: var(--local-radius);",
+    "--local-font-size: 1rem; font-size: var(--local-font-size);",
+    "--local-layer: 999; z-index: var(--local-layer);",
+    "--local-space: 8px; padding: var(--local-space);",
+    "--local-colour: red; color: var(--local-colour);",
 ])("rejects raw values in a new unlisted component: %s", async (declaration) => {
     expect((await lintStyle(declaration)).errored).toBe(true)
 })
@@ -72,6 +82,9 @@ it.each([
     "margin: 0 auto; background: none; color: inherit;",
     "padding-bottom: calc(var(--md-space-16) + env(safe-area-inset-bottom));",
     "inset: 0; width: 100%; grid-template-columns: minmax(5rem, 1fr);",
+    "font: var(--md-type-body-medium-size) Inter;",
+    "font: 500 var(--md-type-body-medium-size)/var(--md-type-body-medium-line-height) Inter;",
+    "--local-space: var(--md-space-8); padding: var(--local-space);",
 ])("accepts tokens, layout and hairline widths: %s", async (declaration) => {
     expect((await lintStyle(declaration)).errored).toBe(false)
 })

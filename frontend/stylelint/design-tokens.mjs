@@ -19,9 +19,9 @@ export default stylelint.createPlugin(ruleName, (enabled) => (root, result) => {
     if (!stylelint.utils.validateOptions(result, ruleName, {actual: enabled, possible: [true]})) return
     root.walkDecls((decl) => {
         const property = decl.prop.toLowerCase()
-        if (property.startsWith("--")) return
-        const hairline = borderWidth.test(property) && !/(?:color|style|radius)$/.test(property)
-        if (!(spacing.test(property) || hairline || property === "font" || property === "font-size"
+        const customProperty = property.startsWith("--")
+        const checksBorderWidth = borderWidth.test(property) && !/(?:color|style|radius)$/.test(property)
+        if (!(customProperty || spacing.test(property) || checksBorderWidth || property === "font" || property === "font-size"
             || property.endsWith("radius") || property === "z-index")) return
 
         let invalid
@@ -38,8 +38,13 @@ export default stylelint.createPlugin(ruleName, (enabled) => (root, result) => {
                     }
                 } else if (node.type === "word") {
                     const value = node.value.toLowerCase()
+                    // In font shorthand, family names and unitless weights are
+                    // not sizes. Custom properties may alias tokens, but may not
+                    // introduce a private scale of raw numbers or dimensions.
+                    if (property === "font" && !/^[+-]?(?:\d|\.\d).*?(?:[a-z%])$/i.test(value)) continue
+                    if (customProperty && !/^[+-]?(?:\d|\.\d)/.test(value)) continue
                     if (!keywords.has(value) && !["0", "+", "-", "*", "/"].includes(value)
-                        && !(hairline && ["1px", "2px"].includes(value))) invalid ??= node.value
+                        && !(checksBorderWidth && ["1px", "2px"].includes(value))) invalid ??= node.value
                 }
             }
         }
