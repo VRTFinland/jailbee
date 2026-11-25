@@ -72,7 +72,7 @@ function turn(delta: number) {
     showPage()
     panel.value?.focus({preventScroll: true})
 }
-watch(() => [props.context, settings.bodyFontSize, settings.codeFontSize, settings.displayProfile], () => {
+watch(() => [props.context, props.session, props.parent, settings.bodyFontSize, settings.codeFontSize, settings.displayProfile], () => {
     page.value = 0
     void nextTick(paginate)
 })

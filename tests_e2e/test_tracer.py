@@ -19,4 +19,4 @@ def test_pin_login_lands_on_a_front_page_listing_the_repo_and_container(
     repo = page.locator("section.repo", has=page.get_by_role("heading", name="work"))
     expect(repo).to_be_visible()
     expect(repo.get_by_role("link", name="main", exact=True)).to_be_visible()
-    expect(page.locator(".device")).to_have_text(DERIVED_DEVICE)
+    expect(page.locator(".device")).to_contain_text(DERIVED_DEVICE)

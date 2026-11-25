@@ -14,10 +14,26 @@ const dashboard = useDashboard()
 const settingsOpen = ref(false)
 const settingsDialog = ref<HTMLElement | null>(null)
 let settingsTrigger: HTMLElement | null = null
+let scrollRestoration: ScrollRestoration | null = null
+let restorationFrame: number | undefined
+function keepReaderScroll() {
+    if (restorationFrame !== undefined) cancelAnimationFrame(restorationFrame)
+    restorationFrame = undefined
+    scrollRestoration ??= history.scrollRestoration
+    history.scrollRestoration = "manual"
+}
+function releaseReaderScroll() {
+    restorationFrame = requestAnimationFrame(() => {
+        if (scrollRestoration !== null) history.scrollRestoration = scrollRestoration
+        scrollRestoration = null
+        restorationFrame = undefined
+    })
+}
 
 function showSettings(trigger: HTMLElement | null) {
     if (settingsOpen.value) return
     settingsTrigger = trigger
+    keepReaderScroll()
     if (history.state?.jailbeeSettings !== route.fullPath) {
         history.pushState({...history.state, jailbeeSettings: route.fullPath}, "", location.href)
     }
@@ -32,6 +48,8 @@ function onPopState() {
     const open = history.state?.jailbeeSettings === route.fullPath
     if (open === settingsOpen.value) return
     settingsOpen.value = open
+    if (open) keepReaderScroll()
+    else releaseReaderScroll()
     void nextTick(() => {
         if (open) settingsDialog.value?.focus({preventScroll: true})
         else {
@@ -63,6 +81,7 @@ function settingsKey(event: KeyboardEvent) {
 watch(() => route.fullPath, () => {
     if (settingsOpen.value) {
         settingsOpen.value = false
+        releaseReaderScroll()
         settingsTrigger = null
     }
 })
@@ -149,6 +168,8 @@ onMounted(() => {
     document.addEventListener("visibilitychange", checkMode)
 })
 onBeforeUnmount(() => {
+    if (restorationFrame !== undefined) cancelAnimationFrame(restorationFrame)
+    if (scrollRestoration !== null) history.scrollRestoration = scrollRestoration
     window.removeEventListener("popstate", onPopState)
     window.removeEventListener("keydown", settingsKey, true)
     clearInterval(modeTimer)

@@ -118,7 +118,9 @@ describe("App", () => {
             await popped
             await flushPromises()
         }
+        history.scrollRestoration = "auto"
         await open()
+        expect(history.scrollRestoration).toBe("manual")
         expect(dialog().exists()).toBe(true)
         await traverse("back")
         expect(dialog().exists()).toBe(false)

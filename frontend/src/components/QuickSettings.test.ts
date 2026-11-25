@@ -116,6 +116,25 @@ describe("Quick settings", () => {
         expect(document.activeElement).toBe(wrapper.get('[aria-label="Decrease body font size"]').element)
     })
 
+    it("repaginates when session metadata arrives after opening", async () => {
+        vi.stubGlobal("innerHeight", 350)
+        const styles = vi.spyOn(window, "getComputedStyle").mockReturnValue({paddingTop: "8px", paddingBottom: "8px", borderTopWidth: "1px", borderBottomWidth: "1px"} as CSSStyleDeclaration)
+        const geometry = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+            return {top: this.classList.contains("quick-panel") ? 50 : 0, height: 50} as DOMRect
+        })
+        try {
+            const wrapper = await menu("session")
+            await wrapper.setProps({session: {agent: "codex", models: ["model"], id: "session-123"}} as never)
+            await flushPromises()
+            expect(wrapper.get('.view-heading').element.closest('[hidden]')).not.toBeNull()
+            expect(wrapper.get('[aria-label="Session"]').element.closest('[hidden]')).toBeNull()
+        } finally {
+            geometry.mockRestore()
+            styles.mockRestore()
+            vi.unstubAllGlobals()
+        }
+    })
+
     it("does not restore trigger focus on navigation", async () => {
         const wrapper = await menu()
         const icon = wrapper.get('button[aria-label="Quick settings"]')

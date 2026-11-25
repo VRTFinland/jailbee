@@ -87,7 +87,10 @@ def test_jump_panel_prompt_anchor_and_end_follow(
 ) -> None:
     page.set_viewport_size({"width": 390, "height": 800})
     server, transcript = open_transcript(page, make_server, tmp_path)
-    page.evaluate("profile => localStorage.setItem('jailbee.displayProfile', profile)", profile)
+    page.evaluate("""profile => {
+        localStorage.setItem('jailbee.displayProfile', profile);
+        localStorage.setItem('jailbee.einkFollow', '1');
+    }""", profile)
     page.reload()
     expect(page.get_by_role("heading", name=TITLE, exact=True)).to_be_visible()
     page.keyboard.press("j")
@@ -339,6 +342,8 @@ def test_eink_default_holds_new_entries_even_at_the_end(
 def test_partial_keyboard_scroll_keeps_the_current_eink_page(
     page: Page, make_server: Callable[..., E2EServer], tmp_path: Path
 ) -> None:
+    # This tests the origin grid, not a grid anchored at a restored entry.
+    page.add_init_script("localStorage.removeItem('jailbee.readingPositions')")
     open_transcript(page, make_server, tmp_path)
     page.evaluate(
         "localStorage.setItem('jailbee.displayProfile', 'eink'); "

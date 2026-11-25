@@ -107,10 +107,13 @@ def test_list_page_turns_reserve_the_visible_title_boundary(
     page.goto(f"{server.url}/#{path}")
     page.reload()
     expect(page.get_by_role("button", name="Quick settings", exact=True)).to_be_visible()
-    expect(page.get_by_role("link", name="task-59", exact=True)).to_be_attached()
-    # Start after the bar has reached its sticky position; page padding is not
-    # part of the reserved title height on subsequent turns.
-    page.evaluate("window.scrollTo(0, 100)")
+    expect(page.locator('a[href="#/containers/work-task-59"]').first).to_be_attached()
+    page.evaluate("window.scrollTo(0, 0)")
+    wait_for_scroll_settled(page)
+    # The first turn consumes the top padding too. Subsequent turns are full
+    # readable pages with the title already in its sticky position.
+    page.keyboard.press("m")
+    page.wait_for_function("scrollY > 0")
     wait_for_scroll_settled(page)
     for _ in range(3):
         before = page.evaluate("""() => ({y: scrollY,
@@ -128,6 +131,7 @@ def test_hidden_session_title_keeps_page_turns_contiguous(
     page: Page, make_server: Callable[..., E2EServer], tmp_path: Path
 ) -> None:
     open_paged_transcript(page, make_server, tmp_path, 100)
+    page.add_init_script("localStorage.removeItem('jailbee.readingPositions')")
     page.evaluate("localStorage.setItem('jailbee.showTitleBar', '0')")
     page.reload()
     expect(page.locator(".title-bar")).to_have_count(0)
