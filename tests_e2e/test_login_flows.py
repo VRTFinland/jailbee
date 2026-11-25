@@ -73,7 +73,7 @@ def test_authenticator_code_signs_in(make_server: Callable[..., E2EServer], page
     page.get_by_role("button", name="Log in", exact=True).click()
 
     expect(page.get_by_role("button", name="Log out")).to_be_visible()
-    expect(page.get_by_role("banner")).to_contain_text(DERIVED_DEVICE)
+    expect(page.locator(".bar")).to_contain_text(DERIVED_DEVICE)
     expect(page.get_by_text("No repositories.")).to_be_visible()
 
 
@@ -106,7 +106,7 @@ def test_one_time_link_signs_in_only_while_fresh(
 
     if link_state == "fresh":
         expect(page.get_by_role("button", name="Log out")).to_be_visible()
-        expect(page.get_by_role("banner")).to_contain_text(DERIVED_DEVICE)
+        expect(page.locator(".bar")).to_contain_text(DERIVED_DEVICE)
         expect(page.get_by_text("No repositories.")).to_be_visible()
         expect(page).to_have_url(server.url + "/#/")
     else:
@@ -143,7 +143,7 @@ def test_login_asks_for_no_name_and_the_header_shows_the_derived_one(
 
     log_in_with_pin(page, server.url, server.pin.current)
 
-    expect(page.get_by_role("banner")).to_contain_text(DERIVED_DEVICE)
+    expect(page.locator(".bar")).to_contain_text(DERIVED_DEVICE)
 
 
 def test_renaming_the_session_in_settings_updates_the_header_and_the_listing(
@@ -159,7 +159,7 @@ def test_renaming_the_session_in_settings_updates_the_header_and_the_listing(
 
     expect(page.get_by_text("Saved.")).to_be_visible()
     page.get_by_role("link", name="JailBee").click()
-    expect(page.get_by_role("banner")).to_contain_text("reading room tablet")
+    expect(page.locator(".bar")).to_contain_text("reading room tablet")
     (session,) = list_sessions(server.engine)
     assert session.device_name == "reading room tablet"
 
@@ -199,7 +199,7 @@ def test_admin_revocation_closes_the_live_socket_and_returns_to_login(
         };
     """)
     log_in_with_pin(page, server.url, server.pin.current)
-    expect(page.get_by_role("banner")).to_contain_text(DERIVED_DEVICE)
+    expect(page.locator(".bar")).to_contain_text(DERIVED_DEVICE)
     (session,) = list_sessions(server.engine)
     document_started = page.evaluate("performance.timeOrigin")
 

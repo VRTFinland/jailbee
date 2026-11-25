@@ -213,7 +213,7 @@ def test_protocol_mismatch_on_reconnect_reloads_the_page(server: E2EServer, page
 
     expect(page.get_by_role("link", name="before", exact=True)).to_be_visible()
     expect(page.get_by_text("Connecting…", exact=True)).to_have_count(0)
-    expect(page.get_by_role("banner")).to_contain_text(DERIVED_DEVICE)
+    expect(page.locator(".bar")).to_contain_text(DERIVED_DEVICE)
     server.push(snapshot_of(repo_group("work", container("work-live-after-reload", "work"))))
     expect(page.get_by_role("link", name="live-after-reload", exact=True)).to_be_visible()
     expect(page.get_by_role("link", name="before", exact=True)).to_have_count(0)

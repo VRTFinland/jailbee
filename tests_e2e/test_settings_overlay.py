@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 from playwright.sync_api import Page, expect
 
-from tests_e2e.flows import open_settings
+from tests_e2e.flows import open_settings_overlay
 from tests_e2e.server import E2EServer
 from tests_e2e.test_session_reading import open_transcript, record, wait_for_scroll_settled
 
@@ -21,7 +21,7 @@ def test_settings_preserves_reader_and_live_updates(
     wait_for_scroll_settled(page)
     position = page.evaluate("window.scrollY")
     url = page.url
-    open_settings(page)
+    open_settings_overlay(page)
     dialog = page.get_by_role("dialog", name="Settings", exact=True)
     box = dialog.bounding_box()
     assert box is not None
@@ -38,11 +38,11 @@ def test_settings_preserves_reader_and_live_updates(
     assert page.url == url
     assert page.evaluate("window.scrollY") == position
     expect(page.get_by_role("button", name="Quick settings", exact=True)).to_be_focused()
-    open_settings(page)
+    open_settings_overlay(page)
     page.keyboard.press("Escape")
     expect(dialog).to_have_count(0)
     assert page.evaluate("window.scrollY") == position
-    open_settings(page)
+    open_settings_overlay(page)
     page.get_by_role("button", name="Close settings").click()
     expect(dialog).to_have_count(0)
     assert page.evaluate("window.scrollY") == position
@@ -50,7 +50,7 @@ def test_settings_preserves_reader_and_live_updates(
 
 def test_eink_overlay_has_no_tint_or_motion(logged_in: Page) -> None:
     page = logged_in
-    open_settings(page)
+    open_settings_overlay(page)
     page.get_by_role("radio", name="E-ink (page turns, no animation, slow refresh)").check()
     expect(page.locator(".settings-backdrop")).to_have_css("background-color", "rgba(0, 0, 0, 0)")
     expect(page.get_by_role("dialog", name="Settings", exact=True)).to_have_css("transition-duration", "0s")
