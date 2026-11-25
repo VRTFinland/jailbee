@@ -66,6 +66,12 @@
     --md-target-min: 44px;
     --md-target-row: 48px;
 
+    /* The Material 3 switch track: 52x32 at the default root. */
+    --md-switch-track-width: 3.25rem;
+    --md-switch-track-height: 2rem;
+    /* The gap between the "on" handle and the track's border. */
+    --md-switch-handle-inset: 2px;
+
     /* Spacing on a 4px grid, each named by its px size at the default 16px
        root (`--md-space-16` is 1rem), so a name never hides its value. In rem,
        so the body-size setting scales them. */
@@ -83,6 +89,17 @@
     --md-layer-scrim: 30;
     --md-layer-dialog: 40;
     --md-layer-popover: 50;
+
+    /* State layers: Material 3 hover and pressed overlays of the content
+       colour, and the keyboard focus ring. The e-ink theme drops the layers
+       (no tints); the ring stays. Disabled controls fade their content and
+       container the Material 3 way, except in e-ink (no greys). */
+    --md-state-hover-opacity: 0.08;
+    --md-state-pressed-opacity: 0.1;
+    --md-disabled-content-opacity: 0.38;
+    --md-disabled-container-opacity: 0.12;
+    --md-focus-ring-width: 2px;
+    --md-focus-ring-offset: 2px;
 
     /* Motion: brief state transitions; zero under reduced motion and e-ink. */
     --md-motion-duration: 150ms;
@@ -204,6 +221,18 @@
     --md-phase-failed: #000000;
     --md-phase-failed-container: #ffffff;
     --md-on-phase-failed-container: #000000;
+    --md-state-hover-opacity: 0;
+    --md-state-pressed-opacity: 0;
+    --md-disabled-content-opacity: 1;
+    --md-disabled-container-opacity: 0;
+}
+/* A theme scope inside an e-ink one gets its layers back. */
+[data-theme="light"],
+[data-theme="dark"] {
+    --md-state-hover-opacity: 0.08;
+    --md-state-pressed-opacity: 0.1;
+    --md-disabled-content-opacity: 0.38;
+    --md-disabled-container-opacity: 0.12;
 }
 
 /* Old token names, kept as aliases until every view is migrated (#167

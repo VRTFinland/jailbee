@@ -46,6 +46,40 @@ describe("GalleryView", () => {
         }
     })
 
+    it("shows every primitive in every variant and state in each panel", async () => {
+        const wrapper = mount(GalleryView)
+        for (const panel of wrapper.findAll("section[aria-label]")) {
+            const buttons = panel.findAll(".button")
+            expect(buttons.map((b) => [b.attributes("data-variant"), b.attributes("disabled") !== undefined]))
+                .toEqual([...["primary", "tonal", "text", "danger"].flatMap((v) => [[v, false], [v, true]]),
+                    ["primary", false], ["tonal", false]])
+            expect(buttons.slice(-2).map((b) => [b.text(), b.find("svg").exists()]))
+                .toEqual([["New container", true], ["Settings", true]])
+            const iconButtons = panel.findAll(".icon-button")
+            expect(iconButtons.map((b) => b.attributes("aria-label"))).toEqual(["Menu", "Close", "Settings (disabled)", "Actions for feat-reader-chrome"])
+            expect(iconButtons[2].attributes("disabled")).toBeDefined()
+            const switches = panel.findAll('[role="switch"]')
+            expect(switches.map((s) => [s.attributes("aria-checked"), s.attributes("disabled") !== undefined]))
+                .toEqual([["true", false], ["false", false], ["true", true], ["false", true], ["false", false]])
+            expect(panel.findAll(".status-chip").map((c) => c.attributes("data-status"))).toEqual([
+                "running", "stopped", "booting", "autostart", "job", "failed",
+                "waiting", "busy", "idle", "shell", "error", "error",
+                "running", "booting", "failed", // the list rows' trailing chips
+            ])
+            expect(panel.text()).toContain("API error: overloaded")
+            const rows = panel.findAll(".list-row")
+            expect(rows.map((r) => r.attributes("aria-current") ?? null)).toEqual(["true", null, null, null])
+            expect(rows[0].find(".status-chip").exists()).toBe(true)
+            expect(rows[3].find('[role="switch"]').exists()).toBe(true)
+        }
+        // The row's sample switch works, each panel its own.
+        const follow = wrapper.findAll('[role="switch"][aria-label="Follow live"]')
+        expect(follow).toHaveLength(6)
+        await follow[0].trigger("click")
+        expect(follow[0].attributes("aria-checked")).toBe("true")
+        expect(follow[1].attributes("aria-checked")).toBe("false")
+    })
+
     it("draws each swatch from its token", () => {
         const wrapper = mount(GalleryView)
         const swatch = wrapper.get('[data-token="--md-primary-container"]')

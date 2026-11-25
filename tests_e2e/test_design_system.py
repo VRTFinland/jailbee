@@ -231,3 +231,120 @@ def test_the_inter_licence_ships_next_to_the_font(server: E2EServer, page: Page)
     text = response.text()
     assert "SIL Open Font License, Version 1.1" in text
     assert "The Inter Project Authors" in text
+
+
+_PRIMITIVES = """
+(panel) => [...panel.querySelectorAll(
+    ".button, .icon-button, [role=switch], .status-chip, .list-row"
+)].map((el) => getComputedStyle(el).boxShadow)
+"""
+
+_LAYER_OPACITY = "(el) => getComputedStyle(el, '::before').opacity"
+
+
+def test_primitives_draw_material_states_from_tokens(logged_in: Page) -> None:
+    """The static primitives (#167 ticket 05) in the gallery: token colours, a
+    44px icon button, Material 3 state layers (8 % hover, 10 % pressed) and a
+    visible focus ring, no shadows, and black-on-white e-ink rules, each panel
+    by its own theme whatever the page's."""
+    page = logged_in
+    _open_gallery(page)
+    for root_theme, root_profile in (("light", "normal"), ("eink", "eink")):
+        page.evaluate(
+            "([t, p]) => { document.documentElement.dataset.theme = t;"
+            " document.documentElement.dataset.profile = p }",
+            [root_theme, root_profile],
+        )
+        light = page.get_by_role("region", name="Light theme, normal profile", exact=True)
+        eink = page.get_by_role("region", name="E-ink theme, e-ink profile", exact=True)
+
+        for panel in (light, eink):
+            shadows = panel.evaluate(_PRIMITIVES)
+            assert len(shadows) > 30
+            assert set(shadows) == {"none"}
+            menu = panel.get_by_role("button", name="Menu", exact=True)
+            assert menu.evaluate("el => el.getBoundingClientRect().width") == 44
+            assert menu.evaluate("el => el.getBoundingClientRect().height") == 44
+            row = panel.get_by_role("listitem").filter(has_text="fix-issue-165")
+            assert row.evaluate("el => el.getBoundingClientRect().height") >= 48
+
+        primary = light.get_by_role("button", name="primary", exact=True)
+        expect(primary).to_have_css("background-color", "rgb(58, 95, 148)")
+        expect(primary).to_have_css("border-top-left-radius", "9999px")
+        tonal = light.get_by_role("button", name="tonal", exact=True)
+        expect(tonal).to_have_css("background-color", "rgb(213, 227, 255)")
+        tonal.hover()
+        page.wait_for_function(
+            "el => getComputedStyle(el, '::before').opacity === '0.08'", arg=tonal.element_handle()
+        )
+        page.mouse.down()
+        page.wait_for_function(
+            "el => getComputedStyle(el, '::before').opacity === '0.1'", arg=tonal.element_handle()
+        )
+        page.mouse.up()
+
+        # Keyboard focus draws the ring; the disabled primary is skipped.
+        primary.focus()
+        page.keyboard.press("Tab")
+        expect(tonal).to_be_focused()
+        expect(tonal).to_have_css("outline-style", "solid")
+        expect(tonal).to_have_css("outline-width", "2px")
+        expect(tonal).to_have_css("outline-color", "rgb(58, 95, 148)")
+        page.mouse.move(0, 0)
+
+        selected = light.locator('li[aria-current="true"]')
+        expect(selected).to_have_css("background-color", "rgb(213, 227, 255)")
+        expect(selected).to_have_css("outline-color", "rgba(0, 0, 0, 0)")
+
+        # E-ink: no tints, no greys, hairlines and outlines instead.
+        eink_tonal = eink.get_by_role("button", name="tonal", exact=True)
+        eink_tonal.hover()
+        page.wait_for_timeout(200)
+        assert eink_tonal.evaluate(_LAYER_OPACITY) == "0"
+        expect(eink_tonal).to_have_css("border-top-color", "rgb(0, 0, 0)")
+        disabled = eink.get_by_role("button", name="tonal disabled", exact=True)
+        expect(disabled).to_have_css("color", "rgb(0, 0, 0)")
+        expect(disabled).to_have_css("border-top-style", "dashed")
+        eink_selected = eink.locator('li[aria-current="true"]')
+        expect(eink_selected).to_have_css("background-color", "rgb(255, 255, 255)")
+        expect(eink_selected).to_have_css("outline-color", "rgb(0, 0, 0)")
+        expect(eink_selected).to_have_css("outline-width", "2px")
+        for chip in eink.locator(".status-chip").all():
+            expect(chip).to_have_css("border-top-color", "rgb(0, 0, 0)")
+            expect(chip).to_have_css("color", "rgb(0, 0, 0)")
+            expect(chip).to_have_css("background-color", "rgb(255, 255, 255)")
+        page.mouse.move(0, 0)
+
+
+def test_gallery_switch_toggles_by_pointer_and_keyboard(logged_in: Page) -> None:
+    page = logged_in
+    _open_gallery(page)
+    panel = page.get_by_role("region", name="Dark theme, normal profile", exact=True)
+    follow = panel.get_by_role("switch", name="Follow live", exact=True)
+    expect(follow).to_have_attribute("aria-checked", "false")
+    follow.click()
+    expect(follow).to_have_attribute("aria-checked", "true")
+    track = follow.locator(".switch-track")
+    expect(track).to_have_css("background-color", "rgb(167, 200, 255)")
+    follow.press("Space")
+    expect(follow).to_have_attribute("aria-checked", "false")
+    # Other panels keep their own sample.
+    other = page.get_by_role("region", name="Light theme, normal profile", exact=True)
+    expect(other.get_by_role("switch", name="Follow live", exact=True)).to_have_attribute(
+        "aria-checked", "false"
+    )
+    disabled = panel.get_by_role("switch", name="On, disabled", exact=True)
+    expect(disabled).to_be_disabled()
+    # Keyboard focus rings the switch and the icon button too.
+    expect(follow).to_be_focused()
+    expect(track).to_have_css("outline-style", "solid")
+    expect(track).to_have_css("outline-width", "2px")
+    menu = panel.get_by_role("button", name="Actions for feat-reader-chrome", exact=True)
+    menu.focus()
+    page.keyboard.press("Shift+Tab")
+    page.keyboard.press("Tab")
+    expect(menu).to_be_focused()
+    expect(menu).to_have_css("outline-style", "solid")
+    # The 32px track sits in a 44px hit target.
+    assert follow.evaluate("el => el.getBoundingClientRect().height") == 44
+    assert track.evaluate("el => el.getBoundingClientRect().height") == 32
