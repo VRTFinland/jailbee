@@ -14,8 +14,10 @@ before editing `## Unreleased`.
   both the light and dark themes (status colours readable at WCAG AA), the bundled
   Inter typeface and Material Symbols vector icons, brief transitions that stop
   under reduced motion and in the e-ink profile, shared buttons, switches, status
-  chips and list rows with Material 3 hover, pressed and focus states, and a `/ui`
-  gallery page behind login
+  chips and list rows with Material 3 hover, pressed and focus states, a `/ui`
+  gallery page behind login with screenshot regression checks across themes,
+  display profiles and phone/desktop widths, and Stylelint enforcement of design
+  tokens in browser tests with explicit migration-only exceptions
   ([#167](https://github.com/VRTFinland/jailbee/issues/167)).
 - Web dashboard reader improvements: compact breadcrumb title bars and session details,
   an in-context settings overlay, configurable e-ink page controls and page step,

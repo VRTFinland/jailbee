@@ -9,6 +9,7 @@
     "dev": "vite",
     "build": "vue-tsc --noEmit && vite build",
     "test": "vitest run",
+    "lint:styles": "stylelint 'src/**/*.{css,vue}'",
     "test:watch": "vitest",
     "typecheck": "vue-tsc --noEmit"
   },
@@ -22,6 +23,9 @@
     "@vitejs/plugin-vue": "^6.0.11",
     "@vue/test-utils": "^2.6.0",
     "jsdom": "^31.0.1",
+    "postcss-html": "^2.0.1",
+    "postcss-value-parser": "^4.2.0",
+    "stylelint": "^18.1.0",
     "typescript": "^6.0.3",
     "vite": "^8.3.8",
     "vitest": "^5.1.1",

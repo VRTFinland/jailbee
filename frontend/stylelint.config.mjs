@@ -1,0 +1,35 @@
+export default {
+    // Permanent exemption: the scales and theme palettes define raw values here.
+    // Migration-only exceptions below are exact paths, never component globs.
+    // Remove each with its migration (tickets 08-13); ticket 14 removes the list.
+    ignoreFiles: [
+        "src/styles/tokens.css",
+        "src/App.vue", // 08: title bar and front page
+        "src/components/RepoList.vue",
+        "src/components/TitleBar.vue",
+        "src/views/FrontPage.vue",
+        "src/views/RepoView.vue", // 09: repository
+        "src/views/ContainerView.vue", // 10: container
+        "src/components/QuickSettings.vue", // 11: settings and dialogs
+        "src/components/SettingsPanel.vue",
+        "src/views/SettingsView.vue",
+        "src/views/LoginView.vue", // 12: login and setup
+        "src/views/SetupView.vue",
+        "src/components/JumpPanel.vue", // 13: transcript reader
+        "src/components/PageGuide.vue",
+        "src/components/PageNav.vue",
+        "src/components/ToolCall.vue",
+        "src/views/SessionView.vue",
+        "src/styles/highlight.css",
+    ],
+    plugins: ["./stylelint/design-tokens.mjs"],
+    overrides: [{files: ["**/*.vue"], customSyntax: "postcss-html"}],
+    rules: {
+        "jailbee/design-tokens": true,
+        "color-no-hex": true,
+        "color-named": "never",
+        "function-disallowed-list": [
+            "rgb", "rgba", "hsl", "hsla", "hwb", "lab", "lch", "oklab", "oklch", "color",
+        ],
+    },
+}

@@ -62,7 +62,7 @@ jobs:
         # The dev group's pytest-qt plugin loads Qt even for browser tests.
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libegl1 libgl1
+          sudo apt-get install -y --no-install-recommends libegl1 libgl1 fonts-dejavu-core
       - name: Install uv
         # setup-uv stopped publishing floating major tags after v7.
         uses: astral-sh/setup-uv@v7

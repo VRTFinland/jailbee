@@ -269,7 +269,7 @@ def test_public_page_content_has_no_quick_settings_overlap(
     expect(page.locator("main input").first).to_be_visible()
     page.evaluate("window.scrollTo(0, 0)")
 
-    expect(page.locator('.quick-trigger')).to_have_count(0)
+    expect(page.locator(".quick-trigger")).to_have_count(0)
     overlaps = page.evaluate("""() => {
         const trigger = document.querySelector('.quick-trigger');
         if (!trigger) return false;

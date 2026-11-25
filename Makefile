@@ -1,5 +1,5 @@
 .PHONY: install install-gui install-web install-skill check build publish-testpypi \
-        changelog release site site-check docs-serve web web-test web-e2e web-e2e-sweep web-corpus shots
+        changelog release site site-check docs-serve web web-test web-e2e web-e2e-snapshots web-e2e-sweep web-corpus shots
 
 # Use bash for recipe lines — the `release` target relies on bash features
 # (`set -euo pipefail`, `read -r -p`) that /bin/sh does not provide.
@@ -72,9 +72,9 @@ install-skill:
 web:
 	cd frontend && npm ci && npm run build
 
-# The browser app's unit tests (Vitest).
+# Design-token enforcement (Stylelint) and browser unit tests (Vitest).
 web-test:
-	cd frontend && npm ci && npm test
+	cd frontend && npm ci && npm run lint:styles && npm test
 
 # The web dashboard's end-to-end browser suite (tests_e2e/, #152): builds the
 # browser app as `make web` does, type-checks the suite, then drives the real
@@ -90,6 +90,14 @@ web-e2e:
 	uv run --group e2e pytest tests_e2e -q --timeout 300 \
 		--tracing retain-on-failure --screenshot only-on-failure \
 		--output $(E2E_OUTPUT) $(E2E_ARGS)
+
+# Accept intentional gallery changes. Only the gallery tests run, with no
+# Playwright artifacts or pytest cache writes; review and commit the PNG diff.
+web-e2e-snapshots:
+	$(MAKE) web
+	@output=$$(mktemp -d); trap 'rm -rf "$$output"' EXIT; \
+		uv run --group e2e pytest tests_e2e/test_gallery_snapshots.py -q --timeout 300 \
+		--update-gallery-snapshots -p no:cacheprovider --output "$$output"
 
 # Render every session and subagent of a Claude home in the web dashboard and
 # report what broke (#152): `make web-e2e-sweep CLAUDE_HOME=<path>` (default

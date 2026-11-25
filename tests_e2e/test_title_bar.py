@@ -67,7 +67,14 @@ def test_hidden_title_bar_menu_and_parent_navigation(page: Page, chrome_server: 
     log_in_with_pin(page, chrome_server.url, chrome_server.pin.current)
     page.evaluate("localStorage.setItem('jailbee.showTitleBar', '0')")
     base = f"/repos/work/sessions/claude/{SESSION_ID}"
-    for path in ["/", "/repos/work", "/containers/work-main", base, f"{base}/subagents/{SUBAGENT_ID}", "/settings"]:
+    for path in [
+        "/",
+        "/repos/work",
+        "/containers/work-main",
+        base,
+        f"{base}/subagents/{SUBAGENT_ID}",
+        "/settings",
+    ]:
         page.goto(f"{chrome_server.url}/#{path}")
         page.reload()
         expect(page.locator(".title-bar")).to_have_count(0)
