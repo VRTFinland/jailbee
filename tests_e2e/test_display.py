@@ -55,8 +55,8 @@ def test_themes_and_font_sizes_apply_and_survive_reload(logged_in: Page) -> None
     expect(code).to_have_css("font-size", "27px")
 
     for label, background, text in [
-        ("Light", "rgb(247, 247, 245)", "rgb(29, 29, 27)"),
-        ("Dark", "rgb(11, 12, 14)", "rgb(232, 230, 227)"),
+        ("Light", "rgb(249, 249, 255)", "rgb(25, 28, 32)"),
+        ("Dark", "rgb(17, 19, 24)", "rgb(226, 226, 233)"),
         ("E-ink", "rgb(255, 255, 255)", "rgb(0, 0, 0)"),
     ]:
         theme.get_by_role("radio", name=label, exact=True).check()

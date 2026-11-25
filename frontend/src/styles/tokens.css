@@ -1,29 +1,235 @@
-/* JailBee's own design tokens. Themes (light, dark, e-ink) are sets of these
-   custom properties; no component library, no web fonts from third parties. */
-:root {
-    --bg: #f7f7f5;
-    --surface: #ffffff;
-    --text: #1d1d1b;
-    --muted: #6b6b66;
-    --border: #e2e2dd;
-    --border-strong: #b9b9b2;
-    --accent: #1f5f8b;
-    --accent-text: #ffffff;
-    --danger: #a3261b;
-    --notice-bg: #f3ecd2;
-    /* Row phases (the TUI's orange3 / dark_cyan / magenta / red). */
-    --phase-booting: #b5651d;
-    --phase-autostart: #00797f;
-    --phase-job: #a1308f;
-    --phase-failed: #c0281c;
+/* JailBee's design tokens (#167, ADR 0007): Material 3 role names under the
+   `md` prefix. Colours are the Material 3 tonal palette of one blue seed, for
+   both the light and dark themes; the e-ink theme is black on white. Themes
+   are selectors, not only `:root`, so the /ui gallery can scope one to a panel.
+   No component library and no third-party font host: Inter is bundled. */
 
-    --font-body: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-    --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
-    --space-1: 0.25rem;
-    --space-2: 0.5rem;
-    --space-3: 1rem;
-    --space-4: 1.5rem;
-    --radius: 6px;
+@font-face {
+    font-family: "Inter";
+    font-style: normal;
+    font-display: swap;
+    font-weight: 100 900;
+    src: url("../../node_modules/@fontsource-variable/inter/files/inter-latin-wght-normal.woff2") format("woff2-variations");
+    unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+/* Theme-independent scales. */
+:root {
+    --md-font-body: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --md-font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+    /* Type scale: Material 3 roles, in rem so the body-size setting scales them. */
+    --md-type-title-large-size: 1.375rem;
+    --md-type-title-large-line-height: 1.75rem;
+    --md-type-title-large-weight: 400;
+    --md-type-title-medium-size: 1rem;
+    --md-type-title-medium-line-height: 1.5rem;
+    --md-type-title-medium-weight: 500;
+    --md-type-title-small-size: 0.875rem;
+    --md-type-title-small-line-height: 1.25rem;
+    --md-type-title-small-weight: 500;
+    --md-type-body-large-size: 1rem;
+    --md-type-body-large-line-height: 1.5rem;
+    --md-type-body-large-weight: 400;
+    --md-type-body-medium-size: 0.875rem;
+    --md-type-body-medium-line-height: 1.25rem;
+    --md-type-body-medium-weight: 400;
+    --md-type-body-small-size: 0.75rem;
+    --md-type-body-small-line-height: 1rem;
+    --md-type-body-small-weight: 400;
+    --md-type-label-large-size: 0.875rem;
+    --md-type-label-large-line-height: 1.25rem;
+    --md-type-label-large-weight: 500;
+    --md-type-label-medium-size: 0.75rem;
+    --md-type-label-medium-line-height: 1rem;
+    --md-type-label-medium-weight: 500;
+    --md-type-label-small-size: 0.6875rem;
+    --md-type-label-small-line-height: 1rem;
+    --md-type-label-small-weight: 500;
+
+    /* Shape scale. */
+    --md-shape-none: 0;
+    --md-shape-small: 8px;
+    --md-shape-medium: 12px;
+    --md-shape-large: 16px;
+    --md-shape-extra-large: 28px;
+    --md-shape-full: 9999px;
+
+    /* Hit targets: no control under 44px; list rows 48px for a fine pointer,
+       56px for a coarse one (below). */
+    --md-target-min: 44px;
+    --md-target-small: 44px;
+    --md-target-medium: 48px;
+    --md-target-large: 56px;
+    --md-target-row: 48px;
+
+    /* Spacing (4px grid). */
+    --md-space-1: 0.25rem;
+    --md-space-2: 0.5rem;
+    --md-space-3: 0.75rem;
+    --md-space-4: 1rem;
+    --md-space-5: 1.5rem;
+    --md-space-6: 2rem;
+
+    /* Layers, bottom to top. */
+    --md-layer-raised: 10;
+    --md-layer-sticky: 20;
+    --md-layer-popover: 40;
+    --md-layer-dialog: 50;
+    --md-layer-scrim: 100;
+
+    /* Motion: brief state transitions; zero under reduced motion and e-ink. */
+    --md-motion-duration: 150ms;
+    --md-motion-easing: cubic-bezier(0.2, 0, 0, 1);
+}
+@media (pointer: coarse) {
+    :root {
+        --md-target-row: 56px;
+    }
+}
+
+/* Light: the default, and the light panel of the gallery. */
+:root,
+[data-theme="light"] {
+    color-scheme: light;
+    --md-surface: #f9f9ff;
+    --md-surface-container-lowest: #ffffff;
+    --md-surface-container-low: #f3f3fa;
+    --md-surface-container: #ededf4;
+    --md-surface-container-high: #e7e8ee;
+    --md-surface-container-highest: #e2e2e9;
+    --md-on-surface: #191c20;
+    --md-on-surface-variant: #43474e;
+    --md-outline: #74777f;
+    --md-outline-variant: #c4c6cf;
+    --md-primary: #3a5f94;
+    --md-on-primary: #ffffff;
+    --md-primary-container: #d5e3ff;
+    --md-on-primary-container: #001b3c;
+    --md-error: #ba1a1a;
+    --md-on-error: #ffffff;
+    --md-error-container: #ffdad6;
+    --md-on-error-container: #410002;
+    /* Phases keep the terminal dashboard's hues (orange3, dark_cyan, magenta, red). */
+    --md-phase-booting: #8b5000;
+    --md-phase-booting-container: #ffdcc2;
+    --md-on-phase-booting-container: #2d1600;
+    --md-phase-autostart: #006a6a;
+    --md-phase-autostart-container: #9cf1f0;
+    --md-on-phase-autostart-container: #002020;
+    --md-phase-job: #8e4585;
+    --md-phase-job-container: #ffd7f0;
+    --md-on-phase-job-container: #3a0035;
+    --md-phase-failed: #ba1a1a;
+    --md-phase-failed-container: #ffdad6;
+    --md-on-phase-failed-container: #410002;
+}
+
+/* Dark: the same seed's dark scheme. */
+[data-theme="dark"] {
+    color-scheme: dark;
+    --md-surface: #111318;
+    --md-surface-container-lowest: #0c0e13;
+    --md-surface-container-low: #191c20;
+    --md-surface-container: #1d2024;
+    --md-surface-container-high: #282a2f;
+    --md-surface-container-highest: #33353a;
+    --md-on-surface: #e2e2e9;
+    --md-on-surface-variant: #c4c6cf;
+    --md-outline: #8e9099;
+    --md-outline-variant: #43474e;
+    --md-primary: #a7c8ff;
+    --md-on-primary: #04305f;
+    --md-primary-container: #224876;
+    --md-on-primary-container: #d5e3ff;
+    --md-error: #ffb4ab;
+    --md-on-error: #690005;
+    --md-error-container: #93000a;
+    --md-on-error-container: #ffdad6;
+    --md-phase-booting: #ffb77c;
+    --md-phase-booting-container: #6b3b00;
+    --md-on-phase-booting-container: #ffdcc2;
+    --md-phase-autostart: #4cdada;
+    --md-phase-autostart-container: #004f4f;
+    --md-on-phase-autostart-container: #9cf1f0;
+    --md-phase-job: #ffaaee;
+    --md-phase-job-container: #72336b;
+    --md-on-phase-job-container: #ffd7f0;
+    --md-phase-failed: #ffb4ab;
+    --md-phase-failed-container: #93000a;
+    --md-on-phase-failed-container: #ffdad6;
+}
+
+/* E-ink: pure black on white, no greys for text, hairline borders only,
+   underlined links, no shadows or tints. Overrides the design language. */
+[data-theme="eink"] {
+    color-scheme: light;
+    --md-surface: #ffffff;
+    --md-surface-container-lowest: #ffffff;
+    --md-surface-container-low: #ffffff;
+    --md-surface-container: #ffffff;
+    --md-surface-container-high: #ffffff;
+    --md-surface-container-highest: #ffffff;
+    --md-on-surface: #000000;
+    --md-on-surface-variant: #000000;
+    --md-outline: #000000;
+    --md-outline-variant: #000000;
+    --md-primary: #000000;
+    --md-on-primary: #ffffff;
+    --md-primary-container: #ffffff;
+    --md-on-primary-container: #000000;
+    --md-error: #000000;
+    --md-on-error: #ffffff;
+    --md-error-container: #ffffff;
+    --md-on-error-container: #000000;
+    --md-phase-booting: #000000;
+    --md-phase-booting-container: #ffffff;
+    --md-on-phase-booting-container: #000000;
+    --md-phase-autostart: #000000;
+    --md-phase-autostart-container: #ffffff;
+    --md-on-phase-autostart-container: #000000;
+    --md-phase-job: #000000;
+    --md-phase-job-container: #ffffff;
+    --md-on-phase-job-container: #000000;
+    --md-phase-failed: #000000;
+    --md-phase-failed-container: #ffffff;
+    --md-on-phase-failed-container: #000000;
+}
+
+/* Old token names, kept as aliases until every view is migrated (#167
+   ticket 14 removes them). Declared on every theme scope: a custom property's
+   var() resolves where it is declared, so a scoped theme needs its own. */
+:root,
+[data-theme] {
+    --bg: var(--md-surface);
+    --surface: var(--md-surface-container-lowest);
+    --text: var(--md-on-surface);
+    --muted: var(--md-on-surface-variant);
+    --border: var(--md-outline-variant);
+    --border-strong: var(--md-outline);
+    --accent: var(--md-primary);
+    --accent-text: var(--md-on-primary);
+    --danger: var(--md-error);
+    --notice-bg: var(--md-primary-container);
+    --phase-booting: var(--md-phase-booting);
+    --phase-autostart: var(--md-phase-autostart);
+    --phase-job: var(--md-phase-job);
+    --phase-failed: var(--md-phase-failed);
+    --font-body: var(--md-font-body);
+    --font-mono: var(--md-font-mono);
+    --space-1: var(--md-space-1);
+    --space-2: var(--md-space-2);
+    --space-3: var(--md-space-4);
+    --space-4: var(--md-space-5);
+    --radius: var(--md-shape-small);
+}
+/* Dark cards sit one tone above the page, as in the approved mockup. */
+[data-theme="dark"] {
+    --surface: var(--md-surface-container-low);
+}
+
+/* App metrics (not design tokens): set by settings and layout code. */
+:root {
     --font-size-body: 16px;
     --font-size-code: 14px;
     /* Bottom guard: nothing interactive in the lowest strip, so Android's
@@ -35,47 +241,8 @@
     --quick-trigger-size: 2.75rem;
     --quick-trigger-top: 0.5rem;
 }
-
-/* Themes: startSettings() sets data-theme on <html> (light, dark, eink); the
-   default follows prefers-color-scheme. Dark is JailBee's amber-on-charcoal. */
-:root[data-theme="dark"] {
-    color-scheme: dark;
-    --bg: #0b0c0e;
-    --surface: #14161a;
-    --text: #e8e6e3;
-    --muted: #a2a7b0;
-    --border: #262a32;
-    --border-strong: #3d424c;
-    --accent: #f0a92b;
-    --accent-text: #1a1204;
-    --danger: #e06c6c;
-    --notice-bg: #3a3420;
-    --phase-booting: #e8923a;
-    --phase-autostart: #3ec3c9;
-    --phase-job: #d57fd0;
-    --phase-failed: #ef6b62;
-}
-
-/* E-ink: pure black on white, no greys for text, hairline borders only,
-   underlined links, no shadows or tints. */
-:root[data-theme="eink"] {
-    color-scheme: light;
-    --bg: #ffffff;
-    --surface: #ffffff;
-    --text: #000000;
-    --muted: #000000;
-    --border: #000000;
-    --border-strong: #000000;
-    --accent: #000000;
-    --accent-text: #ffffff;
-    --danger: #000000;
-    --notice-bg: #ffffff;
-    --phase-booting: #000000;
-    --phase-autostart: #000000;
-    --phase-job: #000000;
-    --phase-failed: #000000;
-}
-:root[data-theme="eink"] a {
+:root[data-theme="eink"] a,
+[data-theme="eink"] a {
     text-decoration: underline;
 }
 :root[data-theme="eink"] .notice {
@@ -142,13 +309,30 @@ body {
     max-width: calc(100vw - var(--page-controls-width) - 3 * var(--space-2));
 }
 
-/* E-ink never animates; edge tap zones need margins clear of links. */
-:root[data-profile="eink"] *,
-:root[data-profile="eink"] *::before,
-:root[data-profile="eink"] *::after {
+/* E-ink never animates, nor does anything under reduced motion; edge tap
+   zones need margins clear of links. */
+[data-profile="eink"] {
+    --md-motion-duration: 0ms;
+}
+[data-profile="eink"],
+[data-profile="eink"] *,
+[data-profile="eink"] *::before,
+[data-profile="eink"] *::after {
     transition: none !important;
     animation: none !important;
     scroll-behavior: auto !important;
+}
+@media (prefers-reduced-motion: reduce) {
+    :root {
+        --md-motion-duration: 0ms;
+    }
+    *,
+    *::before,
+    *::after {
+        transition: none !important;
+        animation: none !important;
+        scroll-behavior: auto !important;
+    }
 }
 :root[data-profile="eink"] html,
 :root[data-profile="eink"] {
