@@ -121,11 +121,24 @@ export function usePager(
         }
     }
 
+    function turnKey(event: KeyboardEvent) {
+        if (settings.displayProfile !== "eink" || event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey) return
+        if (!(["n", "m", "PageUp", "PageDown"].includes(event.key))) return
+        const target = event.target
+        if (target instanceof Element && target.closest("input, textarea, select, [contenteditable]:not([contenteditable='false'])")) return
+        if (document.querySelector('[role="dialog"], dialog[open]')) return
+        event.preventDefault()
+        measure()
+        const forward = event.key === "m" || event.key === "PageDown"
+        goTo(page.value + (forward ? 1 : -1), forward)
+    }
+
     let observer: ResizeObserver | null = null
     onMounted(() => {
         measure()
         window.addEventListener("scroll", syncFromScroll, {passive: true})
         window.addEventListener("resize", syncFromScroll)
+        window.addEventListener("keydown", turnKey)
         if (typeof ResizeObserver !== "undefined") {
             observer = new ResizeObserver(measure)
             observer.observe(document.body)
@@ -134,6 +147,7 @@ export function usePager(
     onBeforeUnmount(() => {
         window.removeEventListener("scroll", syncFromScroll)
         window.removeEventListener("resize", syncFromScroll)
+        window.removeEventListener("keydown", turnKey)
         observer?.disconnect()
     })
 

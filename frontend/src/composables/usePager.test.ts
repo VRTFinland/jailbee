@@ -234,6 +234,38 @@ describe("page turns", () => {
         expect(pager.guideTop.value).toBeNull()
     })
 
+    it.each(["m", "PageDown"])("turns forward with %s without native scrolling", (key) => {
+        const scrollTo = fakeLayout(1750)
+        updateSettings({displayProfile: "eink", pageStep: 75})
+        mount(Harness, {attachTo: document.body})
+        const event = new KeyboardEvent("keydown", {key, cancelable: true})
+        window.dispatchEvent(event)
+        expect(scrollTo).toHaveBeenLastCalledWith(0, 375)
+        expect(event.defaultPrevented).toBe(true)
+        const back = new KeyboardEvent("keydown", {key: key === "m" ? "n" : "PageUp", cancelable: true})
+        window.dispatchEvent(back)
+        expect(scrollTo).toHaveBeenLastCalledWith(0, 0)
+        expect(back.defaultPrevented).toBe(true)
+    })
+
+    it("leaves normal scrolling, form controls and open overlays to their own keys", () => {
+        const scrollTo = fakeLayout(1750)
+        mount(Harness, {attachTo: document.body})
+        window.dispatchEvent(new KeyboardEvent("keydown", {key: "m"}))
+        expect(scrollTo).not.toHaveBeenCalled()
+        updateSettings({displayProfile: "eink"})
+        const input = document.createElement("input")
+        document.body.appendChild(input)
+        input.dispatchEvent(new KeyboardEvent("keydown", {key: "m", bubbles: true}))
+        const dialog = document.createElement("div")
+        dialog.setAttribute("role", "dialog")
+        document.body.appendChild(dialog)
+        window.dispatchEvent(new KeyboardEvent("keydown", {key: "m"}))
+        expect(scrollTo).not.toHaveBeenCalled()
+        input.remove()
+        dialog.remove()
+    })
+
     it("stops at the first and last page", async () => {
         fakeLayout(1750)
         updateSettings({displayProfile: "eink"})
