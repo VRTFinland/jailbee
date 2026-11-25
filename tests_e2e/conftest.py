@@ -61,6 +61,14 @@ def _engine_in(state_home: Path) -> Engine:
             os.environ["XDG_STATE_HOME"] = previous
 
 
+def pytest_addoption(parser: pytest.Parser) -> None:
+    parser.addoption(
+        "--update-gallery-snapshots",
+        action="store_true",
+        help="Rewrite the gallery PNG references instead of comparing them.",
+    )
+
+
 @pytest.fixture(scope="session")
 def browser_type_launch_args(browser_type_launch_args: dict[str, Any]) -> dict[str, Any]:
     return {"channel": "chrome", **browser_type_launch_args}
