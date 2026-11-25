@@ -129,7 +129,10 @@ build the app and exercise the real server in the system Chrome. The latter
 installs the separate `e2e` dependency group; it needs Node.js, npm and Chrome,
 but no Incus or live agent. Browser tests stay outside the ordinary pytest
 suite. Failed browser tests retain Playwright traces and screenshots under
-`_build/e2e-results/`.
+`_build/e2e-results/`. The suite also compares the `/ui` gallery against committed
+screenshots. For intended design changes, run `make web-e2e-snapshots`, review
+the PNG diff and commit the references; see the
+[gallery screenshot guide](../tests_e2e/README.md#gallery-screenshot-references).
 
 The **Web dashboard** GitHub Actions workflow runs both targets for pull
 requests and pushes to `main` or `dev` that change the frontend, web server,

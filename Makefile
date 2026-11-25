@@ -1,5 +1,5 @@
 .PHONY: install install-gui install-web install-skill check build publish-testpypi \
-        changelog release site site-check docs-serve web web-test web-e2e web-e2e-sweep web-corpus shots
+        changelog release site site-check docs-serve web web-test web-e2e web-e2e-snapshots web-e2e-sweep web-corpus shots
 
 # Use bash for recipe lines — the `release` target relies on bash features
 # (`set -euo pipefail`, `read -r -p`) that /bin/sh does not provide.
@@ -90,6 +90,13 @@ web-e2e:
 	uv run --group e2e pytest tests_e2e -q --timeout 300 \
 		--tracing retain-on-failure --screenshot only-on-failure \
 		--output $(E2E_OUTPUT) $(E2E_ARGS)
+
+# Accept intentional gallery changes. Only the gallery tests run, with no
+# Playwright artifacts or pytest cache writes; review and commit the PNG diff.
+web-e2e-snapshots:
+	$(MAKE) web
+	uv run --group e2e pytest tests_e2e/test_gallery_snapshots.py -q --timeout 300 \
+		--update-gallery-snapshots -p no:cacheprovider
 
 # Render every session and subagent of a Claude home in the web dashboard and
 # report what broke (#152): `make web-e2e-sweep CLAUDE_HOME=<path>` (default
