@@ -4702,6 +4702,40 @@ def test_new_boot_marker_tracks_the_whole_autostart_run(tmp_path, mocker, outcom
         assert len(events) == 2
 
 
+@pytest.mark.parametrize("autostart", [True, False])
+def test_new_with_real_start_identity_leaves_resume_hidden(tmp_path, mocker, autostart):
+    from jailbee.incus import Incus
+    from jailbee.boot_state import MARKER
+    from jailbee.dashboard.model import RepoGroup
+    from jailbee.host_resume import resumable_repos
+
+    cfg = _cfg_for_new(tmp_path)
+    incus = MagicMock(spec=Incus)
+    incus.exists.return_value = False
+    incus.list_containers.return_value = []
+
+    def start(name):
+        incus.list_containers.return_value = [{
+            "name": name,
+            "status": "Running",
+            "profiles": ["repo-base"],
+            "last_used_at": "2026-11-25T09:00:00.123456789Z",
+        }]
+
+    incus.start.side_effect = start
+    incus.exec.side_effect = lambda _name, argv, **kw: "recorded" if MARKER in " ".join(argv) else ""
+    mocker.patch("jailbee.autostart.run_autostart", return_value=_EMPTY_PLAN)
+    opts = NewContainerOptions(
+        "feat/x", None, "strict", "8GiB", 4, "gisgro-base", False, autostart=autostart
+    )
+
+    assert new_container(cfg, incus, opts) == "repo-feat-x"
+
+    groups = [RepoGroup("repo", str(cfg.repo_root), None, list_containers(cfg, incus))]
+    assert groups[0].containers[0].start_identity == "2026-11-25T09:00:00.123456789Z"
+    assert resumable_repos(groups) == []
+
+
 def test_new_container_runs_both_on_create_and_on_start(tmp_path, mocker):
     """`gie new` transitions the container into running state, so on_start
     steps must execute on this first launch — not only on subsequent

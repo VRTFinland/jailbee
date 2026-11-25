@@ -953,7 +953,11 @@ def _restart_one(
         current_network_mode,
     )
 
+    from jailbee.boot_state import current_start, record
+
     boot_container(cfg, incus, name, restart=True)
+    boot_identity = current_start(incus, name)
+    marker_written = record(incus, name, "started")
     mode = current_network_mode(cfg, incus, name)
     sync_hosts(cfg, incus, name, mode, mirror_endpoint=mirror_endpoint)
     egress_proxy.sync_container(cfg, incus, name, mode)
@@ -975,3 +979,5 @@ def _restart_one(
         # would spawn one supervisor per container and make it lie.
         override="wait",
     )
+    if marker_written:
+        record(incus, name, "handled", expected_start=boot_identity)

@@ -1224,9 +1224,10 @@ action runner, with CLI questions as modals and results in Notifications; no
 selected repo is needed. Resume uses the state service snapshot: eligible saved
 containers offer it, as do running in-scope containers whose Incus `last_used_at`
 start identity differs from the host's completed/skipped boot record. A matching
-record hides Resume in steady state. After upgrading from an older version,
-starts since host boot without a record offer it once; Resume verifies or
-completes setup and records that start. No guest boot marker is probed on refresh. Stale interrupted-stop entries for running containers do not
+record hides Resume in steady state, including after successful `jailbee apply`
+restarts. After upgrading from an older version, running containers without a
+record offer it once; Resume verifies or completes setup and records that start.
+Orphan groups never offer Resume. No guest boot marker is probed on refresh. Stale interrupted-stop entries for running containers do not
 count as saved work. An unreadable journal offers local-only Resume so the
 command can report the error. Remote policy hides disallowed commands and
 limits stop/resume to visible repositories. Escape or
