@@ -1,17 +1,21 @@
 <script setup lang="ts">
-import {computed, useId} from "vue"
+import {computed, useId, type HTMLAttributes} from "vue"
 
 defineOptions({inheritAttrs: false})
 const props = defineProps<{id?: string; label: string; help?: string; error?: string}>()
 const generatedId = useId()
 const controlId = computed(() => props.id ?? generatedId)
-const controlAttrs = computed(() => ({
-    id: controlId.value,
-    "aria-labelledby": `${controlId.value}-label`,
-    "aria-describedby": [props.help && `${controlId.value}-help`, props.error && `${controlId.value}-error`]
-        .filter(Boolean).join(" ") || undefined,
-    "aria-invalid": props.error ? true : undefined,
-}))
+function controlAttrs(attrs: HTMLAttributes & Record<string, unknown>) {
+    const {class: wrapperClass, ...forwarded} = attrs
+    return {
+        ...forwarded,
+        id: controlId.value,
+        "aria-labelledby": attrs["aria-labelledby"] ?? (attrs["aria-label"] ? undefined : `${controlId.value}-label`),
+        "aria-describedby": [attrs["aria-describedby"], props.help && `${controlId.value}-help`, props.error && `${controlId.value}-error`]
+            .filter(Boolean).join(" ") || undefined,
+        "aria-invalid": props.error ? true : attrs["aria-invalid"],
+    }
+}
 </script>
 
 <template>

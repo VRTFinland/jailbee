@@ -97,6 +97,19 @@ describe("Select", () => {
 })
 
 describe.each([Field, Select])("labelled control", (Control) => {
+    it("merges external descriptions with help and error and updates forwarded attrs", async () => {
+        const wrapper = render(defineComponent({components: {Control}, data: () => ({autocomplete: "off"}), template: `
+            <p id="external-help">External instructions.</p>
+            <Control label="Name" aria-describedby="external-help" help="Short name." error="Required."
+                :autocomplete="autocomplete" :options="[]" />`,
+        }))
+        const control = getByRole(document.body, Control === Field ? "textbox" : "combobox", {name: "Name"})
+        expect(control.getAttribute("aria-describedby")!.split(" ")
+            .map((id) => document.getElementById(id)!.textContent).join(" "))
+            .toBe("External instructions. Short name. Required.")
+        await wrapper.setData({autocomplete: "on"})
+        expect(control.getAttribute("autocomplete")).toBe("on")
+    })
     it("keeps custom ids, wrapper classes and announced descriptions wired to the control", () => {
         render(defineComponent({components: {Control}, template: `
             <Control id="custom-control" class="layout-field" label="Name" help="Use a short name."
@@ -116,6 +129,10 @@ describe.each([Field, Select])("labelled control", (Control) => {
 })
 
 describe("Field", () => {
+    it("preserves a caller's more descriptive accessible name", () => {
+        render(defineComponent({components: {Field}, template: '<Field label="Name" aria-label="Full legal name" />'}))
+        expect(getByRole(document.body, "textbox", {name: "Full legal name"})).toBeTruthy()
+    })
     it("associates its label, help and error with the input and updates its value", async () => {
         const user = userEvent.setup()
         const wrapper = render(defineComponent({components: {Field}, data: () => ({name: ""}), template: `

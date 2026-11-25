@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import {ref, useAttrs} from "vue"
+import {ref} from "vue"
 import FieldFrame from "./FieldFrame.vue"
 import {SelectRoot, SelectTrigger, SelectValue, SelectIcon, SelectPortal, SelectContent, SelectViewport, SelectItem, SelectItemText, SelectItemIndicator} from "reka-ui"
 import Icon from "./Icon.vue"
@@ -20,8 +20,6 @@ withDefaults(defineProps<{
 }>(), {placeholder: "Choose an option", disabled: false, name: undefined, required: false})
 const value = defineModel<string>({default: ""})
 const open = defineModel<boolean>("open", {default: false})
-const attrs = useAttrs()
-const triggerAttrs = () => Object.fromEntries(Object.entries(attrs).filter(([key]) => key !== "class"))
 const anchor = ref<HTMLElement>()
 const scope = useOverlayScope(anchor, open)
 </script>
@@ -30,7 +28,7 @@ const scope = useOverlayScope(anchor, open)
     <div ref="anchor">
         <FieldFrame :id="id" :label="label" :help="help" :error="error" :class="$attrs.class" v-slot="{controlAttrs}">
             <SelectRoot v-model="value" v-model:open="open" :disabled="disabled" :name="name" :required="required">
-                <SelectTrigger v-bind="{...triggerAttrs(), ...controlAttrs}" class="ui-input ui-select ui-state-layer ui-focus-ring">
+                <SelectTrigger v-bind="controlAttrs($attrs)" class="ui-input ui-select ui-state-layer ui-focus-ring">
                     <SelectValue :placeholder="placeholder" />
                     <SelectIcon><Icon name="expand" size="small" /></SelectIcon>
                 </SelectTrigger>
