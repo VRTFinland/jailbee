@@ -95,8 +95,9 @@ web-e2e:
 # Playwright artifacts or pytest cache writes; review and commit the PNG diff.
 web-e2e-snapshots:
 	$(MAKE) web
-	uv run --group e2e pytest tests_e2e/test_gallery_snapshots.py -q --timeout 300 \
-		--update-gallery-snapshots -p no:cacheprovider
+	@output=$$(mktemp -d); trap 'rm -rf "$$output"' EXIT; \
+		uv run --group e2e pytest tests_e2e/test_gallery_snapshots.py -q --timeout 300 \
+		--update-gallery-snapshots -p no:cacheprovider --output "$$output"
 
 # Render every session and subagent of a Claude home in the web dashboard and
 # report what broke (#152): `make web-e2e-sweep CLAUDE_HOME=<path>` (default

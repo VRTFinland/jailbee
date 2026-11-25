@@ -40,7 +40,9 @@ make web-e2e
 
 The regeneration target builds the app and runs only the twelve capture
 cases with `--update-gallery-snapshots`. It rewrites all reference PNGs,
-never application source; it does not update references during ordinary
+never application source; build/dependency output stays gitignored and
+Playwright's output uses a temporary directory, leaving existing failure
+evidence untouched. It does not update references during ordinary
 `make web-e2e` runs. Review the images and commit them with the design change.
 When adding primitives, put their variants/states into the gallery's existing
 labelled panels; they are included automatically after regeneration.

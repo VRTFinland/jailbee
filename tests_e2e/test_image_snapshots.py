@@ -60,6 +60,26 @@ def test_small_rasterisation_noise_is_allowed_but_broad_colour_drift_is_not(
         assert_image_matches(png("#fefefe"), reference=reference, output=output)
 
 
+@pytest.mark.parametrize("changed_pixels", [19, 20, 21])
+def test_changed_pixel_budget_is_independent_of_mean_error(
+    tmp_path: Path, changed_pixels: int
+) -> None:
+    reference, output = tmp_path / "sample.png", tmp_path / "evidence"
+    reference.write_bytes(png("white"))
+    with Image.open(BytesIO(png("white"))) as image:
+        for x in range(changed_pixels):
+            image.putpixel((x, 0), (230, 230, 230))
+        stream = BytesIO()
+        image.save(stream, format="PNG")
+    # These errors keep the mean below 0.25; 21/10000 exceeds only the 0.2%
+    # changed-pixel budget. Removing that comparison would make this test fail.
+    if changed_pixels <= 20:
+        assert_image_matches(stream.getvalue(), reference=reference, output=output)
+    else:
+        with pytest.raises(AssertionError, match="Gallery differs"):
+            assert_image_matches(stream.getvalue(), reference=reference, output=output)
+
+
 def test_missing_reference_fails_without_creating_it(tmp_path: Path) -> None:
     reference, output = tmp_path / "missing.png", tmp_path / "evidence"
     actual = png("white")
