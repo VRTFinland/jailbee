@@ -80,6 +80,13 @@ def tick(
     prune_reservations(root)
     memory.publish_threads[:] = [worker for worker in memory.publish_threads if worker.is_alive()]
     raw = incus.list_containers()
+    from jailbee.orchestration import idle_cleanup
+
+    idle_cleanup.retry(root, {
+        str(row["name"]): str(row["config"].get("volatile.uuid") or "")
+        for row in raw
+        if isinstance(row.get("name"), str) and isinstance(row.get("config"), dict)
+    })
     memory.listed_roles = broker_state.listed_roles(raw)
     others = socket_lifecycle.other_projects(incus, memory) if memory.store is not None else None
     early_configs: dict[str, Config | None] | None = None

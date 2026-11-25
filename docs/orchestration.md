@@ -787,7 +787,9 @@ word boundary with an ellipsis.
 When the broker successfully destroys a child, explicitly or through
 `on_done: destroy`, it marks that child's unread `idle` notices read in its
 orchestrator's inbox, including parked notices. Other messages and statuses
-stay unread. Failed or refused destruction leaves the notices unread.
+stay unread. Failed or refused destruction leaves the notices unread. Cleanup
+intent is saved before destruction; a storage failure afterwards is retried on
+later broker rounds, including after a broker restart.
 An orchestrator follower also gets one `grant-changed` notification when its
 effective grant changes (revoked, or a field such as `max_running_children`,
 including a repo cap that clamps it), naming the changed fields; a revoke is

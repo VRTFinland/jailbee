@@ -198,6 +198,72 @@ def test_destroy_settles_only_its_childs_idle_notices(tmp_path, seams, automatic
     )
 
 
+@pytest.mark.parametrize("automatic,failure", [(False, "store"), (False, "spool"), (True, "store")])
+def test_destroy_retries_idle_cleanup_after_io_failure(
+    tmp_path, seams, monkeypatch, automatic, failure
+):
+    from jailbee.orchestration import broker, broker_state, finishing, outbox
+    from jailbee.orchestration.state import pending_dir
+    from jailbee.orchestration.journal import Journal
+    from jailbee.orchestration.store import BrokerStore, StoreError, store_path
+
+    rig = Rig(tmp_path, config={
+        labels.LAST_IMPORT: "aaa", labels.STOPPED_HEAD: "aaa",
+        labels.PENDING_DESTROY: "aaa", "volatile.uuid": "child-uuid",
+    })
+    rig.sender.config["volatile.uuid"] = "orch-uuid"
+    rig.incus.list_containers.return_value = [
+        {"name": rig.child.full, "config": rig.child.config}
+    ]
+    st = BrokerStore(store_path(tmp_path))
+    st.insert_item("orch-uuid", rig.sender.full, {
+        "id": "idle", "type": "message", "kind": "idle", "from": "c1",
+    }, now=1)
+    directory = pending_dir(tmp_path, rig.sender.full)
+    directory.mkdir(parents=True)
+    path = directory / "idle.json"
+    real_ack = BrokerStore.ack_child_idle
+    real_save = outbox.save_pending
+
+    if not automatic:
+        real_save(path, {
+            "id": "parked-idle", "type": "message", "kind": "idle", "from": "c1",
+        }, recipient_uuid="orch-uuid")
+
+    def unavailable(*args, **kwargs):
+        raise StoreError("locked")
+
+    monkeypatch.setattr(
+        BrokerStore if failure == "store" else outbox,
+        "ack_child_idle" if failure == "store" else "save_pending", unavailable,
+    )
+    if automatic:
+        finishing.settle_destroys(rig.ctx())
+    else:
+        assert actions.handle_destroy(rig.ctx(), _destroy()).state == "done"
+    assert [item.id for item in st.unacked("orch-uuid")] == (
+        ["idle"] if failure == "store" else []
+    )
+    if not automatic:
+        assert not outbox.load_pending(path).acked
+    monkeypatch.setattr(BrokerStore, "ack_child_idle", real_ack)
+    monkeypatch.setattr(outbox, "save_pending", real_save)
+    # A later namesake's notices must survive a delayed cleanup retry.
+    st.insert_item("orch-uuid", rig.sender.full, {
+        "id": "new-idle", "type": "message", "kind": "idle", "from": "c1",
+    }, now=rig.ctx().now.timestamp() + 1)
+    # A new broker memory simulates a broker restart with the child already gone.
+    rig.incus.list_containers.return_value = [{
+        "name": rig.sender.full, "config": {"volatile.uuid": "orch-uuid"}, "status": "Stopped",
+    }]
+    broker.tick(rig.incus, root=tmp_path, journal=Journal(tmp_path),
+                now=rig.ctx().now, memory=broker_state.BrokerMemory())
+    assert [item.id for item in st.unacked("orch-uuid")] == ["new-idle"]
+    if not automatic:
+        assert outbox.load_pending(path).acked
+    seams["destroy"].assert_called_once()
+
+
 def test_destroy_settles_parked_idle_before_it_can_reach_the_inbox(tmp_path, seams):
     from jailbee.orchestration import outbox
     from jailbee.orchestration.store import BrokerStore, store_path

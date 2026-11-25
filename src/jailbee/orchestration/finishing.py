@@ -179,7 +179,7 @@ def settle_destroys(ctx: ActionContext) -> None:
 def _settle_destroys_locked(ctx: ActionContext) -> None:
     """Destroy only after delivery, reply, journal and outbox cleanup finished."""
     from jailbee import lifecycle
-    from jailbee.orchestration import outbox
+    from jailbee.orchestration import idle_cleanup, outbox
     from jailbee.orchestration.actions import destroy_guard, refresh_guard
     from jailbee.orchestration.state import purge_pending
 
@@ -227,15 +227,15 @@ def _settle_destroys_locked(ctx: ActionContext) -> None:
         if reason is not None:
             body = f"child {child.short} was kept instead of destroyed: {reason}"
         else:
+            cleanup = idle_cleanup.prepare(ctx, child)
             try:
                 lifecycle.destroy_container(ctx.cfg, ctx.incus, child.full, force=True)
             except Exception as exc:
+                if cleanup is not None:
+                    cleanup.unlink(missing_ok=True)
                 body = f"child {child.short} could not be destroyed: {exc}"
             else:
-                outbox.settle_child_idle(
-                    ctx.root, ctx.sender.full, child.short,
-                    recipient_uuid=ctx.sender.config.get("volatile.uuid"), now=ctx.now,
-                )
+                idle_cleanup.settle(ctx.root, cleanup)
                 purge_pending(ctx.root, child.full)
                 if isinstance(ctx.nodes, dict):
                     ctx.nodes.pop(child.full, None)

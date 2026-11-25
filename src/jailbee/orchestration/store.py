@@ -612,8 +612,8 @@ class BrokerStore:
         with self._tx() as con:
             result = con.execute(
                 "UPDATE items SET acked_at=? WHERE recipient_uuid=? AND acked_at IS NULL "
-                "AND type='message' AND kind_or_state='idle' AND from_name=?",
-                (now, uuid, child),
+                "AND type='message' AND kind_or_state='idle' AND from_name=? AND created_at<=?",
+                (now, uuid, child, now),
             )
             return result.rowcount
 
