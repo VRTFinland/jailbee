@@ -44,10 +44,11 @@ describe("row phase styling", () => {
         ["dark", '[data-theme="dark"]'],
         ["eink", '[data-theme="eink"]'],
     ])("the %s theme defines every phase token as a colour", (_theme, selector) => {
-        const block = decls(tokens.filter((r) => `--md-phase-booting` in r.decls), selector)
+        // The theme's palette block (a selector can also carry alias overrides).
+        const block = decls(tokens.filter((r) => "--md-phase-booting" in r.decls), selector)
         for (const phase of PHASES) expect(block[`--md-phase-${phase}`], phase).toMatch(/^#[0-9a-f]{6}$/i)
         const aliases = decls(tokens, ":root, [data-theme]")
-        for (const phase of PHASES) expect(aliases[`--phase-${phase}`]).toBe(`var(--md-phase-${phase})`)
+        for (const phase of PHASES) expect(aliases[`--phase-${phase}`], phase).toBe(`var(--md-phase-${phase})`)
     })
 
     it("maps each phase's edge and label onto its own token", () => {

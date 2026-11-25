@@ -1,6 +1,6 @@
 # Web dashboard design system: Material 3 tokens, headless behaviour, bundled assets
 
-Refines [ADR 0004](0004-web-dashboard-stack.md). The web dashboard's look is one design system written as code: design tokens with Material 3 role names (`--md-*` in `frontend/src/styles/tokens.css`), a small set of UI primitives built only from those tokens, and the `/ui` gallery that shows both under every theme and display profile. See #167.
+Refines [ADR 0004](0004-web-dashboard-stack.md). The web dashboard's look is one design system written as code: design tokens with Material 3 role names (`--md-*` in `frontend/src/styles/tokens.css`), a small set of UI primitives built only from those tokens, and the `/ui` gallery that shows both under every theme and display profile. See [#167](https://github.com/VRTFinland/jailbee/issues/167).
 
 - **Material 3, without shadows.** The design language is Material 3 with tonal surfaces and tonal elevation only: no shadow elevation and no ripple. Light and dark are the tonal palettes of one blue seed. Hover and pressed states are Material 3 state layers. State transitions last at most 150 ms in the normal display profile.
 - **A headless behaviour library is allowed; a styled component library is still not.** Dialogs, menus and selects may take focus trapping, keyboard navigation, ARIA and dismissal from a headless library (Reka UI). It is used only inside the UI primitives, never by views, and it brings no visual styling. ADR 0004's rejection of styled libraries such as Vuetify or PrimeVue stands.
@@ -17,6 +17,7 @@ Refines [ADR 0004](0004-web-dashboard-stack.md). The web dashboard's look is one
 ## Consequences
 
 - Old token names stay as aliases of the `--md-*` tokens until every view is migrated; then they are removed.
-- Stylelint rejects raw colours, font sizes, radii, z-indexes and spacing outside the token file, so the tokens are the only easy way.
-- The gallery is the visual reference: its screenshots are compared in the e2e suite.
-- The built app grows by the font file (about 50 kB) and the icon components.
+- The tokens are to be the only easy way: Stylelint is to reject raw colours, font sizes, radii, z-indexes and spacing outside the token file.
+- The gallery is the visual reference; its screenshots are to be compared in the e2e suite.
+- The built app grows by the font file (about 50 kB) and, once added, the icon components.
+- The token file, the gallery and Inter landed first; the primitives, icons, headless library, lint and screenshot comparison follow in the later #167 tickets.

@@ -1,5 +1,7 @@
 # Web dashboard stack: FastAPI and a bundled Vue app
 
+Refined by [ADR 0007](0007-web-dashboard-design-system.md): Material 3 design tokens, a headless behaviour library inside the UI primitives, and bundled font and icons.
+
 The web dashboard is a FastAPI server, shipped as the optional extra `jailbee[web]`, serving a Vue 3 + TypeScript single-page app.
 
 The app is built with Node by `make web` at release time and bundled into the wheel. Built assets are never committed. The app has no CDN assets and no UI component library: themes and the e-ink display profile are its own design tokens. The server is a host-side `StateClient` consumer like the terminal dashboard. It never gathers state itself. See #109.

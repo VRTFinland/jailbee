@@ -117,6 +117,8 @@ const PAIRS: [string, string][] = [
         [`--md-phase-${p}`, "--md-surface-container-lowest"],
         [`--md-phase-${p}`, "--md-surface-container-low"],
         [`--md-phase-${p}`, "--md-surface-container"],
+        [`--md-phase-${p}`, "--md-surface-container-high"],
+        [`--md-phase-${p}`, "--md-surface-container-highest"],
         [`--md-phase-${p}`, `--md-phase-${p}-container`],
         [`--md-on-phase-${p}-container`, `--md-phase-${p}-container`],
     ]),
@@ -156,15 +158,43 @@ describe("design tokens", () => {
         expect(resolve("dark", "--md-primary")).toBe("#a7c8ff")
     })
 
-    it.each([
-        "--bg", "--surface", "--text", "--muted", "--border", "--border-strong", "--accent",
-        "--accent-text", "--danger", "--notice-bg",
-        "--phase-booting", "--phase-autostart", "--phase-job", "--phase-failed",
-        "--space-1", "--space-2", "--space-3", "--space-4", "--radius", "--font-body",
-    ])("keeps the old name %s as an alias of an md token", (name) => {
-        for (const theme of THEMES) {
-            expect(declared(theme).get(name), `${name} in ${theme}`).toMatch(/^var\(--md-[\w-]+\)$/)
-        }
+    // Each old name and the md token it now stands for (ticket 14 removes them).
+    const ALIASES: Record<string, string> = {
+        "--bg": "--md-surface",
+        "--text": "--md-on-surface",
+        "--muted": "--md-on-surface-variant",
+        "--border": "--md-outline-variant",
+        "--border-strong": "--md-outline",
+        "--accent": "--md-primary",
+        "--accent-text": "--md-on-primary",
+        "--danger": "--md-error",
+        "--notice-bg": "--md-primary-container",
+        "--phase-booting": "--md-phase-booting",
+        "--phase-autostart": "--md-phase-autostart",
+        "--phase-job": "--md-phase-job",
+        "--phase-failed": "--md-phase-failed",
+        "--font-body": "--md-font-body",
+        "--font-mono": "--md-font-mono",
+        "--space-1": "--md-space-1",
+        "--space-2": "--md-space-2",
+        "--space-3": "--md-space-4",
+        "--space-4": "--md-space-5",
+        "--radius": "--md-shape-small",
+    }
+
+    it.each(Object.entries(ALIASES))("keeps the old name %s as an alias of %s in every theme", (name, target) => {
+        for (const theme of THEMES) expect(declared(theme).get(name), `${name} in ${theme}`).toBe(`var(${target})`)
+    })
+
+    it("keeps --surface a card surface: the lowest container in light, one tone above the page in dark", () => {
+        expect(declared("light").get("--surface")).toBe("var(--md-surface-container-lowest)")
+        expect(declared("eink").get("--surface")).toBe("var(--md-surface-container-lowest)")
+        expect(declared("dark").get("--surface")).toBe("var(--md-surface-container-low)")
+    })
+
+    it("keeps the old spacing values", () => {
+        expect(["--space-1", "--space-2", "--space-3", "--space-4"].map((n) => resolve("light", n)))
+            .toEqual(["0.25rem", "0.5rem", "1rem", "1.5rem"])
     })
 
     it("has the Material 3 shape scale", () => {
@@ -193,6 +223,14 @@ describe("design tokens", () => {
     it("uses the bundled Inter as the body font", () => {
         expect(resolve("light", "--md-font-body")).toMatch(/^"Inter"/)
         expect(source).toMatch(/@font-face\s*\{[^}]*font-family:\s*"Inter"/)
+    })
+
+    it("keeps the page and app-manifest colours in step with the surfaces", () => {
+        const html = readFileSync("index.html", "utf8")
+        const manifest = JSON.parse(readFileSync("public/manifest.webmanifest", "utf8")) as Record<string, string>
+        expect(html).toContain(`<meta name="theme-color" content="${resolve("light", "--md-surface")}" />`)
+        expect(manifest.theme_color).toBe(resolve("dark", "--md-surface"))
+        expect(manifest.background_color).toBe(resolve("dark", "--md-surface"))
     })
 
     it("caps motion at 150ms", () => {
