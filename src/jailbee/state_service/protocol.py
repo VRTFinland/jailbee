@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import functools
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -65,7 +65,9 @@ from jailbee.update_check import UpdateNotice
 # 38 makes ContainerInfo.job_live nullable: None means no gathered observation.
 # 39 adds AgentActivity.api_error (AgentApiError): the API error a session is stuck on.
 # 40 adds ContainerInfo.branch, the branch the container was created on.
-PROTOCOL = 40
+# 41 adds Snapshot.resumable_repos for scoped Resume menu visibility.
+# 42 includes local-only saved orphan entries in Snapshot.resumable_repos.
+PROTOCOL = 42
 
 
 class ProtocolError(ValueError):
@@ -118,6 +120,8 @@ class Snapshot:
     groups: list[RepoGroup]
     update: UpdateNotice | None = None
     system: SystemStatus | None = None
+    # Frontends apply their caller's repo scope; None is a local-only orphan.
+    resumable_repos: list[str | None] = field(default_factory=list)
 
 
 @dataclass(frozen=True)

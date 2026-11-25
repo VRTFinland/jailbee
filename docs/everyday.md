@@ -110,8 +110,13 @@ Missing containers are dropped from the saved set with an info line, not a
 failure; `destroy` also removes their entries. An unavailable repository config
 is reported once per repository per invocation, retaining entries only for
 containers that still exist. Restore the config and retry, or remove unwanted
-containers with `jailbee orphan destroy`. Restricted remote sessions cannot use either
-host-wide operation; ordinary `stop NAME` remains available.
+containers with `jailbee orphan destroy`.
+
+Over remote SSH or the web command policy, `stop --all` and `resume` operate
+only on repositories visible to that transport. Excluded repositories and
+orphans are untouched; their saved entries remain for a local resume. Command
+allowlists still need `stop` / `resume`. The global menu offers Resume only
+when the saved set contains an existing container in an eligible repository.
 
 ## Snapshots and rollback
 

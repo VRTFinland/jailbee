@@ -47,12 +47,13 @@ def test_docs_shots_show_their_content(tmp_path: Path, monkeypatch: pytest.Monke
     for label in (
         "Global",
         "Stop all…",
-        "Resume…",
         "[A] Accounts",
         "[Q] Notifications",
         "[F2] Settings",
     ):
         assert label in global_menu
+    # The docs fixture has no saved resume set.
+    assert "Resume…" not in global_menu
     hero = texts["dashboard-orchestration"]
     # The header runs past DOING: a crop at the default console width loses these.
     header_line = next(line for line in hero.splitlines() if "NAME" in line)

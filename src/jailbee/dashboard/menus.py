@@ -114,8 +114,20 @@ def global_menu_actions(
     transport: Transport = "none",
     frontend: Literal["terminal", "web"] = "terminal",
     remote: bool = False,
+    resumable_repos: Sequence[str | None] = (),
 ) -> list[tuple[str, str]]:
-    """Host-wide menu leaves shared by frontends, filtered by the actual command policy."""
+    """Global leaves, filtered by command policy and the snapshot's saved repos."""
+    from jailbee.remote_ssh.repo_scope import scope_for_session
+
+    excluded: set[str] = set()
+    if transport != "none":
+        excluded.update(scope_for_session().excluded)
+        if policy is not None:
+            excluded.update(policy.excluded_repos)
+    resumable = any(
+        transport == "none" or (prefix is not None and prefix not in excluded)
+        for prefix in resumable_repos
+    )
     items = [
         ("Stop all…", "global-stop-all"),
         ("Resume…", "global-resume"),
@@ -129,7 +141,8 @@ def global_menu_actions(
     return [
         item
         for item in items
-        if not (frontend == "web" and item[1] in {"global-quit", "global-settings"})
+        if not (item[1] == "global-resume" and not resumable)
+        and not (frontend == "web" and item[1] in {"global-quit", "global-settings"})
         and not (
             item[1] == "global-config-edit-global"
             and (

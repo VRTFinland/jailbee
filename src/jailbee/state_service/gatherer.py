@@ -23,6 +23,7 @@ from jailbee.dashboard.model import (
     sample_activity,
 )
 from jailbee.dashboard.system import SystemReader, pool_names
+from jailbee.host_resume import resumable_repos
 from jailbee.host_target import ParentHead
 from jailbee.outbox import sent
 from jailbee.procstat import PRIME_INTERVAL_SECONDS, ActivitySampler
@@ -239,6 +240,7 @@ class Gatherer:
                 groups,
                 self._update_notice_now(refresh=refresh),
                 self._system_now(groups),
+                resumable_repos(groups),
             )
         stamp = self._clock()
         self._last_base = stamp

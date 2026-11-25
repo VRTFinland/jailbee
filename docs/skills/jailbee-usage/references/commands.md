@@ -714,8 +714,10 @@ also removes their entries. Unavailable configs are reported once per repository
 per invocation, retaining entries for existing containers: restore the config
 and retry, or use `jailbee orphan destroy`. Journal updates are locked. Concurrent
 `stop --all` and `resume` runs print a waiting message before waiting for the other
-operation. These host-wide operations are refused in restricted remote
-sessions; `stop NAME` remains a container command.
+operation. Over remote SSH and web command policy, both commands affect only
+visible repositories; excluded repos and orphans are untouched. Remote resume
+preserves out-of-scope saved entries for a local resume. Allowlists must name
+`stop` / `resume`; local invocations remain host-wide.
 
 ### `jailbee start|stop|restart [NAME]`
 
@@ -1219,7 +1221,9 @@ Enter. `g` / F10 / the title's left-edge ☰ opens Global: Stop all…, Resume�
 Accounts (`A`), Notifications (`Q`), Global config (`E`), Settings (F2), Help, Quit.
 Stop all and Resume run `jailbee stop --all` / `jailbee resume` through the
 action runner, with CLI questions as modals and results in Notifications; no
-selected repo is needed. Remote policy hides disallowed commands. Escape or
+selected repo is needed. Resume appears only for an eligible existing saved
+container, using the state service snapshot. Remote policy hides disallowed
+commands and limits stop/resume to visible repositories. Escape or
 an outside click closes it. `Enter`, then `g` still opens `Git →` (repo: Agent).
 With a container highlighted, `l` opens `Lifecycle →`, `t`
 attaches tmux, `s` opens a shell (or starts a stopped container), `p` opens

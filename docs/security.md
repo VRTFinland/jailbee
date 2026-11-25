@@ -250,6 +250,13 @@ session therefore carries
 Qt dashboard refused and the post-install setup offer unmade: the one at the
 other end is not at this host.
 
+`stop --all` and `resume` are permitted when the command policy allows their
+leaves (`stop` and `resume`). Remotely they affect only containers owned by
+visible repositories: excluded repos and orphans are untouched, including
+saved resume entries. This applies even with `restrict_host: false`; a local
+invocation remains host-wide. Resume appears in the global menu only when an
+eligible existing container is saved in the state service's snapshot.
+
 While `restrict_host` is on, the commands that manage the host itself are
 refused in every mode, `full` and an allowlist naming them included:
 `config edit`/`init`/`migrate`, every `remote ...` command, `setup`, `init`,
