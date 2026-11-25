@@ -9,7 +9,7 @@ import pytest
 from playwright.sync_api import Page, expect
 
 from tests.web_fakes import container, repo_group, snapshot_of
-from tests_e2e.flows import open_quick_settings, open_settings, reveal_setting
+from tests_e2e.flows import open_quick_settings, open_settings_overlay, reveal_setting
 from tests_e2e.server import E2EServer
 from tests_e2e.test_session_reading import open_transcript, record, wait_for_scroll_settled
 
@@ -47,7 +47,7 @@ def test_menu_context_paging_and_live_preferences(
     server, _transcript = open_transcript(page, make_server, tmp_path)
     server.push(snapshot_of(repo_group("work", container("work-main", "work"))))
     if profile == "eink":
-        open_settings(page)
+        open_settings_overlay(page)
         page.get_by_role("radio", name="E-ink (page turns, no animation, slow refresh)").check()
         page.get_by_role("button", name="Close settings").click()
         expect(page.get_by_role("dialog", name="Settings")).to_have_count(0)
@@ -83,7 +83,7 @@ def test_menu_context_paging_and_live_preferences(
         assert panel.evaluate("el => el.scrollHeight === el.clientHeight")
     page.keyboard.press("Escape")
     expect(icon).to_be_focused()
-    open_settings(page)
+    open_settings_overlay(page)
     expect(page.get_by_role("slider", name="Body:")).to_have_value("17")
     expect(page.get_by_role("checkbox", name="Show thinking")).to_be_checked()
     expect(page.get_by_role("combobox", name="Agent context")).to_have_value("collapsed")
@@ -120,7 +120,7 @@ def test_large_font_menu_pages_fit_above_the_bottom_guard(
 ) -> None:
     page = logged_in
     page.set_viewport_size({"width": 390, "height": height})
-    open_settings(page)
+    open_settings_overlay(page)
     size = page.get_by_role("slider", name="Body:")
     size.focus()
     size.press("End")
