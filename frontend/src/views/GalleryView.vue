@@ -222,9 +222,9 @@ function typeStyle(token: string): Record<string, string> {
                             <Field label="Container name" model-value="dev-plan" help="Use a short, descriptive name." />
                             <Field label="Invalid name" error="A name is required." />
                             <Field label="Disabled field" model-value="read-only" disabled />
-                            <Select label="Theme" v-model="selectedTheme[`${theme.id}-${profile.id}`]" :options="[
+                            <Select label="Theme" help="Choose a colour theme." v-model="selectedTheme[`${theme.id}-${profile.id}`]" :options="[
                                 {value: 'light', label: 'Light'}, {value: 'dark', label: 'Dark'},
-                                {value: 'eink', label: 'E-ink'}]" />
+                                {value: 'system', label: 'System', disabled: true}, {value: 'eink', label: 'E-ink'}]" />
                             <Select label="Disabled select" model-value="light" :options="[{value: 'light', label: 'Light'}]" disabled />
                         </div>
                     </div>
@@ -234,11 +234,9 @@ function typeStyle(token: string): Record<string, string> {
                         <div class="samples">
                             <Dialog title="Destroy dev-plan?" description="The container and its uncommitted work are deleted.">
                                 <template #trigger><Button>Open centred dialog</Button></template>
-                                <template #default="{close}">
-                                    <div class="samples">
-                                        <Button variant="text" @click="close">Cancel</Button>
-                                        <Button variant="danger" @click="close">Destroy</Button>
-                                    </div>
+                                <template #actions="{close}">
+                                    <Button variant="text" @click="close">Cancel</Button>
+                                    <Button variant="danger" @click="close">Destroy</Button>
                                 </template>
                             </Dialog>
                             <Dialog title="Container settings" description="Preferences for dev-plan." placement="drawer">
@@ -246,8 +244,9 @@ function typeStyle(token: string): Record<string, string> {
                                 <Field label="Drawer name" model-value="dev-plan" />
                             </Dialog>
                             <Menu label="Container actions" :items="[
-                                {value: 'shell', label: 'Shell'}, {value: 'logs', label: 'Logs'},
-                                {value: 'stop', label: 'Stop', disabled: true}]">
+                                {value: 'shell', label: 'Shell', icon: 'forward'}, {value: 'logs', label: 'Logs', icon: 'page-down'},
+                                {value: 'stop', label: 'Stop', disabled: true},
+                                {value: 'destroy', label: 'Destroy', variant: 'danger', icon: 'remove'}]">
                                 <template #trigger><Button>Container actions</Button></template>
                             </Menu>
                         </div>

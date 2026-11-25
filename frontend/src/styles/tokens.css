@@ -92,11 +92,6 @@
     --md-layer-dialog: 40;
     --md-layer-popover: 50;
 
-    /* Centred dialog geometry; the drawer and phone sheet anchor to edges. */
-    --md-eink-overlay-outline: #000000;
-    --md-dialog-center: 50%;
-    --md-dialog-center-offset: -50% -50%;
-
     /* State layers: Material 3 hover and pressed overlays of the content
        colour, and the keyboard focus ring. The e-ink theme drops the layers
        (no tints); the ring stays. Disabled controls fade their content and

@@ -4,6 +4,7 @@ import {DialogRoot, DialogTrigger, DialogPortal, DialogOverlay, DialogContent, D
 import IconButton from "./IconButton.vue"
 import {useOverlayScope} from "./overlayScope"
 
+defineOptions({inheritAttrs: false})
 withDefaults(defineProps<{
     title: string
     description?: string
@@ -19,16 +20,19 @@ const scope = useOverlayScope(anchor, open)
         <DialogRoot v-model:open="open">
             <DialogTrigger v-if="$slots.trigger" as-child><slot name="trigger" /></DialogTrigger>
             <DialogPortal>
-                <div v-bind="scope" class="ui-overlay-scope">
+                <div v-if="open" v-bind="scope" class="ui-overlay-scope">
                     <DialogOverlay class="ui-dialog-scrim" />
                     <DialogContent class="ui-dialog ui-focus-ring" :data-placement="placement"
-                        aria-modal="true" v-bind="description ? {} : {'aria-describedby': undefined}">
+                        aria-modal="true" v-bind="{...$attrs, ...(!description && {'aria-describedby': undefined})}">
                         <header class="ui-dialog-header">
                             <DialogTitle class="ui-dialog-title">{{ title }}</DialogTitle>
                             <DialogClose as-child><IconButton icon="close" label="Close dialog" /></DialogClose>
                         </header>
                         <DialogDescription v-if="description" class="ui-dialog-description">{{ description }}</DialogDescription>
                         <slot :close="() => open = false" />
+                        <footer v-if="$slots.actions" class="ui-dialog-actions">
+                            <slot name="actions" :close="() => open = false" />
+                        </footer>
                     </DialogContent>
                 </div>
             </DialogPortal>
@@ -77,10 +81,18 @@ const scope = useOverlayScope(anchor, open)
     margin: var(--md-space-8) 0 var(--md-space-16);
     color: var(--md-on-surface-variant);
 }
+.ui-dialog-actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: var(--md-space-8);
+    margin-top: var(--md-space-16);
+}
 @media (min-width: 48rem) {
     .ui-dialog[data-placement="dialog"] {
-        inset: var(--md-dialog-center) auto auto var(--md-dialog-center);
-        translate: var(--md-dialog-center-offset);
+        inset: 0;
+        margin: auto;
+        height: fit-content;
         width: min(32rem, 90vw);
         border-radius: var(--md-shape-extra-large);
     }

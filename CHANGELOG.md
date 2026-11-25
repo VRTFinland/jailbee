@@ -18,7 +18,7 @@ before editing `## Unreleased`.
   as neutral text) and list rows (optionally opened from anywhere on the row)
   with Material 3 hover, pressed and focus states, labelled fields and keyboard-accessible
   dialogs, menus and selects (Reka UI behaviour, responsive sheets/drawers and
-  e-ink-safe overlays), icons in the surrounding text
+  e-ink-safe overlays, shared field help/error announcements and dialog actions), icons in the surrounding text
   colour in every theme, a `/ui` gallery page behind login with per-group
   screenshot regression checks across themes, display profiles and phone/desktop
   widths, and Stylelint enforcement of design tokens (colours, sizes, shadows and
