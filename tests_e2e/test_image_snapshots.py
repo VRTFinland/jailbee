@@ -17,15 +17,59 @@ def png(colour: str, size: tuple[int, int] = (100, 100)) -> bytes:
     return stream.getvalue()
 
 
+def pixels(data: bytes) -> tuple[tuple[int, int], bytes]:
+    with Image.open(BytesIO(data)) as image:
+        return image.size, image.convert("RGB").tobytes()
+
+
+def with_changed_pixels(
+    base: bytes, count: int, colour: tuple[int, int, int] = (200, 200, 200)
+) -> bytes:
+    with Image.open(BytesIO(base)) as image:
+        changed = image.convert("RGB")
+    for i in range(count):
+        changed.putpixel((i % changed.width, i // changed.width), colour)
+    stream = BytesIO()
+    changed.save(stream, format="PNG")
+    return stream.getvalue()
+
+
 def test_reference_update_only_writes_the_reference(tmp_path: Path) -> None:
     reference, output = tmp_path / "references" / "sample.png", tmp_path / "evidence"
     original, changed = png("white"), png("black")
     assert_image_matches(original, reference=reference, output=output, update=True)
     assert_image_matches(changed, reference=reference, output=output, update=True)
-    assert reference.read_bytes() == changed
+    assert pixels(reference.read_bytes()) == pixels(changed)
     assert not output.exists()
     assert_image_matches(changed, reference=reference, output=output)
     assert not output.exists()
+
+
+def test_update_writes_a_lossless_compressed_deterministic_reference(tmp_path: Path) -> None:
+    stream = BytesIO()
+    noisy = Image.effect_noise((120, 80), 40).convert("RGB")
+    noisy.save(stream, format="PNG", compress_level=0)
+    actual = stream.getvalue()
+    first, second = tmp_path / "a.png", tmp_path / "b.png"
+    assert_image_matches(actual, reference=first, output=tmp_path / "out", update=True)
+    assert_image_matches(actual, reference=second, output=tmp_path / "out", update=True)
+    assert first.read_bytes() == second.read_bytes()
+    assert pixels(first.read_bytes()) == pixels(actual)
+    plain = BytesIO()
+    noisy.save(plain, format="PNG")
+    assert len(first.read_bytes()) <= len(plain.getvalue()) < len(actual)
+
+
+def test_update_keeps_a_reference_that_still_matches(tmp_path: Path) -> None:
+    """Regenerating rewrites only what changed, so a later design change does
+    not churn every unchanged group's PNG through rasterisation noise."""
+    reference, output = tmp_path / "sample.png", tmp_path / "evidence"
+    reference.write_bytes(with_changed_pixels(png("white"), 3, (240, 240, 240)))
+    kept = reference.read_bytes()
+    assert_image_matches(png("white"), reference=reference, output=output, update=True)
+    assert reference.read_bytes() == kept
+    assert_image_matches(png("black"), reference=reference, output=output, update=True)
+    assert pixels(reference.read_bytes()) == pixels(png("black"))
 
 
 @pytest.mark.parametrize("actual", [png("black"), png("white", (101, 100))])
@@ -60,24 +104,23 @@ def test_small_rasterisation_noise_is_allowed_but_broad_colour_drift_is_not(
         assert_image_matches(png("#fefefe"), reference=reference, output=output)
 
 
-@pytest.mark.parametrize("changed_pixels", [19, 20, 21])
-def test_changed_pixel_budget_is_independent_of_mean_error(
-    tmp_path: Path, changed_pixels: int
+@pytest.mark.parametrize("size", [(40, 40), (1000, 400)])
+@pytest.mark.parametrize("changed_pixels", [200, 201])
+def test_changed_pixel_budget_is_absolute_whatever_the_image_size(
+    tmp_path: Path, size: tuple[int, int], changed_pixels: int
 ) -> None:
+    """One chip or icon recoloured is a few hundred pixels: it must fail in a
+    large capture as in a small one, so the budget is a pixel count, not a
+    fraction. The mean-error cap stays below its limit here (the large image),
+    or is the same verdict (the small one)."""
     reference, output = tmp_path / "sample.png", tmp_path / "evidence"
-    reference.write_bytes(png("white"))
-    with Image.open(BytesIO(png("white"))) as image:
-        for x in range(changed_pixels):
-            image.putpixel((x, 0), (230, 230, 230))
-        stream = BytesIO()
-        image.save(stream, format="PNG")
-    # These errors keep the mean below 0.25; 21/10000 exceeds only the 0.2%
-    # changed-pixel budget. Removing that comparison would make this test fail.
-    if changed_pixels <= 20:
-        assert_image_matches(stream.getvalue(), reference=reference, output=output)
+    reference.write_bytes(png("white", size))
+    actual = with_changed_pixels(png("white", size), changed_pixels, (220, 220, 220))
+    if changed_pixels <= 200 and size == (1000, 400):
+        assert_image_matches(actual, reference=reference, output=output)
     else:
         with pytest.raises(AssertionError, match="Gallery differs"):
-            assert_image_matches(stream.getvalue(), reference=reference, output=output)
+            assert_image_matches(actual, reference=reference, output=output)
 
 
 def test_missing_reference_fails_without_creating_it(tmp_path: Path) -> None:

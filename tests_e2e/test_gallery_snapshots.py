@@ -1,7 +1,8 @@
-"""Visual regression checks for every gallery theme/profile at two widths."""
+"""Visual regression checks for every gallery group, theme and profile at two widths."""
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -47,13 +48,33 @@ def test_gallery_snapshot(
         "el => el.style.setProperty('--md-font-mono', '\"DejaVu Sans Mono\"')"
     )
     panel = page.get_by_role("region", name=f"{theme} theme, {profile} profile", exact=True)
-    assert_image_matches(
-        panel.screenshot(
-            animations="disabled",
-            caret="hide",
-            scale="css",
-        ),
-        reference=Path(__file__).parent / "snapshots" / f"{width}-{theme.lower()}-{profile}.png",
-        output=Path(output_path),
-        update=bool(pytestconfig.getoption("--update-gallery-snapshots")),
-    )
+    # One reference per gallery group, so a single recoloured chip or icon is
+    # a large share of its image and a design change rewrites only its group.
+    groups = panel.locator(".group")
+    titles = groups.locator(".group-title").all_inner_texts()
+    assert len(titles) >= 10 and len(set(titles)) == len(titles), titles
+    references = Path(__file__).parent / "snapshots"
+    stem = f"{width}-{theme.lower()}-{profile}"
+    update = bool(pytestconfig.getoption("--update-gallery-snapshots"))
+    failures: list[str] = []
+    expected: set[Path] = set()
+    for index, title in enumerate(titles):
+        slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
+        reference = references / f"{stem}-{slug}.png"
+        expected.add(reference)
+        try:
+            assert_image_matches(
+                groups.nth(index).screenshot(animations="disabled", caret="hide", scale="css"),
+                reference=reference,
+                output=Path(output_path) / slug,
+                update=update,
+            )
+        except AssertionError as error:
+            failures.append(str(error))
+    # A reference of a removed or renamed group is dead weight in the repo.
+    for orphan in sorted(set(references.glob(f"{stem}-*.png")) - expected):
+        if update:
+            orphan.unlink()
+        else:
+            failures.append(f"No gallery group for reference {orphan.name}; delete it.")
+    assert not failures, "\n".join(failures)
