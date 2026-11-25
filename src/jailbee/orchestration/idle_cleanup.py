@@ -32,15 +32,20 @@ def prepare(ctx: ActionContext, child: Node) -> Path | None:
     from jailbee.orchestration.state import pending_dir
 
     pending = [p.name for p in pending_dir(ctx.root, ctx.sender.full).glob("*.json")]
-    atomic_write_text(path, json.dumps({
-        "recipient_uuid": uuid,
-        "recipient_full": ctx.sender.full,
-        "child_full": child.full,
-        "child_uuid": child.config.get("volatile.uuid"),
-        "child_short": child.short,
-        "pending": pending,
-        "at": ctx.now.isoformat(),
-    }))
+    atomic_write_text(
+        path,
+        json.dumps(
+            {
+                "recipient_uuid": uuid,
+                "recipient_full": ctx.sender.full,
+                "child_full": child.full,
+                "child_uuid": child.config.get("volatile.uuid"),
+                "child_short": child.short,
+                "pending": pending,
+                "at": ctx.now.isoformat(),
+            }
+        ),
+    )
     return path
 
 
@@ -53,8 +58,11 @@ def settle(root: Path, path: Path | None) -> None:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
         settle_child_idle(
-            root, data["recipient_full"], data["child_short"],
-            recipient_uuid=data["recipient_uuid"], now=datetime.fromisoformat(data["at"]),
+            root,
+            data["recipient_full"],
+            data["child_short"],
+            recipient_uuid=data["recipient_uuid"],
+            now=datetime.fromisoformat(data["at"]),
             pending_names=frozenset(data["pending"]),
         )
         path.unlink(missing_ok=True)

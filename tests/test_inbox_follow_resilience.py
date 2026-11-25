@@ -75,9 +75,7 @@ def test_follow_recovers_after_role_refusal_and_disconnect(monkeypatch, tmp_path
     assert not thread.is_alive()
 
 
-def test_reconnects_announce_each_id_once_but_a_new_follower_replays_backlog(
-    monkeypatch, tmp_path
-):
+def test_reconnects_announce_each_id_once_but_a_new_follower_replays_backlog(monkeypatch, tmp_path):
     path = tmp_path / "broker.sock"
     monkeypatch.setenv("JAILBEE_ORCHESTRATION_SOCKET", str(path))
     server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -92,10 +90,21 @@ def test_reconnects_announce_each_id_once_but_a_new_follower_replays_backlog(
                     with conn, conn.makefile("rb") as reader:
                         assert wire.decode_request(wire.read_line(reader)).op == "follow"
                         for ident in ids:
-                            conn.sendall(wire.encode_response(wire.ok({
-                                "kind": "message",
-                                "item": {"id": ident, "from": "kid", "kind": "note", "body": "hi"},
-                            })))
+                            conn.sendall(
+                                wire.encode_response(
+                                    wire.ok(
+                                        {
+                                            "kind": "message",
+                                            "item": {
+                                                "id": ident,
+                                                "from": "kid",
+                                                "kind": "note",
+                                                "body": "hi",
+                                            },
+                                        }
+                                    )
+                                )
+                            )
 
     thread = threading.Thread(target=serve, daemon=True)
     thread.start()

@@ -191,7 +191,12 @@ def deliver(
 
 
 def settle_child_idle(
-    root: Path, recipient_full: str, child: str, *, recipient_uuid: str | None, now: datetime,
+    root: Path,
+    recipient_full: str,
+    child: str,
+    *,
+    recipient_uuid: str | None,
+    now: datetime,
     pending_names: frozenset[str],
 ) -> None:
     """A destroyed child can no longer act on its waiting-for-input notices."""
@@ -216,8 +221,11 @@ def settle_child_idle(
             and item.get("from") == child
         ):
             save_pending(
-                path, item, recipient_uuid=recipient_uuid,
-                completed=pending.completed, acked=True,
+                path,
+                item,
+                recipient_uuid=recipient_uuid,
+                completed=pending.completed,
+                acked=True,
             )
 
 

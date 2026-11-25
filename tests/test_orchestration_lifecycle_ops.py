@@ -150,32 +150,73 @@ def test_destroy_settles_only_its_childs_idle_notices(tmp_path, seams, automatic
     from jailbee.orchestration import finishing
     from jailbee.orchestration.store import BrokerStore, store_path
 
-    rig = Rig(tmp_path, config={
-        labels.LAST_IMPORT: "aaa",
-        labels.STOPPED_HEAD: "aaa",
-        labels.PENDING_DESTROY: "aaa",
-    })
+    rig = Rig(
+        tmp_path,
+        config={
+            labels.LAST_IMPORT: "aaa",
+            labels.STOPPED_HEAD: "aaa",
+            labels.PENDING_DESTROY: "aaa",
+        },
+    )
     rig.sender.config["volatile.uuid"] = "orch-uuid"
-    rig.incus.list_containers.return_value = [
-        {"name": rig.child.full, "config": rig.child.config}
-    ]
+    rig.incus.list_containers.return_value = [{"name": rig.child.full, "config": rig.child.config}]
     st = BrokerStore(store_path(tmp_path))
     for kind in ("idle", "note", "blocked", "done", "question"):
-        st.insert_item("orch-uuid", rig.sender.full, {
-            "id": kind, "type": "message", "kind": kind, "from": "c1",
-        }, now=1)
-    st.insert_item("orch-uuid", rig.sender.full, {
-        "id": "other-child", "type": "message", "kind": "idle", "from": "c2",
-    }, now=1)
-    st.insert_item("other-uuid", "proj-other", {
-        "id": "idle", "type": "message", "kind": "idle", "from": "c1",
-    }, now=1)
-    st.insert_item("orch-uuid", rig.sender.full, {
-        "id": "status", "type": "status", "state": "done", "from": "c1",
-    }, now=1)
-    st.insert_item("orch-uuid", rig.sender.full, {
-        "id": "already-read", "type": "message", "kind": "idle", "from": "c1",
-    }, now=1)
+        st.insert_item(
+            "orch-uuid",
+            rig.sender.full,
+            {
+                "id": kind,
+                "type": "message",
+                "kind": kind,
+                "from": "c1",
+            },
+            now=1,
+        )
+    st.insert_item(
+        "orch-uuid",
+        rig.sender.full,
+        {
+            "id": "other-child",
+            "type": "message",
+            "kind": "idle",
+            "from": "c2",
+        },
+        now=1,
+    )
+    st.insert_item(
+        "other-uuid",
+        "proj-other",
+        {
+            "id": "idle",
+            "type": "message",
+            "kind": "idle",
+            "from": "c1",
+        },
+        now=1,
+    )
+    st.insert_item(
+        "orch-uuid",
+        rig.sender.full,
+        {
+            "id": "status",
+            "type": "status",
+            "state": "done",
+            "from": "c1",
+        },
+        now=1,
+    )
+    st.insert_item(
+        "orch-uuid",
+        rig.sender.full,
+        {
+            "id": "already-read",
+            "type": "message",
+            "kind": "idle",
+            "from": "c1",
+        },
+        now=1,
+    )
     st.ack("orch-uuid", "already-read", now=2)
     if fails:
         seams["destroy"].side_effect = RuntimeError("busy")
@@ -193,9 +234,7 @@ def test_destroy_settles_only_its_childs_idle_notices(tmp_path, seams, automatic
     assert [item.id for item in unread] == (["idle", *expected] if fails else expected)
     assert [item.id for item in st.unacked("other-uuid")] == ["idle"]
     assert st.get("orch-uuid", "already-read").acked_at == 2
-    assert st.get("orch-uuid", "idle").acked_at == (
-        None if fails else rig.ctx().now.timestamp()
-    )
+    assert st.get("orch-uuid", "idle").acked_at == (None if fails else rig.ctx().now.timestamp())
 
 
 @pytest.mark.parametrize("automatic,failure", [(False, "store"), (False, "spool"), (True, "store")])
@@ -203,22 +242,33 @@ def test_destroy_retries_idle_cleanup_after_io_failure(
     tmp_path, seams, monkeypatch, automatic, failure
 ):
     from jailbee.orchestration import broker, broker_state, finishing, outbox
-    from jailbee.orchestration.state import pending_dir
     from jailbee.orchestration.journal import Journal
+    from jailbee.orchestration.state import pending_dir
     from jailbee.orchestration.store import BrokerStore, StoreError, store_path
 
-    rig = Rig(tmp_path, config={
-        labels.LAST_IMPORT: "aaa", labels.STOPPED_HEAD: "aaa",
-        labels.PENDING_DESTROY: "aaa", "volatile.uuid": "child-uuid",
-    })
+    rig = Rig(
+        tmp_path,
+        config={
+            labels.LAST_IMPORT: "aaa",
+            labels.STOPPED_HEAD: "aaa",
+            labels.PENDING_DESTROY: "aaa",
+            "volatile.uuid": "child-uuid",
+        },
+    )
     rig.sender.config["volatile.uuid"] = "orch-uuid"
-    rig.incus.list_containers.return_value = [
-        {"name": rig.child.full, "config": rig.child.config}
-    ]
+    rig.incus.list_containers.return_value = [{"name": rig.child.full, "config": rig.child.config}]
     st = BrokerStore(store_path(tmp_path))
-    st.insert_item("orch-uuid", rig.sender.full, {
-        "id": "idle", "type": "message", "kind": "idle", "from": "c1",
-    }, now=1)
+    st.insert_item(
+        "orch-uuid",
+        rig.sender.full,
+        {
+            "id": "idle",
+            "type": "message",
+            "kind": "idle",
+            "from": "c1",
+        },
+        now=1,
+    )
     directory = pending_dir(tmp_path, rig.sender.full)
     directory.mkdir(parents=True)
     path = directory / "idle.json"
@@ -226,38 +276,61 @@ def test_destroy_retries_idle_cleanup_after_io_failure(
     real_save = outbox.save_pending
 
     if not automatic:
-        real_save(path, {
-            "id": "parked-idle", "type": "message", "kind": "idle", "from": "c1",
-        }, recipient_uuid="orch-uuid")
+        real_save(
+            path,
+            {
+                "id": "parked-idle",
+                "type": "message",
+                "kind": "idle",
+                "from": "c1",
+            },
+            recipient_uuid="orch-uuid",
+        )
 
     def unavailable(*args, **kwargs):
         raise StoreError("locked")
 
     monkeypatch.setattr(
         BrokerStore if failure == "store" else outbox,
-        "ack_child_idle" if failure == "store" else "save_pending", unavailable,
+        "ack_child_idle" if failure == "store" else "save_pending",
+        unavailable,
     )
     if automatic:
         finishing.settle_destroys(rig.ctx())
     else:
         assert actions.handle_destroy(rig.ctx(), _destroy()).state == "done"
-    assert [item.id for item in st.unacked("orch-uuid")] == (
-        ["idle"] if failure == "store" else []
-    )
+    assert [item.id for item in st.unacked("orch-uuid")] == (["idle"] if failure == "store" else [])
     if not automatic:
         assert not outbox.load_pending(path).acked
     monkeypatch.setattr(BrokerStore, "ack_child_idle", real_ack)
     monkeypatch.setattr(outbox, "save_pending", real_save)
     # A later namesake's notices must survive a delayed cleanup retry.
-    st.insert_item("orch-uuid", rig.sender.full, {
-        "id": "new-idle", "type": "message", "kind": "idle", "from": "c1",
-    }, now=rig.ctx().now.timestamp() + 1)
+    st.insert_item(
+        "orch-uuid",
+        rig.sender.full,
+        {
+            "id": "new-idle",
+            "type": "message",
+            "kind": "idle",
+            "from": "c1",
+        },
+        now=rig.ctx().now.timestamp() + 1,
+    )
     # A new broker memory simulates a broker restart with the child already gone.
-    rig.incus.list_containers.return_value = [{
-        "name": rig.sender.full, "config": {"volatile.uuid": "orch-uuid"}, "status": "Stopped",
-    }]
-    broker.tick(rig.incus, root=tmp_path, journal=Journal(tmp_path),
-                now=rig.ctx().now, memory=broker_state.BrokerMemory())
+    rig.incus.list_containers.return_value = [
+        {
+            "name": rig.sender.full,
+            "config": {"volatile.uuid": "orch-uuid"},
+            "status": "Stopped",
+        }
+    ]
+    broker.tick(
+        rig.incus,
+        root=tmp_path,
+        journal=Journal(tmp_path),
+        now=rig.ctx().now,
+        memory=broker_state.BrokerMemory(),
+    )
     assert [item.id for item in st.unacked("orch-uuid")] == ["new-idle"]
     if not automatic:
         assert outbox.load_pending(path).acked
@@ -266,8 +339,8 @@ def test_destroy_retries_idle_cleanup_after_io_failure(
 
 def test_destroy_settles_parked_idle_before_it_can_reach_the_inbox(tmp_path, seams):
     from jailbee.orchestration import outbox
-    from jailbee.orchestration.store import BrokerStore, store_path
     from jailbee.orchestration.state import pending_dir
+    from jailbee.orchestration.store import BrokerStore, store_path
 
     rig = Rig(tmp_path)
     rig.sender.config["volatile.uuid"] = "orch-uuid"
@@ -279,16 +352,26 @@ def test_destroy_settles_parked_idle_before_it_can_reach_the_inbox(tmp_path, sea
         ("other-child", "idle", "c2", "orch-uuid"),
         ("old-orch", "idle", "c1", "old-uuid"),
     ):
-        outbox.save_pending(directory / f"{ident}.json", {
-            "id": ident, "type": "message", "kind": kind, "from": sender,
-        }, recipient_uuid=uuid)
+        outbox.save_pending(
+            directory / f"{ident}.json",
+            {
+                "id": ident,
+                "type": "message",
+                "kind": kind,
+                "from": sender,
+            },
+            recipient_uuid=uuid,
+        )
     assert actions.handle_destroy(rig.ctx(), _destroy(force=True)).state == "done"
     assert outbox.load_pending(directory / "idle.json").acked
     for ident in ("question", "other-child", "old-orch"):
         assert not outbox.load_pending(directory / f"{ident}.json").acked
-    assert outbox.flush_pending(
-        rig.incus, tmp_path, rig.sender.full, uid=None, recipient_uuid="orch-uuid"
-    ) == 3
+    assert (
+        outbox.flush_pending(
+            rig.incus, tmp_path, rig.sender.full, uid=None, recipient_uuid="orch-uuid"
+        )
+        == 3
+    )
     st = BrokerStore(store_path(tmp_path))
     assert {item.id for item in st.unacked("orch-uuid")} == {"question", "other-child"}
     assert st.get("orch-uuid", "idle").acked_at is not None
