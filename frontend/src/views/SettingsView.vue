@@ -9,6 +9,8 @@ import type {MetaMode} from "../protocol"
 import {
     DISPLAY_PROFILES,
     FONT_SIZE_RANGE,
+    PAGE_STEPS,
+    type PageStep,
     settings,
     THEMES,
     THEME_LABELS,
@@ -114,6 +116,17 @@ function number(event: Event): number {
                     @change="updateSettings({einkFollow: ($event.target as HTMLInputElement).checked})"
                 />
                 Follow new messages on e-ink
+            </label>
+        </fieldset>
+
+        <fieldset v-if="settings.displayProfile === 'eink'">
+            <legend>Page turns</legend>
+            <label class="choice">
+                Page step
+                <select class="page-step" :value="settings.pageStep"
+                    @change="updateSettings({pageStep: number($event) as PageStep})">
+                    <option v-for="step in PAGE_STEPS" :key="step" :value="step">{{ step }} %</option>
+                </select>
             </label>
         </fieldset>
 

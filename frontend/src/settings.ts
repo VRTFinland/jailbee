@@ -18,10 +18,13 @@ export const DISPLAY_PROFILES: readonly DisplayProfile[] = ["normal", "eink"]
 /** Agent context: what transcripts show of the agent's own wrapper records. */
 export const AGENT_CONTEXT_MODES: readonly MetaMode[] = ["hidden", "collapsed", "shown"]
 export const FONT_SIZE_RANGE = {min: 12, max: 28} as const
+export const PAGE_STEPS = [100, 90, 75, 66, 50] as const
+export type PageStep = (typeof PAGE_STEPS)[number]
 
 export interface Settings {
     theme: Theme
     displayProfile: DisplayProfile
+    pageStep: PageStep
     bodyFontSize: number
     codeFontSize: number
     showThinking: boolean
@@ -82,6 +85,12 @@ const FIELDS: {[K in keyof Settings]: Field<K>} = {
         serialize: String,
         fallback: () => "normal",
     },
+    pageStep: {
+        key: "jailbee.pageStep",
+        parse: (raw) => PAGE_STEPS.find((step) => String(step) === raw),
+        serialize: String,
+        fallback: () => 100,
+    },
     bodyFontSize: sizeField<"bodyFontSize">("jailbee.bodyFontSize", 16),
     codeFontSize: sizeField<"codeFontSize">("jailbee.codeFontSize", 14),
     showThinking: {
@@ -119,6 +128,7 @@ function loadAll(): Settings {
     return {
         theme: load("theme"),
         displayProfile: load("displayProfile"),
+        pageStep: load("pageStep"),
         bodyFontSize: load("bodyFontSize"),
         codeFontSize: load("codeFontSize"),
         showThinking: load("showThinking"),

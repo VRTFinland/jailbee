@@ -29,6 +29,20 @@ describe("SettingsView", () => {
         await wrapper.get("select.agent-context").setValue("hidden")
     })
 
+    it("offers page step percentages only for e-ink and remembers the selection", async () => {
+        const wrapper = mount(SettingsView, {global: {stubs: {RouterLink: true, QuickSettings: true}}})
+        expect(wrapper.find("select.page-step").exists()).toBe(false)
+        await wrapper.get("input[name=profile][value=eink]").setValue(true)
+        const select = wrapper.get("select.page-step")
+        expect(select.findAll("option").map(option => option.text())).toEqual(["100 %", "90 %", "75 %", "66 %", "50 %"])
+        expect((select.element as HTMLSelectElement).value).toBe("100")
+        await select.setValue("75")
+        expect(settings.pageStep).toBe(75)
+        expect(readItem("jailbee.pageStep")).toBe("75")
+        reloadSettings()
+        expect(settings.pageStep).toBe(75)
+    })
+
     it("edits font sizes and the thinking toggle", async () => {
         const wrapper = mount(SettingsView, {global: {stubs: {RouterLink: true, QuickSettings: true}}})
         await wrapper.get("input.body-size").setValue("19")

@@ -84,6 +84,21 @@ describe("settings", () => {
         expect(settings.containerFilter).toBe("all")
     })
 
+    it("defaults page step to 100 and persists only supported percentages", () => {
+        expect(settings.pageStep).toBe(100)
+        for (const pageStep of [90, 75, 66, 50, 100] as const) {
+            updateSettings({pageStep})
+            reloadSettings()
+            expect(settings.pageStep).toBe(pageStep)
+            expect(readItem("jailbee.pageStep")).toBe(String(pageStep))
+        }
+        for (const garbage of ["0", "99", "0.75", "fast", ""]) {
+            localStorage.setItem("jailbee.pageStep", garbage)
+            reloadSettings()
+            expect(settings.pageStep).toBe(100)
+        }
+    })
+
     it("keeps font sizes within a readable range", () => {
         updateSettings({bodyFontSize: 4, codeFontSize: 400})
         expect(settings.bodyFontSize).toBe(12)
