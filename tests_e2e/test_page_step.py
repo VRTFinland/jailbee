@@ -92,7 +92,7 @@ def test_list_page_turns_reserve_the_visible_title_boundary(
         container(
             f"work-task-{i:02}", repo="work", child=ChildView(parent.name, "working", (), False, ())
         )
-        for i in range(60)
+        for i in range(120)
     ]
     server.push(snapshot_of(repo_group("work", parent, *children)))
     page.evaluate(
@@ -115,7 +115,7 @@ def test_list_page_turns_reserve_the_visible_title_boundary(
     page.keyboard.press("m")
     page.wait_for_function("scrollY > 0")
     wait_for_scroll_settled(page)
-    for _ in range(3):
+    for turn in range(4):
         before = page.evaluate("""() => ({y: scrollY,
             top: document.querySelector('.title-bar')?.getBoundingClientRect().bottom ?? 0,
             bottom: document.querySelector('.bottom-guard').getBoundingClientRect().top})""")
@@ -123,7 +123,15 @@ def test_list_page_turns_reserve_the_visible_title_boundary(
         page.wait_for_function("y => scrollY > y", arg=before["y"])
         wait_for_scroll_settled(page)
         after = page.evaluate("window.scrollY")
-        assert after - before["y"] == pytest.approx(int(before["bottom"] - before["top"]), abs=1)
+        moved = after - before["y"]
+        readable = int(before["bottom"] - before["top"])
+        # Sticking the title removes the page's initial top padding, rebuilding
+        # the grid. Its first turn may finish that shortened page; later turns
+        # must cover a full readable page, and no turn may skip any text.
+        if turn == 0:
+            assert 0 < moved <= readable + 1
+        else:
+            assert moved == pytest.approx(readable, abs=1)
         assert after + before["top"] <= before["y"] + before["bottom"] + 1
 
 
