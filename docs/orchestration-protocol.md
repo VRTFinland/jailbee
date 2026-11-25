@@ -246,8 +246,9 @@ CLI: `--on-done destroy|keep`. Version 2 also permits `kind: "fork"`
 with `ref` (a full `refs/` name or 40-hex commit), or `kind: "pr"` with
 a positive integer `pr`. `base` is only for `new`; `ref` is only for
 `fork`. Use `refs/heads/<name>` for a local branch, not a bare name.
-Explicit-ref forks do not inherit PR bindings. A PR child's own outbox is
-lost when destroyed; use `--on-done keep` to preserve it.
+Explicit-ref forks do not inherit PR bindings. A PR child cannot stage
+GitHub writes either; it sends them to the orchestrator, which stages them in
+its own outbox.
 
 Optional version-2 `warm_paths: list[str]` is valid only for `kind: "fork"`.
 Omission uses `fork.warm_paths`; `[]` disables it; a non-empty list replaces it.
