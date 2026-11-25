@@ -72,9 +72,9 @@ install-skill:
 web:
 	cd frontend && npm ci && npm run build
 
-# The browser app's unit tests (Vitest).
+# Design-token enforcement (Stylelint) and browser unit tests (Vitest).
 web-test:
-	cd frontend && npm ci && npm test
+	cd frontend && npm ci && npm run lint:styles && npm test
 
 # The web dashboard's end-to-end browser suite (tests_e2e/, #152): builds the
 # browser app as `make web` does, type-checks the suite, then drives the real
