@@ -114,7 +114,9 @@ def cmd_follow() -> int:
                 client.retry_for = 0
                 for event in client.follow():
                     backoff = 0.5
-                    ident = event["item"]["id"] if event.get("kind") == "message" else None
+                    item = event.get("item") if event.get("kind") == "message" else None
+                    raw_id = item.get("id") if isinstance(item, dict) else None
+                    ident = raw_id if isinstance(raw_id, str) and raw_id else None
                     if ident is not None and ident in announced:
                         continue
                     line = follow_render.render_event(event)
