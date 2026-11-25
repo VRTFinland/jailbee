@@ -49,7 +49,8 @@ def test_menu_context_paging_and_live_preferences(
     if profile == "eink":
         open_settings(page)
         page.get_by_role("radio", name="E-ink (page turns, no animation, slow refresh)").check()
-        page.go_back()
+        page.get_by_role("button", name="Close settings").click()
+        expect(page.get_by_role("dialog", name="Settings")).to_have_count(0)
     icon = page.get_by_role("button", name="Quick settings", exact=True)
     open_quick_settings(page)
     panel = page.get_by_role("dialog", name="Quick settings")
@@ -87,6 +88,8 @@ def test_menu_context_paging_and_live_preferences(
     expect(page.get_by_role("checkbox", name="Show thinking")).to_be_checked()
     expect(page.get_by_role("combobox", name="Agent context")).to_have_value("collapsed")
     page.get_by_role("radio", name="Dark", exact=True).check()
+    page.get_by_role("button", name="Close settings").click()
+    expect(page.get_by_role("dialog", name="Settings")).to_have_count(0)
     open_quick_settings(page)
     expect(panel.get_by_role("button", name="Theme: Dark", exact=True)).to_be_visible()
     # Outside click dismisses and returns focus without moving the document.
@@ -123,6 +126,8 @@ def test_large_font_menu_pages_fit_above_the_bottom_guard(
     size.press("End")
     if profile == "eink":
         page.get_by_role("radio", name="E-ink (page turns, no animation, slow refresh)").check()
+    page.get_by_role("button", name="Close settings").click()
+    expect(page.get_by_role("dialog", name="Settings")).to_have_count(0)
     open_quick_settings(page)
     panel = page.get_by_role("dialog", name="Quick settings")
     while True:
@@ -159,7 +164,7 @@ def test_small_viewport_pages_show_every_context_row_in_order(
     expected_rows += (
         ["All", "Running", "Active"]
         if page_context == "containers"
-        else ["Follow new messages", "Show thinking", "Agent context"]
+        else ["Jump to…", "Follow new messages", "Show thinking", "Agent context"]
     )
     expected_rows.append("Settings")
     seen: list[str] = []
@@ -180,6 +185,12 @@ def test_small_viewport_pages_show_every_context_row_in_order(
             break
         next_page.click()
         assert panel.evaluate("el => el.getBoundingClientRect().bottom <= innerHeight - 32")
+    if page_context == "session":
+        assert seen[0].startswith("Session")
+        assert "claude" in seen[0]
+        assert "test-model" in seen[0]
+        assert "33333333-3333-4333-8333-333333333333" in seen[0]
+        seen = seen[1:]
     assert seen == expected_rows
     assert panel.evaluate("el => el.scrollHeight === el.clientHeight")
 
