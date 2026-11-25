@@ -6,10 +6,13 @@ import pytest
 from playwright.sync_api import Page, expect
 
 
-@pytest.mark.parametrize("theme,background,outline", [
-    ("Light", "rgb(231, 232, 238)", "rgb(25, 28, 32)"),
-    ("Dark", "rgb(40, 42, 47)", "rgb(226, 226, 233)"),
-])
+@pytest.mark.parametrize(
+    "theme,background,outline",
+    [
+        ("Light", "rgb(231, 232, 238)", "rgb(25, 28, 32)"),
+        ("Dark", "rgb(40, 42, 47)", "rgb(226, 226, 233)"),
+    ],
+)
 @pytest.mark.parametrize("profile", ["normal", "e-ink"])
 def test_portalled_overlays_keep_the_panel_theme_and_profile(
     logged_in: Page, profile: str, theme: str, background: str, outline: str
