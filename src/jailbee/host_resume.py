@@ -151,7 +151,8 @@ def _configs(cfg: Config, failures: dict[Path, str] | None = None) -> dict[str, 
     )
     roots = (
         [repo.root for repo in registered_repos(scope=scope)]
-        if scope is not None else registered_repo_roots()
+        if scope is not None
+        else registered_repo_roots()
     )
     for root in roots:
         if root == cfg.repo_root:

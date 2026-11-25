@@ -55,13 +55,21 @@ def host(mocker, make_cfg, tmp_path):
 
 def register_host_repos(host):
     from datetime import UTC, datetime
+
     from sqlmodel import Session
+
     from jailbee.db import get_engine
     from jailbee.db.models import RegisteredRepo
 
     with Session(get_engine()) as session:
         for repo in host[:2]:
-            session.add(RegisteredRepo(container_prefix=repo.container_prefix, repo_root=str(repo.repo_root), registered_at=datetime.now(UTC)))
+            session.add(
+                RegisteredRepo(
+                    container_prefix=repo.container_prefix,
+                    repo_root=str(repo.repo_root),
+                    registered_at=datetime.now(UTC),
+                )
+            )
         session.commit()
 
 
@@ -643,17 +651,21 @@ def test_remote_resume_preserves_excluded_orphan_and_vanished_entries(
     assert {c.args[0] for c in incus.exec.call_args_list} <= {"one-work", "one-mount"}
 
 
-def test_remote_stop_does_not_load_or_report_an_excluded_broken_repository(host, mocker, monkeypatch):
+def test_remote_stop_does_not_load_or_report_an_excluded_broken_repository(
+    host, mocker, monkeypatch
+):
     from jailbee.config import ConfigError
 
     cfg, other, _, _ = host
     register_host_repos(host)
     monkeypatch.setenv("JAILBEE_REMOTE_TRANSPORT", "ssh")
     monkeypatch.setenv("JAILBEE_REMOTE_EXCLUDED_REPOS", '["two"]')
+
     def load(root):
         if root == other.repo_root:
             raise ConfigError("private configuration is broken")
         return cfg
+
     loader = mocker.patch("jailbee.config.load_repo_config", side_effect=load)
     result = CliRunner().invoke(app, ["stop", "--all", "--yes"])
     assert result.exit_code == 0, result.output
