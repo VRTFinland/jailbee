@@ -11,9 +11,7 @@ from tests_e2e.image_snapshots import assert_image_matches
 
 
 @pytest.fixture
-def browser_context_args(
-    browser_context_args: dict[str, object], width: int
-) -> dict[str, object]:
+def browser_context_args(browser_context_args: dict[str, object], width: int) -> dict[str, object]:
     return {
         **browser_context_args,
         "device_scale_factor": 1,

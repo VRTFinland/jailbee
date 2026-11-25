@@ -35,7 +35,7 @@ def test_mismatch_preserves_reference_and_writes_actual_and_diff(
     reference, output = tmp_path / "sample.png", tmp_path / "evidence"
     original = png("white")
     reference.write_bytes(original)
-    with pytest.raises(AssertionError, match="Gallery differs.*Actual:.*diff:"):
+    with pytest.raises(AssertionError, match=r"Gallery differs.*Actual:.*diff:"):
         assert_image_matches(actual, reference=reference, output=output)
     assert reference.read_bytes() == original
     assert (output / "actual.png").read_bytes() == actual
