@@ -69,6 +69,24 @@ How the web dashboard behaves for one kind of screen — normal or e-ink —
 independently of its theme.
 _Avoid_: e-ink mode, e-ink theme (for the behaviour)
 
+**Design token**:
+A named value of the web dashboard's design system — a colour role, type
+size, shape, spacing, hit target, layer or motion duration — defined once in the
+token file under a Material 3 role name (`--md-*`).
+_Avoid_: CSS variable (for a design value), theme variable
+
+**UI primitive**:
+One of the web dashboard's shared building blocks (a button, row, chip,
+dialog, menu, field and the like) styled only with design tokens, from which
+every view is composed.
+_Avoid_: widget, component (for a shared building block)
+
+**Gallery**:
+The web dashboard's `/ui` page that shows every design token and UI primitive
+under each theme and display profile; the visual reference the dashboard is
+checked against.
+_Avoid_: style guide, storybook
+
 **Sync target**:
 The reference a container's committed changes and commit counts are compared
 against; chosen automatically from its parent, PR head, or host branch.
