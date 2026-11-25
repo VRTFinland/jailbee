@@ -225,6 +225,22 @@ describe("page turns", () => {
         expect(pager.guideTop.value).toBeNull()
     })
 
+    it("keeps the guide through its own delayed scroll event and clears it on a jump", () => {
+        const scrollTo = fakeLayout(1750)
+        let y = 0
+        vi.spyOn(window, "scrollY", "get").mockImplementation(() => y)
+        scrollTo.mockImplementation((_x, top) => { y = top ?? 0 })
+        updateSettings({displayProfile: "eink", pageStep: 75})
+        const wrapper = mount(Harness, {attachTo: document.body})
+        const pager = (wrapper.vm as unknown as {pager: Pager}).pager
+        pager.next()
+        expect(pager.guideTop.value).toBe(125)
+        window.dispatchEvent(new Event("scroll"))
+        expect(pager.guideTop.value).toBe(125)
+        pager.goToElement({getBoundingClientRect: () => ({top: 100}) as DOMRect} as Element)
+        expect(pager.guideTop.value).toBeNull()
+    })
+
     it("draws no guide for a full-height turn", () => {
         clampScrolls(fakeLayout(1750), 1162)
         updateSettings({displayProfile: "eink"})
