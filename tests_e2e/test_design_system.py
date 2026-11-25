@@ -64,10 +64,12 @@ _DECLARED_MOTION_MS = r"""
 # What each gallery panel's sample shape shows: its transition (the display
 # profile) and its hairline border (the theme).
 _PANEL_LOOK = """
-() => Object.fromEntries([...document.querySelectorAll("section[data-theme][data-profile]")].map((p) => {
-    const s = getComputedStyle(p.querySelector(".shape"))
-    return [p.getAttribute("aria-label"), [s.transitionDuration, s.borderTopColor]]
-}))
+() => Object.fromEntries(
+    [...document.querySelectorAll("section[data-theme][data-profile]")].map((p) => {
+        const s = getComputedStyle(p.querySelector(".shape"))
+        return [p.getAttribute("aria-label"), [s.transitionDuration, s.borderTopColor]]
+    })
+)
 """
 
 
@@ -181,9 +183,10 @@ def test_transitions_stay_brief_and_stop_under_reduced_motion_and_eink(logged_in
     assert page.evaluate(_MAX_TRANSITION_MS) == 0
     _open_gallery(page)
     eink_panels = page.locator('section[data-profile="eink"] .shape')  # 3 panels x 5 shapes
-    assert eink_panels.evaluate_all(
-        "(els) => els.map((e) => getComputedStyle(e).transitionDuration)"
-    ) == ["0s"] * 15
+    assert (
+        eink_panels.evaluate_all("(els) => els.map((e) => getComputedStyle(e).transitionDuration)")
+        == ["0s"] * 15
+    )
 
 
 def test_the_inter_licence_ships_next_to_the_font(server: E2EServer, page: Page) -> None:
