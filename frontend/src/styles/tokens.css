@@ -318,12 +318,15 @@ body {
    `[data-profile]`, so a /ui gallery panel shows its own), or failing that a
    rule `[data-profile="eink"] .x` / `[data-theme="eink"] .x` without `:root`.
    Never `:root[data-…] .x`: no panel can scope it. `:root` stays only for what
-   exists once per page (body padding, the page controls). */
+   exists once per page (body padding, the page controls and what is placed
+   around them). Exception: the generated `highlight.css` (Pygments) keys code
+   colours to the page's theme; the gallery shows no highlighted code. */
 
 /* E-ink never animates, nor does anything under reduced motion; edge tap
    zones need margins clear of links. The motion token follows the nearest
    profile; the blanket stop below skips a normal-profile scope inside an
-   e-ink one (a gallery panel on an e-ink page). */
+   e-ink one (a gallery panel on an e-ink page). A browser without complex
+   `:not()` drops the blanket stop; transitions on the token still stop. */
 [data-profile="eink"] {
     --md-motion-duration: 0ms;
 }
