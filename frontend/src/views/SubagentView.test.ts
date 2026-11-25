@@ -121,6 +121,24 @@ describe("subagent transcripts", () => {
         expect(wrapper.get(".entry.assistant .model").text()).toBe("claude-haiku-5")
     })
 
+    it("gets the parent breadcrumb from summaries without downloading its transcript", async () => {
+        const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+            if (input === "/api/repos/alpha/sessions") return jsonResponse(200, {sessions: [
+                {session_id: "s-1", agent: "codex", title: "Wrong agent"},
+                {session_id: "other", agent: "claude", title: "Wrong session"},
+                {session_id: "s-1", agent: "claude", title: "Parent title"},
+            ]})
+            return jsonResponse(200, child)
+        })
+        const {wrapper} = await mountAt("/repos/alpha/sessions/claude/s-1/subagents/a1b2c3", fetchMock)
+        expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+            "/api/repos/alpha/sessions/claude/s-1/subagents/a1b2c3?meta=hidden",
+            "/api/repos/alpha/sessions",
+        ])
+        expect(wrapper.get('a[href="/repos/alpha/sessions/claude/s-1"]').text()).toBe("Parent title")
+        wrapper.unmount()
+    })
+
     it("goes back to the parent session", async () => {
         const {wrapper, router} = await mountAt(
             "/repos/alpha/sessions/claude/s-1/subagents/a1b2c3",

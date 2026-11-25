@@ -16,6 +16,7 @@ import type {
     RenderedEntry,
     RenderedSubagent,
     RenderedToolResult,
+    SessionList,
     TranscriptView,
 } from "../protocol"
 import {settings} from "../settings"
@@ -461,8 +462,10 @@ async function load() {
 onMounted(() => {
     void load()
     if (agentId.value !== null) {
-        const path = [prefix.value, "sessions", agent.value, sessionId.value].map(encodeURIComponent).join("/")
-        void apiFetch<TranscriptView>(`/api/repos/${path}?meta=hidden`).then(view => { parentTitle.value = view.title || "Untitled session" }).catch(() => {})
+        void apiFetch<SessionList>(`/api/repos/${encodeURIComponent(prefix.value)}/sessions`).then(view => {
+            const parent = view.sessions.find(session => session.agent === agent.value && session.session_id === sessionId.value)
+            if (parent) parentTitle.value = parent.title || "Untitled session"
+        }).catch(() => {})
     }
 })
 // Changing Agent context re-reads the transcript and resubscribes with the new mode.
