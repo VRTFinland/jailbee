@@ -34,7 +34,8 @@ def prepare(ctx: ActionContext, child: Node) -> Path | None:
     from jailbee.orchestration.store import BrokerStore, store_path
 
     ids = {
-        row.id for row in BrokerStore(store_path(ctx.root)).unacked(uuid)
+        row.id
+        for row in BrokerStore(store_path(ctx.root)).unacked(uuid)
         if row.type == "message" and row.kind_or_state == "idle" and row.from_name == child.short
     }
     pending: list[str] = []

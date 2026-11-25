@@ -305,9 +305,12 @@ def test_destroy_retries_idle_cleanup_after_io_failure(
     monkeypatch.setattr(BrokerStore, "ack_child_idle", real_ack)
     monkeypatch.setattr(outbox, "save_pending", real_save)
     if not automatic:
-        assert outbox.flush_pending(
-            rig.incus, tmp_path, rig.sender.full, uid=None, recipient_uuid="orch-uuid"
-        ) == 1
+        assert (
+            outbox.flush_pending(
+                rig.incus, tmp_path, rig.sender.full, uid=None, recipient_uuid="orch-uuid"
+            )
+            == 1
+        )
     # A later namesake's notices must survive a delayed cleanup retry.
     st.insert_item(
         "orch-uuid",

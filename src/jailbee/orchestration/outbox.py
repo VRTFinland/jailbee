@@ -205,7 +205,9 @@ def settle_child_idle(
 
     if not recipient_uuid:
         return
-    BrokerStore(store_path(root)).ack_child_idle(recipient_uuid, child, ids=ids, now=now.timestamp())
+    BrokerStore(store_path(root)).ack_child_idle(
+        recipient_uuid, child, ids=ids, now=now.timestamp()
+    )
     for path in pending_dir(root, recipient_full).glob("*.json"):
         if path.name not in pending_names or not _deliverable(path):
             continue
