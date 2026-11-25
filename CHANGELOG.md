@@ -409,6 +409,10 @@ before editing `## Unreleased`.
 
 ### Changed
 
+- Terminal dashboard prompt-channel confirmations use compact "No" / "Yes" rows
+  with a full-width selection highlight; destructive questions keep their red
+  frame and title without colouring "Yes"
+  ([#165](https://github.com/VRTFinland/jailbee/issues/165)).
 - Host-wide agent instructions start with a five-line JailBee preamble pointing
   to the container and child skills. Service, network and GitHub guidance lives
   in the container skill, including service descriptions, live host status and

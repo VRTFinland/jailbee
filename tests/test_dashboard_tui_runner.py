@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from textual.widgets import Button, Input
+from textual.widgets import Input, OptionList
 
 from jailbee.dashboard import model as dmodel
 from jailbee.dashboard import runner as drunner
@@ -200,9 +200,12 @@ def test_prompt_during_action_is_a_modal_and_the_answer_reaches_the_child(mocker
     spawn = Spawns([_prompt(default=True)])
 
     async def script(app, pilot):
-        await _until(pilot, lambda: isinstance(app.screen, pm.ConfirmModal), "the modal")
+        await _confirm_modal(pilot, app)
         assert app.session.terminal is app
-        await pilot.press("y")
+        choices = app.screen.query_one(OptionList)
+        assert [str(choices.get_option_at_index(i).prompt) for i in range(2)] == ["No", "Yes"]
+        assert choices.highlighted == 1
+        await pilot.press("up", "down", "enter")
         await _until(pilot, lambda: _finished(app), "the finished entry")
         assert isinstance(app.screen, pm.OutputScreen)  # merge prints: its output opens
         (entry,) = app.session.queue
@@ -337,14 +340,16 @@ def test_destructive_question_is_styled_and_defaults_to_no(mocker, tmp_path):
         await _confirm_modal(pilot, app)
         seen["styled"] = app.screen.has_class("destructive")
         seen["focus"] = app.focused
-        await pilot.press("enter")  # Enter on the preset focus
+        assert isinstance(app.focused, OptionList)
+        seen["highlighted"] = app.focused.highlighted
+        await pilot.press("enter")  # Enter on the preset highlight
         await _until(pilot, lambda: _finished(app), "the finished entry")
         await pilot.press("ctrl+c")
 
     _drive(mocker, tmp_path, spawn, script)
     assert seen["styled"]
-    assert isinstance(seen["focus"], Button)
-    assert seen["focus"].id == "no"
+    assert isinstance(seen["focus"], OptionList)
+    assert seen["highlighted"] == 0
     assert spawn.child.answers[0].value is False
 
 
