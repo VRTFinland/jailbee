@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from urllib.parse import urlsplit
 
-from playwright.sync_api import Locator, Page, expect
+from playwright.sync_api import Locator, Page, Position, expect
 
 from tests_e2e.flows import open_settings
 from tests_e2e.server import E2EServer
@@ -375,7 +375,7 @@ def _linked_row(page: Page, title: str) -> tuple[Locator, Locator]:
     return row, row.locator("a.list-row-link")
 
 
-def _over_secondary(row: Locator) -> dict[str, float]:
+def _over_secondary(row: Locator) -> Position:
     """A point of `row` over its secondary line, clear of the title."""
     box, line = row.bounding_box(), row.locator(".list-row-secondary").bounding_box()
     assert box and line
