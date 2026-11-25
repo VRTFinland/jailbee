@@ -43,6 +43,48 @@ async def _until(pilot: Any, condition: Callable[[], bool], what: str) -> None:
         await pilot.pause(0.02)
 
 
+async def _confirm_modal(pilot: Any, app: Any) -> None:
+    # push_screen makes the screen current before mount finishes. Do not act
+    # on it (or tear it down) until mount and its deferred focus have settled.
+    await _until(
+        pilot,
+        lambda: isinstance(app.screen, pm.ConfirmModal) and app.screen.is_mounted,
+        "the mounted modal",
+    )
+    await pilot.pause()
+
+
+def test_confirm_waits_for_mount_and_preset_focus(mocker, tmp_path):
+    """A current screen can still be mounting, with Yes temporarily focused."""
+    app = make_app(mocker, [_group(tmp_path)])
+
+    async def main():
+        mounting = asyncio.Event()
+        release = asyncio.Event()
+        mount = pm.ConfirmModal.on_mount
+
+        async def held_mount(modal):
+            mounting.set()
+            await release.wait()
+            mount(modal)
+
+        mocker.patch.object(pm.ConfirmModal, "on_mount", held_mount)
+        async with app.run_test() as pilot:
+            modal = pm.ConfirmModal(_prompt(default=False, destructive=True))
+            app.push_screen(modal)
+            await mounting.wait()
+            waiting = asyncio.create_task(_confirm_modal(pilot, app))
+            try:
+                await asyncio.sleep(0)
+                assert not waiting.done(), "a current modal is not necessarily ready"
+            finally:
+                release.set()
+                await waiting
+            assert app.focused is modal.query_one("#no", Button)
+
+    asyncio.run(asyncio.wait_for(main(), _RUN_SECONDS))
+
+
 def _drive(
     mocker: Any,
     tmp_path: Path,
@@ -227,13 +269,7 @@ def test_destructive_question_is_styled_and_defaults_to_no(mocker, tmp_path):
     seen: dict[str, Any] = {}
 
     async def script(app, pilot):
-        # The modal sets its preset focus on mount; under load the screen can be
-        # current a frame before that, so wait for the focus too.
-        await _until(
-            pilot,
-            lambda: isinstance(app.screen, pm.ConfirmModal) and app.focused is not None,
-            "the modal with its preset focus",
-        )
+        await _confirm_modal(pilot, app)
         seen["styled"] = app.screen.has_class("destructive")
         seen["focus"] = app.focused
         await pilot.press("enter")  # Enter on the preset focus
@@ -267,7 +303,7 @@ def test_quitting_with_a_question_pending_cancels_it_and_the_app_exits(mocker, t
     spawn = Spawns([_prompt()])
 
     async def script(app, pilot):
-        await _until(pilot, lambda: isinstance(app.screen, pm.ConfirmModal), "the modal")
+        await _confirm_modal(pilot, app)
         app._after("quit")  # what the quit key does
 
     app = _drive(mocker, tmp_path, spawn, script)  # wait_for: a hang fails the test
