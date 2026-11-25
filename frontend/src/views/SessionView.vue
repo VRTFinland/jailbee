@@ -18,6 +18,8 @@ import type {
     TranscriptView,
 } from "../protocol"
 import {settings} from "../settings"
+import {readPosition, writePosition} from "../readingPosition"
+import {readItem, writeItem} from "../storage"
 
 const header = ref<InstanceType<typeof TitleBar> | null>(null)
 // The sticky header's bottom edge: below an app banner, not just its height.
@@ -143,8 +145,26 @@ function measureVisibility() {
     answerAhead.value = rect.top >= readableBottom()
 }
 
+const positionStore = {getItem: readItem, setItem: writeItem}
+const positionKey = [prefix.value, agent.value, sessionId.value, ...(agentId.value === null ? [] : [agentId.value])]
+let positionTimer: ReturnType<typeof setTimeout> | undefined
+let positionReady = false
+
+function savePosition() {
+    if (!positionReady || !transcriptEl.value) return
+    measureVisibility()
+    const entry = Array.from(transcriptEl.value.querySelectorAll<HTMLElement>("[id^='entry-']"))
+        .find(el => el.getBoundingClientRect().top >= readableTop.value - 1)
+    writePosition(positionStore, positionKey, {entryId: entry ? entry.id.slice(6) : null, atEnd: atTranscriptEnd.value})
+}
+function schedulePosition() {
+    if (positionTimer !== undefined) return
+    positionTimer = setTimeout(() => { positionTimer = undefined; savePosition() }, 250)
+}
+
 function onScroll() {
     measureVisibility()
+    if (positionReady) schedulePosition()
     if (!programmaticScroll) {
         if (atTranscriptEnd.value) following.value = true
         else if (window.scrollY < lastScrollY) following.value = false
@@ -194,6 +214,7 @@ watch(eink, () => void nextTick(measureVisibility))
 let layoutObserver: ResizeObserver | null = null
 onMounted(() => {
     window.addEventListener("scroll", onScroll, {passive: true})
+    window.addEventListener("pagehide", savePosition)
     window.addEventListener("wheel", markScrollIntent, {passive: true})
     window.addEventListener("touchmove", markScrollIntent, {passive: true})
     window.addEventListener("pointerdown", markScrollIntent, {passive: true})
@@ -207,6 +228,9 @@ onMounted(() => {
     }
 })
 onBeforeUnmount(() => {
+    if (positionTimer !== undefined) clearTimeout(positionTimer)
+    savePosition()
+    window.removeEventListener("pagehide", savePosition)
     window.removeEventListener("scroll", onScroll)
     window.removeEventListener("wheel", markScrollIntent)
     window.removeEventListener("touchmove", markScrollIntent)
@@ -377,6 +401,22 @@ async function load() {
         startFollowing(view)
         await nextTick()
         pager.measure()
+        measureVisibility()
+        if (!positionReady) {
+            const remembered = readPosition(positionStore, positionKey)
+            const hash = route.hash ? route.hash.slice(1) : null
+            const targetId = hash ?? remembered?.entryId ?? null
+            const target = targetId ? document.getElementById(hash ? targetId : entryDomId(targetId)) : null
+            if (hash) {
+                if (target) scrollProgrammatically(() => eink.value ? pager.goToElement(target) : target.scrollIntoView({block: "start"}))
+            } else if (remembered?.atEnd && autoFollow.value) {
+                scrollToEnd()
+            } else if (remembered) {
+                if (target) scrollProgrammatically(() => eink.value ? pager.goToElement(target) : target.scrollIntoView({block: "start"}))
+                else window.scrollTo(0, 0)
+            }
+            positionReady = true
+        }
         measureVisibility()
         following.value = atTranscriptEnd.value
         lastScrollY = window.scrollY
