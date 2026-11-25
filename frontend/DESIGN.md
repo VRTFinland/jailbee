@@ -56,10 +56,10 @@ a component. The names are Material 3 roles under the `md` prefix.
 | Content on surfaces | `--md-on-surface`, `--md-on-surface-variant` | Text and icons; variant for secondary text. |
 | Outlines | `--md-outline`, `--md-outline-variant` | Strong and quiet borders, dividers. |
 | E-ink hairline | `--md-hairline` | A border only the e-ink theme draws (transparent in light and dark), where e-ink has no tints to tell surfaces apart. |
-| Scrim | `--md-scrim` | The dimming behind a modal (transparent in e-ink). |
+| Scrim | `--md-scrim` | The dimming behind a modal: transparent in the e-ink theme, and overlays in the e-ink profile drop it too. |
 | Primary | `--md-primary`, `--md-on-primary`, `--md-primary-container`, `--md-on-primary-container` | Accent, primary buttons, selection, notices. |
 | Error | `--md-error`, `--md-on-error`, `--md-error-container`, `--md-on-error-container` | Failures, danger buttons, field errors. |
-| Phase colours | `--md-phase-*`, `--md-on-phase-*` (booting, autostart, job, failed; each a colour, a `-container` and its `on-` pair) | The terminal dashboard's phase hues. Reach them through `StatusChip`. |
+| Phase colours | `--md-phase-*`, `--md-on-phase-*` (booting, autostart, job, failed: a colour, a `-container`, and `--md-on-phase-…-container` on it) | The terminal dashboard's phase hues. Reach them through `StatusChip`. |
 | Fonts | `--md-font-body`, `--md-font-mono` | Inter, and the platform monospace stack. |
 | Type scale | `--md-type-*` (`title`/`body`/`label` × `large`/`medium`/`small`, each `-size`, `-line-height`, `-weight`) | Every font size. In rem, so the body-size setting scales them. |
 | Icon sizes | `--md-icon-*` (`small`, `medium`, `large`) | Via `Icon`'s `size`. |
@@ -104,10 +104,11 @@ The theme (`light`, `dark`, `eink`) sets colours; the display profile
 the e-ink profile is valid.
 
 The e-ink theme is black on white: no greys for text, no tints, no state
-layers, `--md-hairline` borders, underlined links. Only the shape scale
-carries over. The e-ink profile never animates (`--md-motion-duration` is
-0ms), turns pages instead of scrolling, and has no shadows or dimming
-backdrops. Under `prefers-reduced-motion` nothing moves either; `base.css`
+layers, `--md-hairline` borders, underlined links. Shape, type, spacing and hit targets
+carry over unchanged. The e-ink profile never animates (`--md-motion-duration` is
+0ms), turns pages instead of scrolling, and has no dimming backdrops: the
+overlay primitives drop the scrim and draw a hairline border instead. No
+component draws a shadow in any theme. Under `prefers-reduced-motion` nothing moves either; `base.css`
 stops every transition.
 
 ### Scoping convention
