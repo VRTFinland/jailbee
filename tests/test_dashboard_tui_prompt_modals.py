@@ -78,6 +78,7 @@ def test_confirm_has_two_ordered_rows_and_enter_chooses_the_highlight(
         Prompt(1, "confirm", "Go on?", default=default, destructive=destructive), ["enter"]
     )
     assert _option_texts(host) == ["No", "Yes"]
+    # The run helper attaches its captured modal observations to the host.
     focused = host.shown["focused"]  # type: ignore[attr-defined]
     assert isinstance(focused, OptionList)
     assert focused.highlighted == highlighted
@@ -107,6 +108,11 @@ def test_confirm_navigation_moves_the_highlight_and_enter_answers(key):
             assert choices.highlighted == (1 if key == "up" else 0)
             await pilot.press(key)
             assert choices.highlighted == (0 if key == "up" else 1)
+            if key in ("tab", "shift+tab", "left", "right"):
+                await pilot.press(key)
+                assert choices.highlighted == 0
+                await pilot.press(key)
+                assert choices.highlighted == 1
             await pilot.press("enter")
             assert host.answers == [key != "up"]
 
@@ -168,6 +174,7 @@ def test_confirm_list_keeps_direct_answers_cancellation_and_question_context(key
     )
     answer, host = run(prompt, [key])
     assert _option_texts(host) == ["No", "Yes"]
+    # The run helper attaches the text rendered before the answer to the host.
     texts = host.shown["texts"]  # type: ignore[attr-defined]
     for text in (
         "Go on?",
