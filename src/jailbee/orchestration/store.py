@@ -607,15 +607,14 @@ class BrokerStore:
             ).fetchone()
             return row is not None
 
-    def ack_child_idle(self, uuid: str, child: str, *, now: float) -> int:
-        """Settle only this child's obsolete waiting-for-input notices."""
+    def ack_child_idle(self, uuid: str, child: str, *, ids: frozenset[str], now: float) -> None:
+        """Settle the pre-destroy snapshot, even if a parked item arrived later."""
         with self._tx() as con:
-            result = con.execute(
+            con.executemany(
                 "UPDATE items SET acked_at=? WHERE recipient_uuid=? AND acked_at IS NULL "
-                "AND type='message' AND kind_or_state='idle' AND from_name=? AND created_at<=?",
-                (now, uuid, child, now),
+                "AND type='message' AND kind_or_state='idle' AND from_name=? AND id=?",
+                ((now, uuid, child, ident) for ident in ids),
             )
-            return result.rowcount
 
     def ack_ok_statuses(self, uuid: str, *, now: float) -> int:
         """Acknowledge this recipient's unread success statuses in one transaction."""

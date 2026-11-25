@@ -267,7 +267,7 @@ def test_destroy_retries_idle_cleanup_after_io_failure(
             "kind": "idle",
             "from": "c1",
         },
-        now=1,
+        now=rig.ctx().now.timestamp() + 0.5,
     )
     directory = pending_dir(tmp_path, rig.sender.full)
     directory.mkdir(parents=True)
@@ -304,6 +304,10 @@ def test_destroy_retries_idle_cleanup_after_io_failure(
         assert not outbox.load_pending(path).acked
     monkeypatch.setattr(BrokerStore, "ack_child_idle", real_ack)
     monkeypatch.setattr(outbox, "save_pending", real_save)
+    if not automatic:
+        assert outbox.flush_pending(
+            rig.incus, tmp_path, rig.sender.full, uid=None, recipient_uuid="orch-uuid"
+        ) == 1
     # A later namesake's notices must survive a delayed cleanup retry.
     st.insert_item(
         "orch-uuid",
@@ -333,7 +337,7 @@ def test_destroy_retries_idle_cleanup_after_io_failure(
     )
     assert [item.id for item in st.unacked("orch-uuid")] == ["new-idle"]
     if not automatic:
-        assert outbox.load_pending(path).acked
+        assert st.get("orch-uuid", "parked-idle").acked_at is not None
     seams["destroy"].assert_called_once()
 
 

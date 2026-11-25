@@ -198,13 +198,14 @@ def settle_child_idle(
     recipient_uuid: str | None,
     now: datetime,
     pending_names: frozenset[str],
+    ids: frozenset[str],
 ) -> None:
     """A destroyed child can no longer act on its waiting-for-input notices."""
     from jailbee.orchestration.store import BrokerStore, store_path
 
     if not recipient_uuid:
         return
-    BrokerStore(store_path(root)).ack_child_idle(recipient_uuid, child, now=now.timestamp())
+    BrokerStore(store_path(root)).ack_child_idle(recipient_uuid, child, ids=ids, now=now.timestamp())
     for path in pending_dir(root, recipient_full).glob("*.json"):
         if path.name not in pending_names or not _deliverable(path):
             continue
