@@ -26,13 +26,18 @@ install `fonts-dejavu-core` locally if missing (the web workflow installs it).
 The fixed bottom reading guard is hidden during capture so it cannot obscure
 a stripe of a tall panel. No application stylesheet or CSP is changed.
 
-Pillow compares RGB channels with two small error budgets: at most 20
-pixels per group image may differ by more than 24/255 in any channel, and
-mean absolute channel error must stay at or below 0.25/255. Dimensions must
-match exactly. The first budget is an absolute count, not a fraction, so a
-single recoloured 16px icon (about 36 pixels) or chip (about a thousand)
-fails however large its group; it still allows a few stray text-edge
-rasterisation differences between Chrome versions. The mean cap also catches broad, low-amplitude colour drift.
+Pillow compares each pixel with the colour range its 3×3 neighbourhood spans
+in the other image, both ways round, in R, G, B and the colour differences
+R−G, G−B and B−R. An unrelated change elsewhere on the page can move a group
+by a fraction of a pixel and re-shade its curved edges; such a pixel is a
+blend of colours beside it and stays in range. A recoloured chip or icon, or
+a thin stroke that appears or vanishes, does not. Two budgets apply to how far
+pixels fall outside that range: at most 20 pixels per group image by more than
+24/255, and a mean of at most 0.25/255. Dimensions must match exactly. The
+first budget is an absolute count, not a fraction, so a single recoloured 16px
+icon (about 36 pixels) or chip (about a thousand) fails however large its
+group. The mean cap catches broad, low-amplitude colour drift (a uniform shift
+is out of range on every flat area).
 Do not loosen these limits merely to accept an intended visual change.
 
 For an intentional design change:

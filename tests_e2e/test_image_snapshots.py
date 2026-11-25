@@ -6,7 +6,7 @@ from io import BytesIO
 from pathlib import Path
 
 import pytest
-from PIL import Image
+from PIL import Image, ImageChops
 
 from tests_e2e.image_snapshots import assert_image_matches
 
@@ -120,6 +120,77 @@ def test_changed_pixel_budget_is_absolute_whatever_the_image_size(
     else:
         with pytest.raises(AssertionError, match="Gallery differs"):
             assert_image_matches(actual, reference=reference, output=output)
+
+
+def antialiased_ring(offset: float) -> bytes:
+    """A dashed-edge-like antialiased ring, drawn at a subpixel offset."""
+    from PIL import ImageDraw
+
+    scale = 8
+    big = Image.new("RGB", (60 * scale, 40 * scale), "white")
+    shift = round(offset * scale)
+    ImageDraw.Draw(big).ellipse(
+        (10 * scale + shift, 6 * scale + shift, 50 * scale + shift, 34 * scale + shift),
+        outline="black",
+        width=2 * scale,
+    )
+    stream = BytesIO()
+    big.resize((60, 40), Image.Resampling.BOX).save(stream, format="PNG")
+    return stream.getvalue()
+
+
+def test_a_subpixel_shift_of_an_edge_is_not_a_change(tmp_path: Path) -> None:
+    """An unrelated change elsewhere on the page can move a group by a fraction
+    of a pixel, re-shading every curved edge; a pixel whose value the reference
+    has right beside it is not counted as changed."""
+    reference, output = tmp_path / "ring.png", tmp_path / "evidence"
+    reference.write_bytes(antialiased_ring(0))
+    shifted = antialiased_ring(0.25)
+    with Image.open(BytesIO(shifted)) as a, Image.open(reference) as b:
+        diff = ImageChops.difference(a.convert("RGB"), b.convert("RGB")).convert("L")
+        assert sum(diff.histogram()[25:]) > 20  # the plain per-pixel budget would fail
+    assert_image_matches(shifted, reference=reference, output=output)
+
+
+def test_a_recoloured_stroke_is_a_change_even_beside_both_colours(tmp_path: Path) -> None:
+    """Black ink on white turned blue: every neighbour is black or white, none
+    blue, so the neighbourhood rule still counts each stroke pixel."""
+    reference, output = tmp_path / "ring.png", tmp_path / "evidence"
+    reference.write_bytes(antialiased_ring(0))
+    with Image.open(BytesIO(antialiased_ring(0))) as image:
+        recoloured = image.convert("RGB")
+    pixels = recoloured.load()
+    assert pixels is not None
+    for x in range(recoloured.width):
+        for y in range(recoloured.height):
+            if pixels[x, y] == (0, 0, 0):
+                pixels[x, y] = (0, 0, 255)
+    stream = BytesIO()
+    recoloured.save(stream, format="PNG")
+    with pytest.raises(AssertionError, match="Gallery differs"):
+        assert_image_matches(stream.getvalue(), reference=reference, output=output)
+
+
+@pytest.mark.parametrize("vanishes", [True, False], ids=["vanishes", "appears"])
+def test_a_thin_stroke_vanishing_or_appearing_is_a_change(tmp_path: Path, vanishes: bool) -> None:
+    """A 2px icon stroke drawn in its background colour (black on black): each
+    stroke pixel has background beside it, so only comparing both ways round
+    sees it go, or come."""
+    from PIL import ImageDraw
+
+    with_stroke = Image.new("RGB", (40, 40), "black")
+    ImageDraw.Draw(with_stroke).rectangle((10, 19, 29, 20), fill="white")
+    ImageDraw.Draw(with_stroke).rectangle((19, 10, 20, 29), fill="white")
+    images = []
+    for image in (with_stroke, Image.new("RGB", (40, 40), "black")):
+        stream = BytesIO()
+        image.save(stream, format="PNG")
+        images.append(stream.getvalue())
+    reference_bytes, actual = images if vanishes else images[::-1]
+    reference, output = tmp_path / "plus.png", tmp_path / "evidence"
+    reference.write_bytes(reference_bytes)
+    with pytest.raises(AssertionError, match="Gallery differs"):
+        assert_image_matches(actual, reference=reference, output=output)
 
 
 def test_missing_reference_fails_without_creating_it(tmp_path: Path) -> None:

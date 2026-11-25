@@ -5,13 +5,17 @@ from __future__ import annotations
 from io import BytesIO
 from pathlib import Path
 
-from PIL import Image, ImageChops, ImageStat
+from PIL import Image, ImageChops, ImageFilter, ImageMath, ImageStat
 
 # Chrome/FreeType versions can shade text edges differently. Ignore small
 # per-channel differences, but never allow a layout shift or a changed swatch.
 # The changed-pixel budget is a count, not a fraction: one recoloured chip
 # (about a thousand pixels) or small 16px icon (about 36) fails in a large
-# capture as in a small one.
+# capture as in a small one. A change elsewhere on the page can move a group
+# by a fraction of a pixel and re-shade its curved edges, so both budgets
+# measure how far a pixel lies outside the colour range of its reference
+# neighbourhood (`_outside_neighbourhood`). A uniform drift is outside it on
+# every flat area, which the mean cap catches.
 _CHANNEL_TOLERANCE = 24
 _MAX_CHANGED_PIXELS = 20
 _MAX_MEAN_DIFFERENCE = 0.25
@@ -67,6 +71,54 @@ def assert_image_matches(
     )
 
 
+def _projections(image: Image.Image) -> list[Image.Image]:
+    """R, G, B and the halved colour differences R-G, G-B, B-R as L images.
+
+    Every one is linear in the colour, so a blend of two colours lies between
+    them in each; the differences tell hues apart that R, G and B ranges do not
+    (blue is within black-to-white in every channel, not in R-B).
+    """
+    red, green, blue = image.split()
+
+    def half_difference(a: Image.Image, b: Image.Image) -> Image.Image:
+        result = ImageMath.lambda_eval(
+            lambda args: args["convert"]((args["a"] - args["b"] + 255) / 2, "L"), a=a, b=b
+        )
+        assert isinstance(result, Image.Image)
+        return result
+
+    return [
+        red,
+        green,
+        blue,
+        half_difference(red, green),
+        half_difference(green, blue),
+        half_difference(blue, red),
+    ]
+
+
+def _outside_neighbourhood(actual: Image.Image, reference: Image.Image) -> Image.Image:
+    """Per pixel, how far its colour lies outside the range the reference's 3x3
+    neighbourhood spans, in the worst projection (colour differences doubled
+    back to channel units).
+
+    An edge re-shaded by a subpixel shift is a blend of colours beside it, so
+    within that range; a recoloured stroke, chip or icon is not.
+    """
+    worst = Image.new("L", actual.size, 0)
+    pairs = zip(_projections(actual), _projections(reference), strict=True)
+    for index, (value, around) in enumerate(pairs):
+        low = around.filter(ImageFilter.MinFilter(3))
+        high = around.filter(ImageFilter.MaxFilter(3))
+        excess = ImageChops.lighter(
+            ImageChops.subtract(low, value), ImageChops.subtract(value, high)
+        )
+        if index >= 3:
+            excess = ImageChops.add(excess, excess)
+        worst = ImageChops.lighter(worst, excess)
+    return worst
+
+
 def _difference(actual: bytes, reference: Path) -> tuple[str, Image.Image] | None:
     """None when `actual` matches `reference` within budget, else why and the diff."""
     with Image.open(BytesIO(actual)) as captured, Image.open(reference) as expected:
@@ -80,11 +132,14 @@ def _difference(actual: bytes, reference: Path) -> tuple[str, Image.Image] | Non
     expected_canvas = Image.new("RGB", canvas)
     expected_canvas.paste(baseline)
     diff = ImageChops.difference(actual_canvas, expected_canvas)
-    red, green, blue = diff.split()
-    largest = ImageChops.lighter(ImageChops.lighter(red, green), blue)
-    histogram = largest.histogram()
-    changed = sum(histogram[_CHANNEL_TOLERANCE + 1 :])
-    mean = sum(ImageStat.Stat(diff).mean) / 3
+    # Both ways round: a thin stroke that appears lies outside the reference's
+    # range; one that vanishes leaves the reference outside the actual's.
+    outside = ImageChops.lighter(
+        _outside_neighbourhood(actual_canvas, expected_canvas),
+        _outside_neighbourhood(expected_canvas, actual_canvas),
+    )
+    changed = sum(outside.histogram()[_CHANNEL_TOLERANCE + 1 :])
+    mean = ImageStat.Stat(outside).mean[0]
     if (
         image.size == baseline.size
         and changed <= _MAX_CHANGED_PIXELS
