@@ -232,6 +232,10 @@ def _settle_destroys_locked(ctx: ActionContext) -> None:
             except Exception as exc:
                 body = f"child {child.short} could not be destroyed: {exc}"
             else:
+                outbox.settle_child_idle(
+                    ctx.root, ctx.sender.full, child.short,
+                    recipient_uuid=ctx.sender.config.get("volatile.uuid"), now=ctx.now,
+                )
                 purge_pending(ctx.root, child.full)
                 if isinstance(ctx.nodes, dict):
                     ctx.nodes.pop(child.full, None)

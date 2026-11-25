@@ -144,6 +144,90 @@ def test_stop_no_longer_records_an_outbox_count(tmp_path, seams, monkeypatch):
     seams["stop"].assert_called_once()
 
 
+@pytest.mark.parametrize("automatic", [False, True])
+@pytest.mark.parametrize("fails", [False, True])
+def test_destroy_settles_only_its_childs_idle_notices(tmp_path, seams, automatic, fails):
+    from jailbee.orchestration import finishing
+    from jailbee.orchestration.store import BrokerStore, store_path
+
+    rig = Rig(tmp_path, config={
+        labels.LAST_IMPORT: "aaa",
+        labels.STOPPED_HEAD: "aaa",
+        labels.PENDING_DESTROY: "aaa",
+    })
+    rig.sender.config["volatile.uuid"] = "orch-uuid"
+    rig.incus.list_containers.return_value = [
+        {"name": rig.child.full, "config": rig.child.config}
+    ]
+    st = BrokerStore(store_path(tmp_path))
+    for kind in ("idle", "note", "blocked", "done", "question"):
+        st.insert_item("orch-uuid", rig.sender.full, {
+            "id": kind, "type": "message", "kind": kind, "from": "c1",
+        }, now=1)
+    st.insert_item("orch-uuid", rig.sender.full, {
+        "id": "other-child", "type": "message", "kind": "idle", "from": "c2",
+    }, now=1)
+    st.insert_item("other-uuid", "proj-other", {
+        "id": "idle", "type": "message", "kind": "idle", "from": "c1",
+    }, now=1)
+    st.insert_item("orch-uuid", rig.sender.full, {
+        "id": "status", "type": "status", "state": "done", "from": "c1",
+    }, now=1)
+    st.insert_item("orch-uuid", rig.sender.full, {
+        "id": "already-read", "type": "message", "kind": "idle", "from": "c1",
+    }, now=1)
+    st.ack("orch-uuid", "already-read", now=2)
+    if fails:
+        seams["destroy"].side_effect = RuntimeError("busy")
+    if automatic:
+        finishing.settle_destroys(rig.ctx())
+    else:
+        outcome = actions.handle_destroy(rig.ctx(), _destroy())
+        assert outcome.state == ("refused" if fails else "done")
+    expected = ["note", "blocked", "done", "question", "other-child", "status"]
+    unread = st.unacked("orch-uuid")
+    if automatic and fails:
+        assert unread[-1].item["kind"] == "note"
+        assert "could not be destroyed: busy" in unread[-1].item["body"]
+        unread = unread[:-1]
+    assert [item.id for item in unread] == (["idle", *expected] if fails else expected)
+    assert [item.id for item in st.unacked("other-uuid")] == ["idle"]
+    assert st.get("orch-uuid", "already-read").acked_at == 2
+    assert st.get("orch-uuid", "idle").acked_at == (
+        None if fails else rig.ctx().now.timestamp()
+    )
+
+
+def test_destroy_settles_parked_idle_before_it_can_reach_the_inbox(tmp_path, seams):
+    from jailbee.orchestration import outbox
+    from jailbee.orchestration.store import BrokerStore, store_path
+    from jailbee.orchestration.state import pending_dir
+
+    rig = Rig(tmp_path)
+    rig.sender.config["volatile.uuid"] = "orch-uuid"
+    directory = pending_dir(tmp_path, rig.sender.full)
+    directory.mkdir(parents=True)
+    for ident, kind, sender, uuid in (
+        ("idle", "idle", "c1", "orch-uuid"),
+        ("question", "question", "c1", "orch-uuid"),
+        ("other-child", "idle", "c2", "orch-uuid"),
+        ("old-orch", "idle", "c1", "old-uuid"),
+    ):
+        outbox.save_pending(directory / f"{ident}.json", {
+            "id": ident, "type": "message", "kind": kind, "from": sender,
+        }, recipient_uuid=uuid)
+    assert actions.handle_destroy(rig.ctx(), _destroy(force=True)).state == "done"
+    assert outbox.load_pending(directory / "idle.json").acked
+    for ident in ("question", "other-child", "old-orch"):
+        assert not outbox.load_pending(directory / f"{ident}.json").acked
+    assert outbox.flush_pending(
+        rig.incus, tmp_path, rig.sender.full, uid=None, recipient_uuid="orch-uuid"
+    ) == 3
+    st = BrokerStore(store_path(tmp_path))
+    assert {item.id for item in st.unacked("orch-uuid")} == {"question", "other-child"}
+    assert st.get("orch-uuid", "idle").acked_at is not None
+
+
 def test_force_destroy_skips_pending_outbox_guard(tmp_path, seams, monkeypatch):
     from jailbee.orchestration import child_outbox
 

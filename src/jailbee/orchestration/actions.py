@@ -1538,6 +1538,12 @@ def _handle_destroy_locked(ctx: ActionContext, m: Manifest) -> Outcome:
         lifecycle.destroy_container(ctx.cfg, ctx.incus, child.full, force=True)
     except Exception as e:
         return refused(f"child `{child.short}` could not be destroyed: {e}")
+    from jailbee.orchestration.outbox import settle_child_idle
+
+    settle_child_idle(
+        ctx.root, ctx.sender.full, child.short,
+        recipient_uuid=ctx.sender.config.get("volatile.uuid"), now=ctx.now,
+    )
     # Parked messages were for this instance; a recreated namesake must not get them.
     purge_pending(ctx.root, child.full)
     from jailbee.orchestration.watch import cancel

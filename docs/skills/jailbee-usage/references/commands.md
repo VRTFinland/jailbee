@@ -88,7 +88,10 @@ or `--kind question` when a result is needed.
 
 For interactive Claude Code, the managed JailBee plugin automatically runs
 `jailbee inbox follow`, a non-acknowledging notification stream; read announced
-items with `jailbee inbox read ID`. Its handlers are
+items with `jailbee inbox read ID`. Each id is announced once per follower process,
+even after reconnects; a new follower announces unread items again. Successful
+broker destruction of a child settles only its obsolete `idle` notices.
+Its handlers are
 `jailbee inbox hook session-start`, `jailbee inbox hook session-end` and
 `jailbee inbox hook stop`. Start/end hooks maintain the live Claude session
 registry for normal and unclean-stop recovery; clean-stop capture checks known
