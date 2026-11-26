@@ -39,6 +39,14 @@ describe('question sets', () => {
     expect(parseQuestionSet('❓ **Q1** - **Title**: Text\u0000bad')).toBeNull()
   })
 
+  it('rejects malformed option lines but permits ordinary prose', () => {
+    const prefix = '❓ **Q1** - **Pick**: Text\na) First\n'
+    for (const option of ['b)', 'b)   ', 'b)Second', 'B) Second']) {
+      expect(parseQuestionSet(`${prefix}${option}\n➡️ a: recommended`)).toBeNull()
+    }
+    expect(parseQuestionSet('❓ **Q2** - **Explain**: Text\nThis is ordinary prose.')).not.toBeNull()
+  })
+
   it('ignores fenced examples and rejects malformed or ambiguous blocks', () => {
     expect(parseQuestionSet('```md\n❓ **Q1** - **Example**: Sample\n```')).toBeNull()
     expect(parseQuestionSet('❓ **Q1** - **Valid**: Text\n❓ Q2: broken')).toBeNull()

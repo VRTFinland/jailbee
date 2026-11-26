@@ -39,8 +39,10 @@ export function parseQuestionSet(text: string): QuestionSet | null {
       const option = line.match(/^([a-z])\)\s+(.+)$/)
       const recommendation = line.match(/^➡️\s*(.*)$/)
       if (option) {
-        if (current.recommendation !== null || current.options.some(o => o.letter === option[1])) { invalid = true; break }
+        if (!option[2]!.trim() || current.recommendation !== null || current.options.some(o => o.letter === option[1])) { invalid = true; break }
         current.options.push({ letter: option[1]!, text: option[2]! })
+      } else if (/^[A-Za-z]\)/.test(line)) {
+        invalid = true; break
       } else if (recommendation) {
         if (current.recommendation !== null || !recommendation[1]!.trim()) { invalid = true; break }
         const letter = recommendation[1]!.match(/^([a-z])\s*:/)
