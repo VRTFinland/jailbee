@@ -133,7 +133,7 @@ sessions cannot be messaged.
 
 The transcript reader's **Message agent** field sends multi-line text to the
 session being read, using the same boundary as
-[`jailbee agent say`](commands.md#agent-runner). The message is pasted into that
+[`jailbee agent say`](commands.md). The message is pasted into that
 Claude session's tmux pane as an ordinary user turn, even while Claude is working.
 There is no web marker in the transcript. Only Claude is supported, including
 `claude-jb`; subagent transcripts cannot be messaged.
