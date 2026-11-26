@@ -75,7 +75,8 @@ from jailbee.update_check import UpdateNotice
 # answers and request-scoped action environment. 49 adds action environment
 # transport fields. 50 adds action completion timestamps. 51 adds connection
 # transport identity. 52 adds cross-version activity and drain messages.
-PROTOCOL = 52
+# 53 adds atomic action batches.
+PROTOCOL = 53
 
 # Allows escaped output tails and ordinary snapshots while bounding incoming lines.
 MAX_WIRE_LINE_BYTES = 16 * 1024 * 1024
@@ -181,6 +182,11 @@ class RunAction:
 
 
 @dataclass(frozen=True)
+class RunActionBatch:
+    requests: list[RunAction]
+
+
+@dataclass(frozen=True)
 class ActionEntry:
     entry_id: int
     argv: list[str]
@@ -280,6 +286,7 @@ Message = (
     | Snapshot
     | GatherError
     | RunAction
+    | RunActionBatch
     | ActionEntry
     | ActionSyncStart
     | ActionSyncEnd
@@ -295,6 +302,7 @@ Message = (
 
 _NAMES: dict[type[Any], str] = {
     RunAction: "run_action",
+    RunActionBatch: "run_action_batch",
     ActionEntry: "action_entry",
     ActionSyncStart: "action_sync_start",
     ActionSyncEnd: "action_sync_end",

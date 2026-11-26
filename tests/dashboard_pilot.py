@@ -230,6 +230,15 @@ class FakeStateClient:
     def action_entries(self):  # type: ignore[no-untyped-def]
         return self._action_entries.copy()
 
+    def run_action_batch(self, batch):  # type: ignore[no-untyped-def]
+        def run():
+            for request in batch.requests:
+                self.run_action(request)
+                while not self._action_entries[request.entry_id].finished:
+                    threading.Event().wait(0.01)
+
+        threading.Thread(target=run, daemon=True).start()
+
     def release_test_questions(self):  # type: ignore[no-untyped-def]
         for event, answer in list(self._question_waiters.values()):
             answer.append(None)

@@ -181,24 +181,24 @@ def test_batch_resumes_after_disconnect_without_resubmitting_accepted_action(tmp
         def action_entries(self):
             return self.entries.copy()
 
-        def run_action(self, request):
-            self.sent.append(request.entry_id)
-            self.entries[request.entry_id] = ActionEntry(
-                request.entry_id,
-                request.argv,
-                request.cwd,
-                request.target,
-                False,
-                request.origin,
-                request.transport,
-                request.repo_root,
-                request.prefix,
-                finished=True,
-                status=0,
-                output="ok",
-            )
-            if len(self.sent) == 1:
-                raise BrokenPipeError("ambiguous send")
+        def run_action_batch(self, batch):
+            for request in batch.requests:
+                self.sent.append(request.entry_id)
+                self.entries[request.entry_id] = ActionEntry(
+                    request.entry_id,
+                    request.argv,
+                    request.cwd,
+                    request.target,
+                    False,
+                    request.origin,
+                    request.transport,
+                    request.repo_root,
+                    request.prefix,
+                    finished=True,
+                    status=0,
+                    output="ok",
+                )
+            raise BrokenPipeError("ambiguous send")
 
     class Progress:
         def entry_id(self, index):
@@ -288,16 +288,15 @@ def test_real_service_replays_accepted_action_and_continues_batch(runtime_dir, t
         def __getattr__(self, name):
             return getattr(client, name)
 
-        def run_action(self, request):
-            client.run_action(request)
-            if request.entry_id == 101:
-                assert started.wait(3)
-                generation = client.action_connection()
-                client._sock.shutdown(socket.SHUT_RDWR)
-                _until(lambda: client.action_connection() not in (None, generation))
-                assert 101 in client.action_entries()
-                release.set()
-                raise BrokenPipeError("send outcome unknown")
+        def run_action_batch(self, request):
+            client.run_action_batch(request)
+            assert started.wait(3)
+            generation = client.action_connection()
+            client._sock.shutdown(socket.SHUT_RDWR)
+            _until(lambda: client.action_connection() not in (None, generation))
+            assert 101 in client.action_entries()
+            release.set()
+            raise BrokenPipeError("send outcome unknown")
 
     class Progress:
         def entry_id(self, index):

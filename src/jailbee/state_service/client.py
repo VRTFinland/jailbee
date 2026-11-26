@@ -48,6 +48,7 @@ from jailbee.state_service.protocol import (
     ProtocolError,
     Refresh,
     RunAction,
+    RunActionBatch,
     ServiceActivity,
     Shutdown,
     Snapshot,
@@ -228,6 +229,13 @@ class StateClient:
 
     def run_action(self, request: RunAction) -> None:
         """Send an action request; raise when disconnected instead of dropping it."""
+        with self._lock:
+            if self._sock is None:
+                raise StateServiceUnavailable("state service disconnected")
+            self._sock.sendall(encode(request))
+
+    def run_action_batch(self, request: RunActionBatch) -> None:
+        """Submit the complete batch in one wire message."""
         with self._lock:
             if self._sock is None:
                 raise StateServiceUnavailable("state service disconnected")

@@ -15,7 +15,7 @@ from jailbee.dashboard.notifications import NotificationQueue
 from jailbee.dashboard.runner import ActionOutcome, ActionRun, RunProgress, RunResult, _TailBuffer
 from jailbee.state_service import StateServiceUnavailable
 from jailbee.state_service.client import DISCONNECTED
-from jailbee.state_service.protocol import ActionEntry, RunAction
+from jailbee.state_service.protocol import ActionEntry, RunAction, RunActionBatch
 
 POLL_SECONDS = 0.05
 RECONNECT_TIMEOUT_SECONDS = 30.0
@@ -44,6 +44,8 @@ class ActionClient(Protocol):
     def excluded_prefixes(self) -> Sequence[str]: ...
 
     def run_action(self, request: RunAction) -> None: ...
+
+    def run_action_batch(self, request: RunActionBatch) -> None: ...
 
     def action_entries(self) -> dict[int, ActionEntry]: ...
 
@@ -74,6 +76,7 @@ def run_actions(
     outcome_text = _TailBuffer()
     outputs: list[str] = []
     results: list[RunResult] = []
+    requests: list[RunAction] = []
     for index, item in enumerate(runs):
         entry_id = progress.entry_id(index)
         root = str(item.cwd.resolve())
@@ -103,12 +106,16 @@ def run_actions(
             excluded_prefixes=list(client.excluded_prefixes),
             environment=dict(os.environ),
         )
-        if entry_id in client.action_entries():
+        requests.append(request)
+    batch_sent = False
+    for index, request in enumerate(requests):
+        entry_id = request.entry_id
+        if entry_id in client.action_entries() and not batch_sent:
             results.append(RunResult(error="invalid or duplicate action id"))
             outputs.append("")
             break
         last_output = ""
-        sent = False
+        sent = batch_sent
         sent_generation: int | None = None
         acknowledged = False
         uncertain_generation: int | None = None
@@ -120,6 +127,8 @@ def run_actions(
             if snapshot is not None:
                 acknowledged = True
                 sent = True
+                if len(requests) > 1:
+                    batch_sent = True
                 uncertain_generation = None
             elif rejection is not None:
                 results.append(RunResult(refused=rejection))
@@ -145,11 +154,15 @@ def run_actions(
                 outputs.append(last_output)
                 outcome_text.append(last_output)
                 return ActionOutcome(results, outcome_text.text(), outputs)
-            if sent and not acknowledged and sent_generation != generation:
+            if sent and not acknowledged and sent_generation != generation and not batch_sent:
                 sent = False
             if not sent:
                 try:
-                    client.run_action(request)
+                    if len(requests) == 1:
+                        client.run_action(request)
+                    else:
+                        client.run_action_batch(RunActionBatch(requests))
+                        batch_sent = True
                     sent = True
                     sent_generation = generation
                 except (OSError, StateServiceUnavailable):
