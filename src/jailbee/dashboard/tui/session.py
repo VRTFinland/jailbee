@@ -523,6 +523,13 @@ class _EntryProgress:
     def output(self, index: int, chunk: str) -> None:
         self._session._entry_output(self._ids[index], chunk)
 
+    def replace_output(self, index: int, text: str) -> None:
+        entry_id = self._ids[index]
+        self._session.queue.replace_output(entry_id, text)
+        self._session.queue_changed()
+        if entry_id in (self._session._following, self._session._modal_entry):
+            self._session.terminal.update_output(text)
+
     def question(self, index: int, asking: bool) -> None:
         self._session._entry_question(self._ids[index], asking)
 
@@ -717,7 +724,13 @@ class DashboardSession:
                     "jailbee " + " ".join(item.argv),
                     item.target,
                     state=(
-                        "running" if not item.finished else "done" if item.status == 0 else "failed"
+                        "interrupted"
+                        if item.state == "interrupted"
+                        else "running"
+                        if not item.finished
+                        else "done"
+                        if item.status == 0
+                        else "failed"
                     ),
                     status=item.status,
                     output=item.output,

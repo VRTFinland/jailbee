@@ -1512,3 +1512,39 @@ def test_pilot_interrupted_entry_is_drawn_as_failure(mocker, tmp_path):
             assert app.frame.native_box is not None
 
     asyncio.run(main())
+
+
+def test_pilot_replays_interrupted_action_in_failure_colour(mocker, tmp_path):
+    import asyncio
+
+    from jailbee.state_service.protocol import ActionEntry
+    from tests.dashboard_pilot import make_app
+
+    app = make_app(mocker, [_pilot_group(tmp_path)])
+    app.session.client.action_entries = lambda: {
+        123: ActionEntry(
+            123,
+            ["doctor"],
+            str(tmp_path),
+            "alpha",
+            False,
+            "origin",
+            "none",
+            str(tmp_path),
+            "repo",
+            finished=True,
+            state="interrupted",
+        )
+    }
+
+    async def main():
+        async with app.run_test(size=(100, 25)) as pilot:
+            app.session._sync_shared_actions()
+            await pilot.press("Q")
+            await pilot.pause()
+            entry = app.session.queue_picker().entries[0]
+            assert "interrupted" in entry.label
+            assert entry.tone == "error"
+            assert app.session.queue.counts().failed == 1
+
+    asyncio.run(main())

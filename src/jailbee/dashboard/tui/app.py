@@ -121,6 +121,7 @@ class _OnAppThread:
         self._post = post
         self._lock = threading.Lock()
         self._pending: list[tuple[int, str]] = []
+        self._replacements: dict[int, str] = {}
         self._scheduled = False
 
     def entry_id(self, index: int) -> int:
@@ -138,12 +139,28 @@ class _OnAppThread:
         """Hand the pending output to the inner progress, one call per run; app thread only."""
         with self._lock:
             pending, self._pending = self._pending, []
+            replacements, self._replacements = self._replacements, {}
             self._scheduled = False
+        replace_output = getattr(self._inner, "replace_output", None)
+        for index, text in replacements.items():
+            if replace_output is not None:
+                replace_output(index, text)
+            else:
+                self._inner.output(index, text)
         merged: dict[int, str] = {}
         for index, chunk in pending:
             merged[index] = merged.get(index, "") + chunk
         for index, text in merged.items():
             self._inner.output(index, text)
+
+    def replace_output(self, index: int, text: str) -> None:
+        """Coalesce authoritative tails while the UI is suspended or busy."""
+        with self._lock:
+            self._replacements[index] = text
+            if self._scheduled:
+                return
+            self._scheduled = True
+        self._post(self.drain)
 
     def question(self, index: int, asking: bool) -> None:
         def ask() -> None:

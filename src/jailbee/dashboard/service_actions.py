@@ -131,7 +131,11 @@ def run_actions(
                 chunk = text
             if chunk:
                 outcome_text.append(chunk)
-                progress.output(index, chunk)
+                replace_output = getattr(progress, "replace_output", None)
+                if replace_output is not None:
+                    replace_output(index, text)
+                else:
+                    progress.output(index, chunk)
                 if on_output is not None:
                     on_output(index, chunk)
             last_output = text

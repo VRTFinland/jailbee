@@ -4,7 +4,10 @@ import asyncio
 import threading
 from concurrent.futures import ThreadPoolExecutor
 
-from jailbee.dashboard.runner import ActionRun
+from dataclasses import replace
+
+from jailbee.dashboard.model import RepoGroup
+from jailbee.dashboard.runner import OUTPUT_DROPPED_MARKER, OUTPUT_KEEP_CHARS, ActionRun
 from jailbee.dashboard.service_actions import run_actions
 from jailbee.state_service import paths
 from jailbee.state_service.client import StateClient
@@ -76,3 +79,55 @@ def test_rejected_request_settles_instead_of_waiting_forever(runtime_dir, tmp_pa
                 client.close()
     finally:
         client.close()
+
+
+def test_capped_service_tail_replaces_local_output_instead_of_appending_old_text(tmp_path):
+    from jailbee.state_service.protocol import ActionEntry
+
+    first = "x" * OUTPUT_KEEP_CHARS
+    final = OUTPUT_DROPPED_MARKER + "x" * (OUTPUT_KEEP_CHARS - 5) + "final"
+
+    class Client:
+        dashboard_id = "origin"
+
+        def __init__(self):
+            self.sent = False
+            self.reads = 0
+
+        def run_action(self, request):
+            self.sent = True
+
+        def status(self):
+            return None
+
+        def action_rejection(self, entry_id):
+            return None
+
+        def action_entries(self):
+            if not self.sent:
+                return {}
+            self.reads += 1
+            entry = ActionEntry(91, ["ls"], str(tmp_path), "repo", False, "origin", "none", str(tmp_path), "repo", output=first)
+            if self.reads >= 2:
+                entry = replace(entry, output=final, finished=True, status=0)
+            return {91: entry}
+
+    class Progress:
+        text = ""
+
+        def entry_id(self, index):
+            return 91
+
+        def output(self, index, chunk):
+            self.text += chunk
+
+        def replace_output(self, index, text):
+            self.text = text
+
+        def question(self, index, asking):
+            pass
+
+    progress = Progress()
+    outcome = run_actions(Client(), [ActionRun(["ls"], tmp_path)], progress, groups=[RepoGroup("repo", str(tmp_path), None, [])], transport="none")
+    assert progress.text == final
+    assert outcome.outputs == [final]
