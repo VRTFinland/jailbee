@@ -21,9 +21,11 @@ from tests.dashboard_pilot import make_app
 )
 def test_background_question_waits_in_queue_until_selected(mocker, tmp_path, answer_keys, expected):
     asked = Event()
+    release = Event()
     answers = []
 
     def run(argv, *, on_prompt, **kwargs):
+        assert release.wait(5)
         asked.set()
         answers.append(on_prompt(Prompt(1, "text", "Branch name?")))
         return drunner.RunResult(status=0)
@@ -35,6 +37,8 @@ def test_background_question_waits_in_queue_until_selected(mocker, tmp_path, ans
     async def scenario():
         async with app.run_test() as pilot:
             app.session.run_dashboard_command("alpha-a", "container", ["start", "alpha-a"])
+            await pilot.press("down")
+            release.set()
             async with asyncio.timeout(5):
                 while not asked.is_set() or not any(
                     e.state == "awaiting" for e in app.session.queue
@@ -69,8 +73,10 @@ def test_background_question_waits_in_queue_until_selected(mocker, tmp_path, ans
 @pytest.mark.parametrize("first", [0, 1])
 def test_two_pending_questions_are_answered_independently(mocker, tmp_path, first):
     answers = {}
+    release = Event()
 
     def run(argv, *, on_prompt, **kwargs):
+        assert release.wait(5)
         answers[argv[0]] = on_prompt(Prompt(1, "text", f"Name for {argv[0]}?"))
         return drunner.RunResult(status=0)
 
@@ -82,6 +88,8 @@ def test_two_pending_questions_are_answered_independently(mocker, tmp_path, firs
         async with app.run_test() as pilot:
             for verb in ["start", "stop"]:
                 app.session.run_dashboard_command("alpha-a", "container", [verb, "alpha-a"])
+            await pilot.press("down")
+            release.set()
             async with asyncio.timeout(5):
                 while sum(e.pending_question is not None for e in app.session.queue) != 2:
                     await pilot.pause(0.01)
