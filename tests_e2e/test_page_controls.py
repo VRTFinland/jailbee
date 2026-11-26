@@ -63,6 +63,19 @@ def test_page_controls_preserve_readable_height_keys_taps_and_jump_clearance(
         assert controls["height"] <= 32
         expect(nav.locator(".prev, .next")).to_have_count(0)
 
+    for button in nav.locator("button").all():
+        box = button.bounding_box()
+        assert box is not None and box["x"] >= 0 and box["x"] + box["width"] <= 640
+
+    # Compact chrome retains a full 44px target extending upward, not into
+    # the bottom guard. Check actual hit testing, not only pseudo-element CSS.
+    for button in nav.locator("button:not(:disabled)").all():
+        assert button.evaluate("""el => {
+            const r = el.getBoundingClientRect();
+            const target = Number.parseFloat(getComputedStyle(el).getPropertyValue('--md-target-min'));
+            return el.contains(document.elementFromPoint(r.x + r.width / 2, r.bottom - target + 1));
+        }""")
+
     top = page.locator(".title-bar").evaluate("el => el.getBoundingClientRect().bottom")
     readable = guard["y"] - top - (26 if mode == "bar" else 0)
     assert readable > 0

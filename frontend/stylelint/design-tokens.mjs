@@ -47,7 +47,7 @@ function* words(nodes) {
 /** The first raw value `property` must not have, or undefined. */
 function invalidValue(property, value) {
     const customProperty = property.startsWith("--")
-    const checksBorderWidth = borderWidth.test(property) && !/(?:color|style|radius)$/.test(property)
+    const checksBorderWidth = borderWidth.test(property) && !/(?:color|style|radius|collapse|spacing)$/.test(property)
     const parsed = valueParser(value).nodes
     if (customProperty || spacing.test(property) || checksBorderWidth || property === "font"
         || property === "font-size" || property.endsWith("radius") || property === "z-index") {

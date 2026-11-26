@@ -11,11 +11,6 @@ export default {
         "src/views/SettingsView.vue",
         "src/views/LoginView.vue", // 12: login and setup
         "src/views/SetupView.vue",
-        "src/components/JumpPanel.vue", // 13: transcript reader
-        "src/components/PageGuide.vue",
-        "src/components/PageNav.vue",
-        "src/components/ToolCall.vue",
-        "src/views/SessionView.vue",
         "src/styles/highlight.css",
     ],
     plugins: ["./stylelint/design-tokens.mjs"],

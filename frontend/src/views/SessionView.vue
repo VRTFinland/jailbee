@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import Button from "../components/ui/Button.vue"
+import TranscriptEntry from "../components/ui/TranscriptEntry.vue"
 import TitleBar from "../components/TitleBar.vue"
 // One agent session as a readable document. Every `html` field is rendered
 // and sanitised by the server; it is inserted as is.
@@ -490,11 +492,11 @@ watch(
             <p v-if="transcript.entries.length === 0" class="muted">This session is empty.</p>
             <article ref="transcriptEl" class="transcript">
                 <template v-for="e in shown" :key="e.id">
-                    <section
+                    <TranscriptEntry
                         v-if="e.kind === 'user'"
                         :id="entryDomId(e.id)"
-                        class="entry user"
-                        :class="{meta: e.meta}"
+                        kind="user"
+                        :meta="e.meta"
                     >
                         <details
                             v-if="e.meta && e.expandable"
@@ -517,24 +519,24 @@ watch(
                             <p v-if="e.meta && e.label" class="meta-label">{{ e.label }}</p>
                             <div class="prose" v-html="e.html" />
                         </template>
-                    </section>
-                    <section
+                    </TranscriptEntry>
+                    <TranscriptEntry
                         v-else-if="e.kind === 'assistant'"
                         :id="entryDomId(e.id)"
-                        class="entry assistant"
+                        kind="assistant"
                     >
                         <div v-if="e.model" class="model">{{ e.model }}</div>
                         <div class="prose" v-html="e.html" />
-                    </section>
-                    <section
+                    </TranscriptEntry>
+                    <TranscriptEntry
                         v-else-if="e.kind === 'thinking'"
                         :id="entryDomId(e.id)"
-                        class="entry thinking"
+                        kind="thinking"
                     >
                         <div class="label">Thinking</div>
                         <div v-if="e.html" class="prose" v-html="e.html" />
                         <p v-else class="muted">(redacted)</p>
-                    </section>
+                    </TranscriptEntry>
                     <ToolCall
                         v-else-if="e.kind === 'tool_call'"
                         :id="entryDomId(e.id)"
@@ -543,34 +545,35 @@ watch(
                         :subagents="byCall.subagents.get(e.call_id) ?? []"
                         :session-ref="sessionRef"
                     />
-                    <section
+                    <TranscriptEntry
                         v-else-if="e.kind === 'tool_result'"
                         :id="entryDomId(e.id)"
-                        class="entry orphan"
+                        kind="orphan"
                         v-html="e.html"
                     />
-                    <section
+                    <TranscriptEntry
                         v-else-if="e.kind === 'subagent'"
                         :id="entryDomId(e.id)"
-                        class="entry orphan muted"
+                        kind="orphan"
                     >
                         <router-link
                             :to="{name: 'subagent', params: {...sessionRef, agentId: e.agent_id}}"
                         >
                             Subagent: {{ e.description || e.agent_id }}
                         </router-link>
-                    </section>
+                    </TranscriptEntry>
                 </template>
             </article>
-            <button
+            <Button
                 v-if="jumpLabel"
-                type="button"
+                :variant="pending.length > 0 || unseen !== null ? 'tonal' : 'primary'"
+                icon="page-down"
                 class="jump-latest"
                 :class="{'new-messages': pending.length > 0 || unseen !== null}"
                 @click="jump()"
             >
                 {{ jumpLabel }}
-            </button>
+            </Button>
         </template>
         <PageNav :pager="pager" jump-enabled @jump="openJump()" />
         <JumpPanel v-if="jumpPanelOpen" :entries="shown" :origin="jumpOrigin" @close="jumpPanelOpen = false" @select="selectJump" />
@@ -582,91 +585,24 @@ watch(
     max-width: 48rem;
     margin: 0 auto;
     /* Even a short final reply can start just below the sticky header. */
-    padding: 0 var(--space-3) max(5rem, calc(100dvh - var(--session-readable-top)));
+    padding: 0 var(--md-space-16);
 }
-.session-header {
-    position: sticky;
-    /* Stick below App's out-of-date banner rather than under it. */
-    top: var(--app-banner-height, 0px);
-    z-index: 12;
-    padding: var(--space-2) 0;
-    background: var(--bg);
-    border-bottom: 1px solid var(--border);
-}
-.bar {
-    min-height: 2.75rem;
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: var(--space-3);
-}
-.back {
-    color: var(--muted);
-    text-decoration: none;
-    font-family: var(--font-mono);
-}
-.toggle {
-    display: flex;
-    align-items: center;
-    text-decoration: none;
-    gap: var(--space-2);
-    min-height: 2.5rem;
-    color: var(--muted);
-    font-size: 0.9rem;
-}
-h1 {
-    font-size: 1.4rem;
-    line-height: 1.3;
-    margin: 0 0 var(--space-1);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-.session-meta {
-    display: flex;
-    gap: var(--space-1) var(--space-3);
-    margin: 0;
-    font-size: 0.85rem;
-}
-.session-meta > span {
-    flex-shrink: 0;
-}
-.session-meta .mono {
-    flex-shrink: 1;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-.mono {
-    font-family: var(--font-mono);
+.page::after {
+    content: "";
+    display: block;
+    height: max(calc(var(--md-target-min) + var(--md-space-32)), calc(100dvh - var(--session-readable-top)));
 }
 .notice {
-    margin: var(--space-3) 0;
-    padding: var(--space-2) var(--space-3);
-    background: var(--notice-bg);
-    border-radius: var(--radius);
+    margin: var(--md-space-16) 0;
+    padding: var(--md-space-8) var(--md-space-16);
+    background: var(--md-primary-container);
+    border-radius: var(--md-shape-medium);
 }
 .muted {
-    color: var(--muted);
+    color: var(--md-on-surface-variant);
 }
 .entry, .tool-call[id] {
     scroll-margin-top: var(--session-readable-top, 0px);
-}
-.entry {
-    margin: var(--space-4) 0;
-}
-.entry.user {
-    padding: var(--space-2) var(--space-3);
-    background: var(--surface);
-    border-left: 3px solid var(--accent);
-    border-radius: var(--radius);
-}
-.entry.user.meta {
-    border-left-color: var(--border-strong);
-    background: none;
-    color: var(--muted);
-    font-size: 0.8rem;
 }
 .entry.user.meta .meta-label,
 .entry.user.meta summary {
@@ -676,22 +612,16 @@ h1 {
 .entry.user.meta summary {
     cursor: pointer;
 }
-.entry.thinking {
-    padding-left: var(--space-3);
-    border-left: 3px solid var(--border);
-    color: var(--muted);
-    font-style: italic;
-}
 .model,
 .label {
-    font-family: var(--font-mono);
-    font-size: 0.75rem;
-    color: var(--muted);
-    margin-bottom: var(--space-1);
+    font-family: var(--md-font-mono);
+    font-size: var(--md-type-label-medium-size);
+    color: var(--md-on-surface-variant);
+    margin-bottom: var(--md-space-4);
 }
 .entry.orphan :deep(pre) {
     white-space: pre-wrap;
-    font-size: 0.8rem;
+    font-size: var(--md-type-body-small-size);
 }
 
 /* Rendered Markdown: comfortable line length and spacing. */
@@ -711,43 +641,43 @@ h1 {
 .prose :deep(ol),
 .prose :deep(table),
 .prose :deep(blockquote) {
-    margin: 0.75em 0;
+    margin: var(--md-space-12) 0;
 }
 .prose :deep(h1),
 .prose :deep(h2),
 .prose :deep(h3),
 .prose :deep(h4) {
     line-height: 1.3;
-    margin: 1.4em 0 0.5em;
+    margin: var(--md-space-24) 0 var(--md-space-8);
 }
 .prose :deep(h1) {
-    font-size: 1.3rem;
+    font-size: var(--md-type-title-large-size);
 }
 .prose :deep(h2) {
-    font-size: 1.15rem;
+    font-size: var(--md-type-title-medium-size);
 }
 .prose :deep(h3),
 .prose :deep(h4) {
-    font-size: 1rem;
+    font-size: var(--md-type-title-small-size);
 }
 .prose :deep(a) {
-    color: var(--accent);
+    color: var(--md-primary);
 }
 .prose :deep(code) {
-    font-size: 0.875em;
-    padding: 0.1em 0.3em;
-    background: var(--bg);
-    border-radius: 3px;
+    font-size: var(--md-type-body-medium-size);
+    padding: 0 var(--md-space-4);
+    background: var(--md-surface-container-low);
+    border-radius: var(--md-shape-small);
 }
 .prose :deep(pre) {
-    margin: 0.75em 0;
-    padding: var(--space-2) var(--space-3);
-    background: var(--bg);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
+    margin: var(--md-space-12) 0;
+    padding: var(--md-space-8) var(--md-space-16);
+    background: var(--md-surface-container-low);
+    border: 1px solid var(--md-outline-variant);
+    border-radius: var(--md-shape-medium);
     overflow-x: auto;
     line-height: 1.45;
-    font-family: var(--font-mono);
+    font-family: var(--md-font-mono);
     font-size: var(--font-size-code);
 }
 .prose :deep(pre code) {
@@ -769,37 +699,24 @@ h1 {
 }
 .prose :deep(th),
 .prose :deep(td) {
-    padding: var(--space-1) var(--space-2);
-    border: 1px solid var(--border);
+    padding: var(--md-space-4) var(--md-space-8);
+    border: 1px solid var(--md-outline-variant);
     text-align: left;
 }
 .prose :deep(blockquote) {
-    padding-left: var(--space-3);
-    border-left: 3px solid var(--border);
-    color: var(--muted);
+    padding-left: var(--md-space-16);
+    border-left: var(--md-space-4) solid var(--md-outline-variant);
+    color: var(--md-on-surface-variant);
 }
 .jump-latest {
     position: fixed;
-    right: var(--space-3);
-    bottom: calc(var(--guard-bottom) + var(--space-3));
-    z-index: 11;
-    min-height: 2.75rem;
-    padding: var(--space-2) var(--space-3);
-    font: inherit;
-    color: var(--accent-text);
-    background: var(--accent);
-    border: none;
-    border-radius: var(--radius);
-    cursor: pointer;
-}
-.new-messages {
-    color: var(--text);
-    background: var(--notice-bg);
-    border: 2px solid var(--border-strong);
+    right: var(--md-space-16);
+    bottom: calc(var(--guard-bottom) + var(--md-space-16));
+    z-index: var(--md-layer-raised);
 }
 /* In e-ink the bar owns the bottom edge: the buttons sit above it. */
 [data-profile="eink"] .jump-latest,
 [data-profile="eink"] .new-messages {
-    bottom: calc(var(--guard-bottom) + var(--page-nav-height) + var(--space-3));
+    bottom: calc(var(--guard-bottom) + var(--page-nav-height) + var(--md-space-16));
 }
 </style>

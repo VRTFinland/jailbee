@@ -1,4 +1,6 @@
-import {mount} from "@vue/test-utils"
+import {mount, flushPromises} from "@vue/test-utils"
+import {getByRole} from "@testing-library/dom"
+import userEvent from "@testing-library/user-event"
 import {nextTick} from "vue"
 import {expect, it, vi} from "vitest"
 import JumpPanel from "./JumpPanel.vue"
@@ -12,9 +14,12 @@ it("extracts prompt text without activating elements in the live document", asyn
     const wrapper = mount(JumpPanel, {props: {entries: [
         {kind: "user", id: "u1", timestamp: null, html: `<${tag}>Read <strong>this</strong> &amp; that</${tag}>`, meta: false, label: null, expandable: false},
     ]}})
-    expect(wrapper.get("button.excerpt").text()).toBe("Read this & that")
+    await flushPromises()
+    const excerpt = getByRole(document.body, "button", {name: "Read this & that"})
+    expect(excerpt.textContent).toBe("Read this & that")
     expect(activated).not.toHaveBeenCalled()
-    await wrapper.get("button.excerpt").trigger("click")
+    excerpt.click()
+    await nextTick()
     expect(wrapper.emitted("select")).toEqual([["entry:u1"]])
     wrapper.unmount()
 })
@@ -24,15 +29,17 @@ it("traps focus and restores the opening control on Escape", async () => {
     document.body.append(origin)
     origin.focus()
     const wrapper = mount(JumpPanel, {props: {entries: [], origin}, attachTo: document.body})
-    await nextTick()
-    const buttons = wrapper.findAll("button")
-    expect(document.activeElement).toBe(buttons[0].element)
-    ;(buttons[0].element as HTMLButtonElement).focus()
-    await buttons[0].trigger("keydown", {key: "Tab", shiftKey: true})
-    expect(document.activeElement).toBe(buttons[3].element)
-    await buttons[3].trigger("keydown", {key: "Tab"})
-    expect(document.activeElement).toBe(buttons[0].element)
-    await buttons[0].trigger("keydown", {key: "Escape"})
+    await flushPromises()
+    const user = userEvent.setup()
+    const panel = getByRole(document.body, "dialog", {name: "Jump to"})
+    const close = getByRole(panel, "button", {name: "Close dialog"})
+    const end = getByRole(panel, "button", {name: "End"})
+    expect(document.activeElement).toBe(close)
+    await user.keyboard("{Shift>}{Tab}{/Shift}")
+    expect(document.activeElement).toBe(end)
+    await user.keyboard("{Tab}")
+    expect(document.activeElement).toBe(close)
+    await user.keyboard("{Escape}")
     expect(wrapper.emitted("close")).toHaveLength(1)
     wrapper.unmount()
     expect(document.activeElement).toBe(origin)

@@ -7,15 +7,17 @@ import type {IconName} from "./material-symbols/paths"
 withDefaults(defineProps<{
     variant?: "primary" | "tonal" | "text" | "danger"
     type?: "button" | "submit"
+    /** Compact reader chrome; the hit area still extends to 44px above it. */
+    compact?: boolean
     disabled?: boolean
     /** A leading icon, decorative: the content names the button. */
     icon?: IconName
-}>(), {variant: "tonal", type: "button", disabled: false, icon: undefined})
+}>(), {variant: "tonal", type: "button", compact: false, disabled: false, icon: undefined})
 defineEmits<{click: [event: MouseEvent]}>()
 </script>
 
 <template>
-    <button :type="type" class="button ui-state-layer ui-focus-ring" :data-variant="variant" :disabled="disabled"
+    <button :type="type" class="button ui-state-layer ui-focus-ring" :data-variant="variant" :data-compact="compact || undefined" :disabled="disabled"
         @click="$emit('click', $event)">
         <Icon v-if="icon" :name="icon" size="small" />
         <span class="button-label"><slot /></span>
@@ -23,6 +25,7 @@ defineEmits<{click: [event: MouseEvent]}>()
 </template>
 
 <style src="./state-layer.css"></style>
+<style src="./compact.css"></style>
 
 <style scoped>
 .button {

@@ -26,7 +26,10 @@ before editing `## Unreleased`.
   guide for contributors and agents in `frontend/DESIGN.md`. The title bar,
   front page and container lists now use the shared buttons, icons, rows and
   status chips, with shared list status wording, context and activity emphasis,
-  opaque floating menu controls, and their layout, filters and live updates preserved
+  opaque floating menu controls, and their layout, filters and live updates preserved.
+  The transcript reader uses tonal prompts and tool disclosures, shared jump
+  dialogs and buttons, vector page controls with full-size hit areas behind
+  compact chrome, and preserves page steps, guide lines and reading positions
   ([#167](https://github.com/VRTFinland/jailbee/issues/167)).
 - Web dashboard reader improvements: compact breadcrumb title bars and session details,
   an in-context settings overlay, configurable e-ink page controls and page step,

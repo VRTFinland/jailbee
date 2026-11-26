@@ -15,8 +15,8 @@ defineProps<{pager: Pager}>()
     left: 0;
     right: 0;
     height: 1px;
-    background: var(--border);
+    background: var(--md-outline-variant);
     pointer-events: none;
-    z-index: 4;
+    z-index: var(--md-layer-raised);
 }
 </style>

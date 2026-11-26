@@ -7,20 +7,23 @@ import type {IconName} from "./material-symbols/paths"
 withDefaults(defineProps<{
     icon: IconName
     label: string
+    /** Compact reader chrome; the hit area still extends to 44px above it. */
+    compact?: boolean
     disabled?: boolean
     variant?: "text" | "tonal"
-}>(), {disabled: false, variant: "text"})
+}>(), {compact: false, disabled: false, variant: "text"})
 defineEmits<{click: [event: MouseEvent]}>()
 </script>
 
 <template>
     <button type="button" class="icon-button ui-state-layer ui-focus-ring" :aria-label="label" :title="label"
-        :data-variant="variant" :disabled="disabled" @click="$emit('click', $event)">
+        :data-variant="variant" :data-compact="compact || undefined" :disabled="disabled" @click="$emit('click', $event)">
         <Icon :name="icon" />
     </button>
 </template>
 
 <style src="./state-layer.css"></style>
+<style src="./compact.css"></style>
 
 <style scoped>
 .icon-button {
