@@ -731,27 +731,13 @@ class DashboardApp(App[int], inherit_bindings=False):
 
     def _after(self, outcome: Outcome) -> None:
         if outcome == "quit":
-            count = sum(entry.pending_question is not None for entry in self.session.queue)
-            if count:
-                noun = "command is" if count == 1 else "commands are"
-                prompt = Prompt(
-                    0,
-                    "confirm",
-                    f"{count} {noun} waiting for an answer. Quitting aborts them. Quit?",
-                )
-                self.push_screen(modal_for(prompt), self._confirm_quit)
-            else:
-                self._confirm_quit(True)
+            self.quit_requested = True
+            self.exit(0)
             return
         if outcome == "toggle-mouse":
             self.toggle_mouse()
             return
         self.refresh_frame()
-
-    def _confirm_quit(self, confirmed: bool | None) -> None:
-        if confirmed:
-            self.quit_requested = True
-            self.exit(0)
 
     def toggle_mouse(self) -> None:
         """`M`: mouse reporting on or off for this session."""

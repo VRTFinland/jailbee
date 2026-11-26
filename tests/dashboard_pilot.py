@@ -110,6 +110,7 @@ class FakeStateClient:
         self.closed = False
         self.seq = 1  # a test bumps it to serve a "new" snapshot
         self.dashboard_id = "pilot-dashboard"
+        self.excluded_prefixes: tuple[str, ...] = ()
         self.action_requests: list[RunAction] = []
         self._action_entries: dict[int, ActionEntry] = {}
         self._action_questions: dict[int, ActionQuestion] = {}
