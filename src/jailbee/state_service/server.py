@@ -290,6 +290,12 @@ class StateServer:
         )
         return policy
 
+    @staticmethod
+    def _repo_free_action(argv: list[str]) -> bool:
+        from jailbee.remote_ssh.router import command_path
+
+        return command_path(argv).startswith("orphan ")
+
     def _remote_repo(self, client: _Client, root: str, cwd: str) -> tuple[str, str]:
         from jailbee.global_config import default_global_config_path, load_global_config
         from jailbee.remote_ssh.repo_scope import registered_repos
@@ -333,16 +339,20 @@ class StateServer:
             return
         try:
             policy = self._check_policy(client, request.argv)
-            root, prefix = request.repo_root, request.prefix
+            root, prefix, cwd = request.repo_root, request.prefix, request.cwd
             if client.transport != "none":
-                root, prefix = self._remote_repo(client, request.repo_root, request.cwd)
+                if self._repo_free_action(request.argv):
+                    root = cwd = str(Path.home().resolve())
+                    prefix = ""
+                else:
+                    root, prefix = self._remote_repo(client, request.repo_root, request.cwd)
         except (ValueError, OSError) as exc:
             self._send_action(client, ActionRejected(request.entry_id, str(exc)))
             return
         entry = ActionEntry(
             request.entry_id,
             request.argv,
-            request.cwd,
+            cwd,
             request.target,
             request.critical,
             request.origin,
@@ -383,7 +393,7 @@ class StateServer:
             try:
                 result = run_action(
                     request.argv,
-                    cwd=Path(request.cwd),
+                    cwd=Path(cwd),
                     transport=client.transport,
                     policy=policy,
                     on_prompt=ask,
@@ -475,6 +485,9 @@ class StateServer:
     def _in_scope(self, entry: ActionEntry, client: _Client) -> bool:
         if client.transport != "none":
             try:
+                if self._repo_free_action(entry.argv):
+                    self._check_policy(client, entry.argv)
+                    return entry.cwd == str(Path.home().resolve()) and entry.prefix == ""
                 root, prefix = self._remote_repo(client, entry.repo_root, entry.cwd)
             except (ValueError, OSError):
                 return False
