@@ -1015,7 +1015,9 @@ class DashboardSession:
 
     # -- critical actions: the modal and the hand-off block ---------------------
 
-    def question_arrived(self, entry_id: int, prompt: Prompt, *, on_top: bool, queue_key: str) -> bool:
+    def question_arrived(
+        self, entry_id: int, prompt: Prompt, *, on_top: bool, queue_key: str
+    ) -> bool:
         """Store a question and decide whether its action is visible to the user."""
         entry = self.queue.get(entry_id)
         if entry is None:

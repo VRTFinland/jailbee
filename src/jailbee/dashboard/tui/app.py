@@ -284,7 +284,9 @@ class DashboardApp(App[int], inherit_bindings=False):
                     transport=session.transport,
                     policy=session.ssh_policy,
                     on_prompt=self._ask_from_worker,
-                    on_entry_prompt=lambda entry_id, prompt: self._ask_from_worker(prompt, entry_id),
+                    on_entry_prompt=lambda entry_id, prompt: self._ask_from_worker(
+                        prompt, entry_id
+                    ),
                     progress=relay,
                     client=self.remote_client,
                     **extra,

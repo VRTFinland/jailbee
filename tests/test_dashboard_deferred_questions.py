@@ -269,8 +269,12 @@ def test_importing_question_core_does_not_load_textual():
     import sys
 
     subprocess.run(
-        [sys.executable, "-c", "import sys; import jailbee.dashboard.notifications; "
-         "import jailbee.dashboard.tui.session; assert 'textual' not in sys.modules"],
+        [
+            sys.executable,
+            "-c",
+            "import sys; import jailbee.dashboard.notifications; "
+            "import jailbee.dashboard.tui.session; assert 'textual' not in sys.modules",
+        ],
         check=True,
     )
 

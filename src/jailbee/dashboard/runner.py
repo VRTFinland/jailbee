@@ -281,7 +281,11 @@ def run_actions(
             handler = common.get("on_prompt")
             if progress is not None and on_entry_prompt is not None:
                 entry_id = progress.entry_id(index)
-                handler = lambda prompt, entry_id=entry_id: on_entry_prompt(entry_id, prompt)
+
+                def handler(prompt: Prompt, entry_id: int = entry_id) -> Any:
+                    assert on_entry_prompt is not None
+                    return on_entry_prompt(entry_id, prompt)
+
             if progress is not None and handler is not None:
                 run_common["on_prompt"] = _announcing(handler, progress, index)
 
