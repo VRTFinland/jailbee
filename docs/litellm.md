@@ -367,8 +367,24 @@ attaches to its reply; LiteLLM forwards them as `llm_provider-x-codex-*` on
 `claude-jb` uses. Each call spends that request from the quota, so cache the
 result rather than running it on every status line refresh. These headers are
 an internal interface of the ChatGPT backend and may change without notice.
-xAI and API-key routes report no quota: a profile without a ChatGPT-subscription
-route exits 1. On the host, `jailbee litellm quota` is not available.
+Quota headers are read even from HTTP error replies, so an exhausted subscription
+can still report its windows on HTTP 429. Missing or garbled numeric values are
+shown as `?` in text and `null` in JSON. A window without a valid nonzero
+duration is omitted from text and is `null` in JSON; a reply without any valid
+windows is not treated as quota.
+
+Exit codes:
+
+| Code | Meaning |
+| --- | --- |
+| 0 | Quota was reported, including when carried by an HTTP error reply. |
+| 1 | No subscription quota headers in any reply (`no subscription quota`). xAI and API-key routes do not report them. |
+| 2 | Missing or invalid container configuration, unknown profile, or unreadable/empty proxy key. |
+| 3 | Connection failure or timeout (`proxy unreachable`); stops after the first failed connection rather than retrying each tier. |
+| 4 | HTTP error without usable quota headers (`HTTP <status> from proxy`); reports the last HTTP failure if no tier reports quota. |
+
+The command does not print request keys or HTTP error bodies. On the host,
+`jailbee litellm quota` is not available.
 
 ### Model map
 

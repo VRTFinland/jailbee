@@ -121,6 +121,36 @@ def test_window_of_zero_minutes_is_absent(config, capsys):
     assert json.loads(capsys.readouterr().out)["secondary"] is None
 
 
+@pytest.mark.parametrize("value", ["garbled", "inf", "-inf", "NaN"])
+def test_invalid_numbers_are_missing(config, capsys, value):
+    headers = {
+        **CODEX_HEADERS,
+        "llm_provider-x-codex-primary-used-percent": value,
+        "llm_provider-x-codex-primary-reset-after-seconds": value,
+        "llm_provider-x-codex-secondary-window-minutes": value,
+    }
+
+    assert litellm_quota.quota(fetch=FakeProxy(**{"jb.codex.cheap": headers}), as_json=True) == 0
+
+    result = json.loads(capsys.readouterr().out)
+    assert result["primary"]["used_percent"] is None
+    assert result["primary"]["reset_after_seconds"] is None
+    assert result["secondary"] is None
+
+
+@pytest.mark.parametrize("window", ["primary", "secondary"])
+def test_missing_used_percent_is_unknown_in_text(config, capsys, window):
+    headers = {
+        k: v for k, v in CODEX_HEADERS.items() if k != f"llm_provider-x-codex-{window}-used-percent"
+    }
+
+    assert litellm_quota.quota(fetch=FakeProxy(**{"jb.codex.cheap": headers})) == 0
+
+    out = capsys.readouterr().out
+    assert f"{window}: ?% used" in out
+    assert "None" not in out
+
+
 def test_reset_falls_back_to_reset_at(config, capsys):
     headers = {
         k: v for k, v in CODEX_HEADERS.items() if not k.endswith("primary-reset-after-seconds")
@@ -178,6 +208,68 @@ def test_missing_config_exits_2(tmp_path, capsys, monkeypatch):
     assert "no LiteLLM proxy configured" in capsys.readouterr().err
 
 
+@pytest.mark.parametrize(
+    "replacement, field",
+    [
+        ([], "object"),
+        ({"profiles": ["codex"]}, "profiles"),
+        ({"profiles": None}, "profiles"),
+        ({"default_profile": []}, "profile name"),
+        ({"profiles": {"codex": []}}, "profile"),
+        ({"base_url": None}, "base_url"),
+        ({"base_url": []}, "base_url"),
+        ({"base_url": ""}, "base_url"),
+        ({"key_file": []}, "key_file"),
+        ({"key_file": None}, "key_file"),
+        ({"tiers": []}, "tiers"),
+        ({"tiers": None}, "tiers"),
+        ({"tiers": {"haiku": ["sk-jb-secret"]}}, "tier models"),
+    ],
+)
+def test_wrong_shape_config_exits_2(config, capsys, replacement, field):
+    data = json.loads(config.read_text())
+    if isinstance(replacement, dict):
+        if set(replacement) & {"profiles", "default_profile"}:
+            data.update(replacement)
+        else:
+            data["profiles"]["codex"].update(replacement)
+    else:
+        data = replacement
+    config.write_text(json.dumps(data))
+    proxy = FakeProxy()
+
+    assert litellm_quota.quota(fetch=proxy) == 2
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "invalid LiteLLM config" in captured.err
+    assert field in captured.err
+    assert "sk-jb-secret" not in captured.err
+    assert not proxy.calls
+
+
+def test_missing_base_url_exits_2(config, capsys):
+    data = json.loads(config.read_text())
+    del data["profiles"]["codex"]["base_url"]
+    config.write_text(json.dumps(data))
+
+    assert litellm_quota.quota(fetch=FakeProxy()) == 2
+
+    assert "base_url" in capsys.readouterr().err
+
+
+def test_invalid_proxy_url_exits_2_without_exposing_request(config, capsys):
+    data = json.loads(config.read_text())
+    data["profiles"]["codex"]["base_url"] = "sk-jb-secret"
+    config.write_text(json.dumps(data))
+
+    assert litellm_quota.quota() == 2
+
+    captured = capsys.readouterr()
+    assert "invalid proxy request configuration" in captured.err
+    assert "sk-jb-secret" not in captured.err
+
+
 class _Reply(io.BytesIO):
     def __init__(self, headers: dict[str, str]) -> None:
         super().__init__(b"{}")
@@ -211,10 +303,129 @@ def test_http_fetch_posts_a_one_token_completion(monkeypatch):
     }
 
 
-def test_http_fetch_failure_is_none(monkeypatch):
+@pytest.mark.parametrize("as_json", [False, True])
+def test_rate_limit_reply_still_reports_quota(config, monkeypatch, capsys, as_json):
+    calls = []
+    body = io.BytesIO(b"sk-jb-secret")
+
     def urlopen(request, timeout):
-        raise urllib.error.URLError("refused")
+        calls.append(request)
+        headers = Message()
+        for name, value in CODEX_HEADERS.items():
+            headers[name.upper()] = value
+        raise urllib.error.HTTPError(request.full_url, 429, "sk-jb-secret", headers, body)
 
     monkeypatch.setattr(litellm_quota.urllib.request, "urlopen", urlopen)
 
-    assert litellm_quota.http_fetch("http://10.0.0.3:4100", "sk", "m") is None
+    assert litellm_quota.quota(as_json=as_json) == 0
+
+    captured = capsys.readouterr()
+    if as_json:
+        assert json.loads(captured.out)["primary"]["used_percent"] == 97
+    else:
+        assert "primary: 97% used of 7d window" in captured.out
+    assert captured.err == ""
+    assert "sk-jb-secret" not in captured.out
+    assert len(calls) == 1
+    assert body.closed
+
+
+def test_last_http_failure_survives_later_headerless_success(config, monkeypatch, capsys):
+    replies = iter([401, 500, None])
+
+    def urlopen(request, timeout):
+        status = next(replies)
+        if status is None:
+            return _Reply({})
+        raise urllib.error.HTTPError(request.full_url, status, "secret", Message(), None)
+
+    monkeypatch.setattr(litellm_quota.urllib.request, "urlopen", urlopen)
+
+    assert litellm_quota.quota() == 4
+
+    assert "HTTP 500" in capsys.readouterr().err
+
+
+def test_http_failure_can_fall_back_to_a_quota_route(config, monkeypatch, capsys):
+    replies = iter([401, None])
+
+    def urlopen(request, timeout):
+        if next(replies) == 401:
+            raise urllib.error.HTTPError(request.full_url, 401, "secret", Message(), None)
+        return _Reply(CODEX_HEADERS)
+
+    monkeypatch.setattr(litellm_quota.urllib.request, "urlopen", urlopen)
+
+    assert litellm_quota.quota(as_json=True) == 0
+
+    captured = capsys.readouterr()
+    assert json.loads(captured.out)["model"] == "jb.codex.capable"
+    assert captured.err == ""
+
+
+@pytest.mark.parametrize(
+    "headers",
+    [
+        {"llm_provider-x-codex-unrecognized": "value"},
+        {"llm_provider-x-codex-primary-window-minutes": "inf"},
+    ],
+)
+def test_unusable_quota_headers_do_not_hide_http_failure(config, monkeypatch, capsys, headers):
+    def urlopen(request, timeout):
+        reply_headers = Message()
+        for name, value in headers.items():
+            reply_headers[name] = value
+        raise urllib.error.HTTPError(request.full_url, 429, "secret", reply_headers, None)
+
+    monkeypatch.setattr(litellm_quota.urllib.request, "urlopen", urlopen)
+
+    assert litellm_quota.quota() == 4
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "HTTP 429" in captured.err
+
+
+@pytest.mark.parametrize("status", [401, 429, 500])
+def test_http_failure_is_reported_instead_of_no_quota(config, monkeypatch, capsys, status):
+    def urlopen(request, timeout):
+        raise urllib.error.HTTPError(
+            request.full_url, status, "sk-jb-secret", Message(), io.BytesIO(b"sk-jb-secret")
+        )
+
+    monkeypatch.setattr(litellm_quota.urllib.request, "urlopen", urlopen)
+
+    assert litellm_quota.quota() == 4
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert f"HTTP {status}" in captured.err
+    assert "no subscription quota" not in captured.err
+    assert "sk-jb-secret" not in captured.err
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        urllib.error.URLError("sk-jb-secret refused"),
+        ConnectionRefusedError("sk-jb-secret"),
+        TimeoutError("sk-jb-secret"),
+    ],
+)
+def test_connection_failure_stops_after_first_request(config, monkeypatch, capsys, error):
+    calls = []
+
+    def urlopen(request, timeout):
+        calls.append(request)
+        raise error
+
+    monkeypatch.setattr(litellm_quota.urllib.request, "urlopen", urlopen)
+
+    assert litellm_quota.quota() == 3
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "proxy unreachable" in captured.err
+    assert "no subscription quota" not in captured.err
+    assert "sk-jb-secret" not in captured.err
+    assert len(calls) == 1
