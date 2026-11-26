@@ -227,9 +227,8 @@ class FakeStateClient:
     def action_entries(self):  # type: ignore[no-untyped-def]
         return self._action_entries.copy()
 
-    def drain_action_events(self):  # type: ignore[no-untyped-def]
-        events, self._action_events = self._action_events, []
-        return events
+    def action_connection(self):  # type: ignore[no-untyped-def]
+        return 1
 
     def wait_first_snapshot(self, timeout):  # type: ignore[no-untyped-def]
         self.events.append(("wait",))

@@ -12,10 +12,12 @@ from jailbee.dashboard.commands import Transport
 from jailbee.dashboard.model import RepoGroup
 from jailbee.dashboard.notifications import NotificationQueue
 from jailbee.dashboard.runner import ActionOutcome, ActionRun, RunProgress, RunResult, _TailBuffer
+from jailbee.state_service import StateServiceUnavailable
 from jailbee.state_service.client import DISCONNECTED
 from jailbee.state_service.protocol import ActionEntry, RunAction
 
 POLL_SECONDS = 0.05
+RECONNECT_TIMEOUT_SECONDS = 30.0
 
 
 class _NoProgress:
@@ -42,6 +44,8 @@ class ActionClient(Protocol):
     def action_entries(self) -> dict[int, ActionEntry]: ...
 
     def status(self) -> str | None: ...
+
+    def action_connection(self) -> int | None: ...
 
     def action_rejection(self, entry_id: int) -> str | None: ...
 
@@ -97,31 +101,47 @@ def run_actions(
             results.append(RunResult(error="invalid or duplicate action id"))
             outputs.append("")
             break
-        try:
-            client.run_action(request)
-        except Exception as exc:
-            message = str(exc) or client.status() or DISCONNECTED
-            results.append(RunResult(error=message))
-            outputs.append("")
-            break
         last_output = ""
+        sent = False
+        sent_generation: int | None = None
+        acknowledged = False
+        uncertain_generation: int | None = None
+        disconnected_at: float | None = None
         while True:
+            generation = client.action_connection()
+            snapshot = client.action_entries().get(entry_id)
             rejection = client.action_rejection(entry_id)
-            if rejection is not None:
+            if snapshot is not None:
+                acknowledged = True
+                sent = True
+                uncertain_generation = None
+            elif rejection is not None:
                 results.append(RunResult(refused=rejection))
                 outputs.append("")
                 return ActionOutcome(results, outcome_text.text(), outputs)
-            snapshot = client.action_entries().get(entry_id)
-            if client.status() is not None and (snapshot is None or not snapshot.finished):
-                results.append(RunResult(error=client.status() or DISCONNECTED))
-                outputs.append(last_output)
-                return ActionOutcome(results, outcome_text.text(), outputs)
+            if generation is None or (uncertain_generation is not None and generation == uncertain_generation):
+                if disconnected_at is None:
+                    disconnected_at = time.monotonic()
+                if time.monotonic() - disconnected_at >= RECONNECT_TIMEOUT_SECONDS:
+                    results.append(RunResult(error=client.status() or DISCONNECTED))
+                    outputs.append(last_output)
+                    outcome_text.append(last_output)
+                    return ActionOutcome(results, outcome_text.text(), outputs)
+                time.sleep(POLL_SECONDS)
+                continue
+            disconnected_at = None
+            if sent and not acknowledged and sent_generation != generation:
+                sent = False
+            if not sent:
+                try:
+                    client.run_action(request)
+                    sent = True
+                    sent_generation = generation
+                except (OSError, StateServiceUnavailable):
+                    uncertain_generation = generation
+                continue
             if snapshot is None:
                 time.sleep(POLL_SECONDS)
-                if client.status() is not None:
-                    results.append(RunResult(error=client.status() or DISCONNECTED))
-                    outputs.append("")
-                    return ActionOutcome(results, outcome_text.text(), outputs)
                 continue
             text = snapshot.output
             if text.startswith(last_output):
@@ -129,7 +149,6 @@ def run_actions(
             else:
                 chunk = text
             if chunk:
-                outcome_text.append(chunk)
                 replace_output = getattr(progress, "replace_output", None)
                 if replace_output is not None:
                     replace_output(index, text)
@@ -147,6 +166,7 @@ def run_actions(
                     )
                 )
                 outputs.append(text)
+                outcome_text.append(text)
                 if snapshot.refused is not None or snapshot.error is not None:
                     return ActionOutcome(results, outcome_text.text(), outputs)
                 break

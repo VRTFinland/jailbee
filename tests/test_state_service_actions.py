@@ -5,7 +5,7 @@ import os
 import threading
 
 from jailbee.state_service.client import StateClient
-from jailbee.state_service.protocol import ActionFinish, ActionOutput, RunAction
+from jailbee.state_service.protocol import RunAction
 from jailbee.state_service.server import StateServer
 from tests.test_state_client import _until
 from tests.test_state_server import FakeGatherer, reap_servers, track_server  # noqa: F401
@@ -57,15 +57,8 @@ def test_action_streams_output_and_result(runtime_dir, tmp_path):
                 "repo",
             )
         )
-        events = []
-
-        def finished():
-            events.extend(client.drain_action_events())
-            return any(isinstance(e, ActionFinish) for e in events)
-
-        _until(finished)
-        assert any(isinstance(e, ActionOutput) and e.chunk == "hello\n" for e in events)
-        assert next(e for e in events if isinstance(e, ActionFinish)).status == 7
+        _until(lambda: bool(client.action_entries().get(123) and client.action_entries()[123].finished))
+        assert client.action_entries()[123].status == 7
         assert client.action_entries()[123].output == "hello\n"
     finally:
         client.close()
@@ -271,7 +264,6 @@ def test_question_is_cancelled_over_real_prompt_channel(runtime_dir, tmp_path):
 
 def test_reconnect_replays_entries_in_repository_scope_and_rejects_duplicate(runtime_dir, tmp_path):
     from jailbee.state_service import paths
-    from jailbee.state_service.protocol import ActionRejected
 
     class Child:
         stdout = None
@@ -319,15 +311,8 @@ def test_reconnect_replays_entries_in_repository_scope_and_rejects_duplicate(run
         _until(lambda: 55 in again.action_entries())
         assert 55 not in other.action_entries()
         assert again.action_entries()[55].finished
-        again.drain_action_events()
         again.run_action(request)
-        events = []
-
-        def rejected():
-            events.extend(again.drain_action_events())
-            return any(isinstance(event, ActionRejected) for event in events)
-
-        _until(rejected)
+        _until(lambda: again.action_rejection(55) is not None)
         assert again.action_entries()[55].status == 0
     finally:
         other.close()
