@@ -930,6 +930,8 @@ container, `claude-jb` runs Claude Code through the proxy while plain `claude`
 remains native. `claude-jb -C 1m` (or `--context 272k|1m|max|<tokens>`) picks the
 session's context window up to the profile's ceiling — the built-in ChatGPT routes default to 1,050,000, `-C 272k` opts down, and
 lowercase `-c` is still Claude's `--continue`; `claude-jb --help` lists the options.
+Inside the container, `jailbee litellm quota [-P NAME] [--json]` shows the ChatGPT
+subscription's usage limits (one 1-token request through the proxy).
 Choose a gateway profile with `claude-jb -P NAME` (or `--profile NAME`), then
 `JAILBEE_LITELLM_PROFILE`, then `litellm.default_profile` (`codex`), which a
 repo's host-local override may change for its own containers. The host also

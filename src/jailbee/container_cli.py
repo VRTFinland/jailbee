@@ -23,6 +23,7 @@ HOST_SUBCOMMANDS = {
     "config": frozenset({"show", "migrate", "edit", "init"}),
     "pr": frozenset({"push", "bind", "unbind", "ls", "open", "fetch"}),
     "issue": frozenset({"apply", "resolve"}),
+    "litellm": frozenset({"up", "down", "status", "ls", "login", "logout", "logs"}),
     # `outbox sent` exists on both sides: the container lists only its own records.
     # `outbox drop` is host-only; the container verb is `outbox discard`.
     "outbox": frozenset(
@@ -89,6 +90,10 @@ host_app = typer.Typer(no_args_is_help=True, help="Read live host state over the
 container_app.add_typer(host_app, name="host")
 config_app = typer.Typer(no_args_is_help=True, help="Check the repository configuration.")
 container_app.add_typer(config_app, name="config", cls=SharedGroup)
+litellm_app = typer.Typer(
+    no_args_is_help=True, help="Read the LiteLLM proxy's subscription usage limits."
+)
+container_app.add_typer(litellm_app, name="litellm", cls=SharedGroup)
 container_app.add_typer(
     service_app, name="service", help="List, start, stop, refresh and read logs of services."
 )
@@ -172,3 +177,21 @@ def validate(
     from jailbee.config_validate_cmd import validate_repo_config
 
     raise typer.Exit(validate_repo_config(config))
+
+
+@litellm_app.command()
+def quota(
+    profile: Annotated[
+        str | None,
+        typer.Option(
+            "--profile",
+            "-P",
+            help="claude-jb profile (default: $JAILBEE_LITELLM_PROFILE, then the default).",
+        ),
+    ] = None,
+    as_json: Annotated[bool, typer.Option("--json", help="Print machine-readable JSON.")] = False,
+) -> None:
+    """Show the ChatGPT subscription's usage limits (one 1-token request via the proxy)."""
+    from jailbee.litellm_quota import quota as litellm_quota
+
+    raise typer.Exit(litellm_quota(profile=profile, as_json=as_json))
