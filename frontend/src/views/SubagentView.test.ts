@@ -1,3 +1,5 @@
+import {config} from "@vue/test-utils"
+config.global.stubs.DialogPortal = {template: "<slot />"}
 import {flushPromises, mount} from "@vue/test-utils"
 import {afterEach, describe, expect, it, vi} from "vitest"
 import {createMemoryHistory} from "vue-router"

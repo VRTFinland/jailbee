@@ -151,12 +151,12 @@ def test_thinking_follows_the_setting(reader: Page, session: dict[str, Any]) -> 
     expect(thinking).to_have_count(0)
 
     open_settings(reader)
-    reader.get_by_role("checkbox", name="Show thinking").check()
+    reader.get_by_role("switch", name="Show thinking").check()
     reader.go_back()
     expect(thinking.first).to_be_visible()
 
     open_settings(reader)
-    reader.get_by_role("checkbox", name="Show thinking").uncheck()
+    reader.get_by_role("switch", name="Show thinking").uncheck()
     reader.go_back()
     expect(reader.locator(".entry.assistant").first).to_be_visible()
     expect(thinking).to_have_count(0)

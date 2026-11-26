@@ -1,5 +1,7 @@
-import {mount} from "@vue/test-utils"
-import {nextTick} from "vue"
+import {config} from "@vue/test-utils"
+config.global.stubs.DialogPortal = {template: "<slot />"}
+import {flushPromises, mount} from "@vue/test-utils"
+import userEvent from "@testing-library/user-event"
 import {expect, it, vi} from "vitest"
 import JumpPanel from "./JumpPanel.vue"
 
@@ -12,9 +14,9 @@ it("extracts prompt text without activating elements in the live document", asyn
     const wrapper = mount(JumpPanel, {props: {entries: [
         {kind: "user", id: "u1", timestamp: null, html: `<${tag}>Read <strong>this</strong> &amp; that</${tag}>`, meta: false, label: null, expandable: false},
     ]}})
-    expect(wrapper.get("button.excerpt").text()).toBe("Read this & that")
+    expect(wrapper.findAll("button").find(button => button.text() === "Read this & that")!.text()).toBe("Read this & that")
     expect(activated).not.toHaveBeenCalled()
-    await wrapper.get("button.excerpt").trigger("click")
+    await wrapper.findAll("button").find(button => button.text() === "Read this & that")!.trigger("click")
     expect(wrapper.emitted("select")).toEqual([["entry:u1"]])
     wrapper.unmount()
 })
@@ -24,17 +26,20 @@ it("traps focus and restores the opening control on Escape", async () => {
     document.body.append(origin)
     origin.focus()
     const wrapper = mount(JumpPanel, {props: {entries: [], origin}, attachTo: document.body})
-    await nextTick()
+    await flushPromises()
+    await new Promise(resolve => setTimeout(resolve, 30))
+    const user = userEvent.setup()
     const buttons = wrapper.findAll("button")
     expect(document.activeElement).toBe(buttons[0].element)
     ;(buttons[0].element as HTMLButtonElement).focus()
-    await buttons[0].trigger("keydown", {key: "Tab", shiftKey: true})
+    await user.tab({shift: true})
     expect(document.activeElement).toBe(buttons[3].element)
-    await buttons[3].trigger("keydown", {key: "Tab"})
+    await user.tab()
     expect(document.activeElement).toBe(buttons[0].element)
     await buttons[0].trigger("keydown", {key: "Escape"})
     expect(wrapper.emitted("close")).toHaveLength(1)
     wrapper.unmount()
+    await flushPromises()
     expect(document.activeElement).toBe(origin)
     origin.remove()
 })

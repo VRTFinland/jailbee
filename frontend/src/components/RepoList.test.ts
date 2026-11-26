@@ -1,3 +1,5 @@
+import {config} from "@vue/test-utils"
+config.global.stubs.DialogPortal = {template: "<slot />"}
 import {mount} from "@vue/test-utils"
 import {defineComponent} from "vue"
 import QuickSettings from "./QuickSettings.vue"

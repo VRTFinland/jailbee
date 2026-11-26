@@ -5,6 +5,10 @@ import {onMounted, ref} from "vue"
 import {fetchSession, renameSession} from "../api"
 import {useDashboard} from "../dashboard"
 import type {MetaMode} from "../protocol"
+import Button from "./ui/Button.vue"
+import Field from "./ui/Field.vue"
+import FieldFrame from "./ui/FieldFrame.vue"
+import Switch from "./ui/Switch.vue"
 import {
     DISPLAY_PROFILES,
     FONT_SIZE_RANGE,
@@ -62,26 +66,17 @@ function number(event: Event): number {
 </script>
 
 <template>
-    <div class="page">
+    <div class="settings-panel">
         <p class="muted">Display choices are kept on this device only.</p>
 
         <fieldset>
             <legend>This session</legend>
             <form class="rename" @submit.prevent="saveDeviceName">
-                <label>
-                    Name shown in the header and in <code>jailbee remote web auth</code>
-                    <input
-                        v-model="deviceName"
-                        name="device"
-                        type="text"
-                        autocomplete="off"
-                        maxlength="100"
-                    />
-                </label>
-                <button type="submit" class="save-device">Save name</button>
+                <Field v-model="deviceName" label="Name shown in the header and in jailbee remote web auth"
+                    name="device" autocomplete="off" :maxlength="100" :error="deviceError" />
+                <Button type="submit" variant="primary">Save name</Button>
             </form>
-            <p v-if="deviceError" class="error" role="alert">{{ deviceError }}</p>
-            <p v-else-if="deviceSaved" class="muted" role="status">Saved.</p>
+            <p v-if="deviceSaved" class="muted" role="status">Saved.</p>
         </fieldset>
 
         <fieldset>
@@ -110,37 +105,33 @@ function number(event: Event): number {
                 />
                 {{ PROFILE_LABELS[p] }}
             </label>
-            <label class="choice">
-                <input type="checkbox" :checked="settings.showTitleBar"
-                    @change="updateSettings({showTitleBar: ($event.target as HTMLInputElement).checked})" />
-                Show title bar
-            </label>
-            <label class="choice">
-                <input
-                    type="checkbox"
-                    :checked="settings.einkFollow"
-                    @change="updateSettings({einkFollow: ($event.target as HTMLInputElement).checked})"
-                />
-                Follow new messages on e-ink
-            </label>
+            <div class="switch-row">
+                <span>Show title bar</span>
+                <Switch label="Show title bar" :model-value="settings.showTitleBar"
+                    @update:model-value="updateSettings({showTitleBar: $event})" />
+            </div>
+            <div class="switch-row">
+                <span>Follow new messages on e-ink</span>
+                <Switch label="Follow new messages on e-ink" :model-value="settings.einkFollow"
+                    @update:model-value="updateSettings({einkFollow: $event})" />
+            </div>
         </fieldset>
 
         <fieldset v-if="settings.displayProfile === 'eink'">
             <legend>Page turns</legend>
-            <label class="choice">
-                Page controls
-                <select class="page-controls" aria-label="Page controls" :value="settings.pageControls"
+            <FieldFrame label="Page controls" class="setting-field" v-slot="{controlAttrs}">
+                <select v-bind="controlAttrs({'aria-label': 'Page controls'})" class="ui-input ui-focus-ring page-controls"
+                    :value="settings.pageControls"
                     @change="updateSettings({pageControls: ($event.target as HTMLSelectElement).value as PageControls})">
                     <option v-for="mode in PAGE_CONTROLS" :key="mode" :value="mode">{{ PAGE_CONTROL_LABELS[mode] }}</option>
                 </select>
-            </label>
-            <label class="choice">
-                Page step
-                <select class="page-step" :value="settings.pageStep"
+            </FieldFrame>
+            <FieldFrame label="Page step" class="setting-field" v-slot="{controlAttrs}">
+                <select v-bind="controlAttrs({})" class="ui-input ui-focus-ring page-step" :value="settings.pageStep"
                     @change="updateSettings({pageStep: number($event) as PageStep})">
                     <option v-for="step in PAGE_STEPS" :key="step" :value="step">{{ step }} %</option>
                 </select>
-            </label>
+            </FieldFrame>
         </fieldset>
 
         <fieldset>
@@ -172,32 +163,25 @@ function number(event: Event): number {
 
         <fieldset>
             <legend>Sessions</legend>
-            <label class="choice">
-                <input type="checkbox" :checked="settings.followNewMessages"
-                    @change="updateSettings({followNewMessages: ($event.target as HTMLInputElement).checked})" />
-                Follow new messages (normal display)
-            </label>
-            <label class="choice">
-                <input
-                    class="show-thinking"
-                    type="checkbox"
-                    :checked="settings.showThinking"
-                    @change="updateSettings({showThinking: ($event.target as HTMLInputElement).checked})"
-                />
-                Show thinking
-            </label>
-            <label class="choice">
-                Agent context
-                <select
-                    class="agent-context"
+            <div class="switch-row">
+                <span>Follow new messages (normal display)</span>
+                <Switch label="Follow new messages (normal display)" :model-value="settings.followNewMessages"
+                    @update:model-value="updateSettings({followNewMessages: $event})" />
+            </div>
+            <div class="switch-row">
+                <span>Show thinking</span>
+                <Switch label="Show thinking" :model-value="settings.showThinking"
+                    @update:model-value="updateSettings({showThinking: $event})" />
+            </div>
+            <FieldFrame label="Agent context" class="setting-field" v-slot="{controlAttrs}">
+                <select v-bind="controlAttrs({})" class="ui-input ui-focus-ring agent-context"
                     :value="settings.agentContext"
-                    @change="updateSettings({agentContext: ($event.target as HTMLSelectElement).value as MetaMode})"
-                >
+                    @change="updateSettings({agentContext: ($event.target as HTMLSelectElement).value as MetaMode})">
                     <option value="hidden">Hidden</option>
                     <option value="collapsed">Collapsed</option>
                     <option value="shown">Shown</option>
                 </select>
-            </label>
+            </FieldFrame>
             <p class="muted">
                 Task notifications, system reminders and command output the agent writes into the
                 transcript. Hidden sends none of it; Collapsed sends a label and loads the content when
@@ -207,83 +191,63 @@ function number(event: Event): number {
     </div>
 </template>
 
+<style src="./ui/fields.css"></style>
+<style src="./ui/state-layer.css"></style>
 <style scoped>
-.page {
+.settings-panel {
     max-width: 36rem;
     margin: 0 auto;
-    padding: var(--space-3);
-}
-.bar {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: baseline;
-    gap: var(--space-3);
-    padding-bottom: var(--space-2);
-    border-bottom: 1px solid var(--border);
-}
-.bar h1 {
-    font-size: 1.25rem;
-    margin: 0;
-}
-.back {
-    color: var(--muted);
-    text-decoration: none;
-    font-family: var(--font-mono);
+    padding: var(--md-space-16);
 }
 .muted {
-    color: var(--muted);
+    color: var(--md-on-surface-variant);
 }
 fieldset {
     min-width: 0;
     overflow-wrap: anywhere;
-    margin: var(--space-3) 0;
-    padding: var(--space-2) var(--space-3);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    background: var(--surface);
+    margin: var(--md-space-16) 0;
+    padding: var(--md-space-8) var(--md-space-16);
+    border: 1px solid var(--md-outline-variant);
+    border-radius: var(--md-shape-medium);
+    background: var(--md-surface-container-low);
+    color: var(--md-on-surface);
 }
 legend {
-    padding: 0 var(--space-1);
-    color: var(--muted);
+    padding: 0 var(--md-space-4);
+    color: var(--md-on-surface-variant);
 }
-.choice {
+.choice,
+.switch-row {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: var(--space-2);
-    min-height: 2.75rem;
+    justify-content: space-between;
+    gap: var(--md-space-8);
+    min-height: var(--md-target-min);
+}
+.choice {
+    justify-content: flex-start;
 }
 .rename {
     display: flex;
     flex-direction: column;
-    gap: var(--space-2);
+    gap: var(--md-space-8);
 }
-.rename label {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-1);
-}
-.rename input,
-.save-device {
-    min-width: 0;
-    max-width: 100%;
-    font: inherit;
-    min-height: 2.75rem;
-}
-.error {
-    color: var(--danger);
+.setting-field {
+    margin: var(--md-space-8) 0;
 }
 .slider {
     display: flex;
     flex-direction: column;
-    gap: var(--space-1);
-    margin: var(--space-2) 0;
+    gap: var(--md-space-4);
+    margin: var(--md-space-8) 0;
 }
 .slider input {
     width: 100%;
-    min-height: 2.25rem;
+    min-height: var(--md-target-min);
 }
 .sample code {
-    font-size: var(--font-size-code);
+    font-size: var(--md-type-body-medium-size);
+    font-family: var(--md-font-mono);
 }
 </style>

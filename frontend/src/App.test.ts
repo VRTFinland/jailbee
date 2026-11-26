@@ -1,3 +1,5 @@
+import {config} from "@vue/test-utils"
+config.global.stubs.DialogPortal = {template: "<slot />"}
 import {flushPromises, mount} from "@vue/test-utils"
 import {afterEach, describe, expect, it, vi} from "vitest"
 import {createMemoryHistory} from "vue-router"
@@ -93,7 +95,7 @@ describe("App", () => {
         await wrapper.get('.settings-action').trigger("click")
         await flushPromises()
         const dialog = wrapper.get('[role="dialog"][aria-label="Settings"]')
-        expect(document.activeElement).toBe(dialog.element)
+        expect(dialog.element.contains(document.activeElement)).toBe(true)
         await dialog.trigger("keydown", {key: "Tab", shiftKey: true})
         expect(dialog.element.contains(document.activeElement)).toBe(true)
         await wrapper.get('[aria-label="Close settings"]').trigger("click")
@@ -149,8 +151,8 @@ describe("App", () => {
         await wrapper.get('[aria-label="Quick settings"][aria-haspopup]').trigger("click")
         await wrapper.get('.settings-action').trigger("click")
         await flushPromises()
-        const toggle = wrapper.findAll('input[type="checkbox"]').find(input => input.element.closest("label")?.textContent?.includes("Show title bar"))!
-        await toggle.setValue(false)
+        const toggle = wrapper.get('[role="switch"][aria-label="Show title bar"]')
+        await toggle.trigger("click")
         const closed = new Promise(resolve => window.addEventListener("popstate", resolve, {once: true}))
         await wrapper.get('[aria-label="Close settings"]').trigger("click")
         await closed

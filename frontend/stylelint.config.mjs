@@ -6,13 +6,9 @@ export default {
     ignoreFiles: [
         "src/views/RepoView.vue", // 09: repository
         "src/views/ContainerView.vue", // 10: container
-        "src/components/QuickSettings.vue", // 11: settings and dialogs
-        "src/components/SettingsPanel.vue",
-        "src/views/SettingsView.vue",
         "src/views/LoginView.vue", // 12: login and setup
         "src/views/SetupView.vue",
-        "src/components/JumpPanel.vue", // 13: transcript reader
-        "src/components/PageGuide.vue",
+        "src/components/PageGuide.vue", // 13: transcript reader
         "src/components/PageNav.vue",
         "src/components/ToolCall.vue",
         "src/views/SessionView.vue",

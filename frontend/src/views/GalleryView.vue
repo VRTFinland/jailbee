@@ -250,6 +250,11 @@ function typeStyle(token: string): Record<string, string> {
                                 <template #trigger><Button>Open drawer</Button></template>
                                 <Field label="Drawer name" model-value="dev-plan" />
                             </Dialog>
+                            <Dialog title="Quick preferences" placement="popover" preserve-scroll hide-header close-label="Close preferences">
+                                <template #trigger><Button>Open preferences</Button></template>
+                                <Field label="Device name" model-value="Reading tablet" />
+                                <Button>Save preferences</Button>
+                            </Dialog>
                             <Menu label="Container actions" :items="[
                                 {value: 'shell', label: 'Shell', icon: 'forward'}, {value: 'logs', label: 'Logs', icon: 'page-down'},
                                 {value: 'stop', label: 'Stop', disabled: true},

@@ -1,3 +1,5 @@
+import {config} from "@vue/test-utils"
+config.global.stubs.DialogPortal = {template: "<slot />"}
 import {mount} from "@vue/test-utils"
 import {afterEach, beforeEach, describe, expect, it, vi} from "vitest"
 import {nextTick} from "vue"

@@ -1,3 +1,5 @@
+import {config} from "@vue/test-utils"
+config.global.stubs.DialogPortal = {template: "<slot />"}
 import {enableAutoUnmount, flushPromises, mount} from "@vue/test-utils"
 import {afterEach, beforeEach, describe, expect, it, vi} from "vitest"
 import {createMemoryHistory} from "vue-router"
@@ -143,7 +145,7 @@ describe("SessionView", () => {
         window.dispatchEvent(new KeyboardEvent("keydown", {key: "j"}))
         await wrapper.vm.$nextTick()
         const panel = wrapper.get('[role="dialog"][aria-label="Jump to"]')
-        expect(panel.findAll("button").map(button => button.text())).toEqual(["Close", "Start", "Latest answer", "End", "Fix it", "Next question"])
+        expect(panel.findAll("button").map(button => button.attributes("aria-label") || button.text())).toEqual(["Close", "Start", "Latest answer", "End", "Fix it", "Next question"])
     })
     it("fetches the session and renders prompts and answers with their models", async () => {
         const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, transcript))
