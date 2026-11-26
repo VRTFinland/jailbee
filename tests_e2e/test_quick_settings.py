@@ -102,7 +102,6 @@ def test_menu_context_paging_and_live_preferences(
     context = panel.get_by_role("combobox", name="Agent context")
     assert context.evaluate("""el => Math.abs(el.getBoundingClientRect().width
         - el.closest('.context-row').getBoundingClientRect().width) <= 1""")
-    context.select_option("collapsed")
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
     assert panel.evaluate("el => el.getBoundingClientRect().bottom <= innerHeight - 32")
     if profile == "eink":
@@ -123,6 +122,10 @@ def test_menu_context_paging_and_live_preferences(
         assert any("Agent context" in text for text in seen)
         assert "Settings" in seen
         assert panel.evaluate("el => el.scrollHeight === el.clientHeight")
+    # Changing context reloads session metadata and repaginates the menu. Do it
+    # after inspecting every page, not while the paging assertions are in flight.
+    reveal_setting(page, "combobox", "Agent context")
+    context.select_option("collapsed")
     page.keyboard.press("Escape")
     expect(icon).to_be_focused()
     open_settings_overlay(page)
