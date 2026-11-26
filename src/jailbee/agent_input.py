@@ -137,7 +137,7 @@ def send(cfg: Config, incus: Incus, container: str, session_id: str, text: str) 
     try:
         incus.exec_with_input(container, _runuser(f"tmux load-buffer -b {buffer} -"), text)
         try:
-            incus.exec(container, _runuser(f"tmux paste-buffer -p -b {buffer} -t {pane}"))
+            incus.exec(container, _runuser(f"tmux paste-buffer -pr -b {buffer} -t {pane}"))
             incus.exec(container, _runuser(f"tmux send-keys -t {pane} Enter"))
         finally:
             incus.exec(container, _runuser(f"tmux delete-buffer -b {buffer}"))

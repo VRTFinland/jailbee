@@ -12,7 +12,9 @@ from jailbee.accounts.models import AgentSession
 @pytest.fixture
 def cli_seams(monkeypatch):
     monkeypatch.setattr(cli, "_load_or_exit", lambda _: Mock())
-    monkeypatch.setattr(cli, "_resolve_existing", lambda cfg, name: (Mock(), "box"))
+    incus = Mock()
+    incus.list_containers.return_value = [{"name": "box", "status": "Running"}]
+    monkeypatch.setattr(cli, "_resolve_existing", lambda cfg, name: (incus, "box"))
     sessions = [AgentSession("claude", 42, 10, "idle", None, None, None, "abc")]
     monkeypatch.setattr(agent_input, "live_sessions", lambda *args: sessions)
     delivered = Mock(return_value=agent_input.Outcome("delivered", "Delivered"))

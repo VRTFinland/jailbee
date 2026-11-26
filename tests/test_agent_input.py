@@ -40,5 +40,6 @@ def test_terminal_input_is_preserved(tmp_path, monkeypatch, frame, expected):
     assert result.code == expected
     if expected == "delivered":
         assert incus.exec_with_input.call_args.args[2] == "hello\nmaailma ä"
+        assert any("paste-buffer -pr" in call.args[1][-1] for call in incus.exec.call_args_list)
     else:
         incus.exec_with_input.assert_not_called()
