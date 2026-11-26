@@ -112,12 +112,18 @@ def test_answer_does_not_wait_forever_for_disconnect_callback(tmp_path):
 
     def run():
         try:
-            results.append(run_action(
-                ["start", "alpha"], cwd=tmp_path, transport="none", policy=None,
-                on_prompt=handler, on_output=lambda text: None,
-                on_disconnect=disconnect,
-                spawn=lambda argv, **kwargs: Child(kwargs["prompt_sock"]),
-            ))
+            results.append(
+                run_action(
+                    ["start", "alpha"],
+                    cwd=tmp_path,
+                    transport="none",
+                    policy=None,
+                    on_prompt=handler,
+                    on_output=lambda text: None,
+                    on_disconnect=disconnect,
+                    spawn=lambda argv, **kwargs: Child(kwargs["prompt_sock"]),
+                )
+            )
         finally:
             completed.set()
 

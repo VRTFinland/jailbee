@@ -110,7 +110,9 @@ def test_disconnect_closes_the_displayed_question(mocker, tmp_path, covered):
                     covering = app.screen
                 close.set()
                 async with asyncio.timeout(5):
-                    while question in app.screen_stack or not next(iter(app.session.queue)).finished:
+                    while (
+                        question in app.screen_stack or not next(iter(app.session.queue)).finished
+                    ):
                         await pilot.pause(0.01)
                 if covered:
                     assert app.screen is covering

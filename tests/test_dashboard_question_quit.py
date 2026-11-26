@@ -59,5 +59,3 @@ def test_quit_without_questions_does_not_confirm(mocker, tmp_path):
             assert not isinstance(app.screen, pm.ConfirmModal)
 
     asyncio.run(scenario())
-
-
