@@ -524,6 +524,156 @@ def test_allowed_ssh_action_ignores_service_environment(runtime_dir, tmp_path, m
         client.close()
 
 
+def test_global_restricted_remote_sees_orphan_question_read_only(
+    runtime_dir, tmp_path, monkeypatch
+):
+    from jailbee import global_config
+    from jailbee.config.models_remote import RemoteCommandPolicy
+    from jailbee.prompt_channel import CommandEnd, Prompt
+    from jailbee.state_service import paths
+
+    config = global_config.GlobalConfig()
+    config.remote.ssh.commands = RemoteCommandPolicy(mode="full")
+    config.remote.ssh.restrict_host = True
+    monkeypatch.setattr(global_config, "load_global_config", lambda path: (config, []))
+    monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+    answers = []
+
+    class Child:
+        stdout = None
+
+        def __init__(self, sock):
+            def ask():
+                channel = CommandEnd(sock)
+                answers.append(channel.ask(lambda n: Prompt(n, "confirm", "Proceed?")))
+                channel.close()
+
+            self.thread = threading.Thread(target=ask, daemon=True)
+            self.thread.start()
+
+        def wait(self):
+            self.thread.join(5)
+            return 0
+
+        def kill(self):
+            pass
+
+    paths.ensure_runtime_dir()
+    server = StateServer(
+        FakeGatherer(), version="v1", action_spawn=lambda *a, **kw: Child(kw["prompt_sock"])
+    )
+    thread = threading.Thread(
+        target=lambda: asyncio.run(server.serve(paths.socket_path())), daemon=True
+    )
+    thread.start()
+    track_server(server, thread)
+    _until(paths.socket_path().exists)
+    local = StateClient(
+        None, dashboard_id="local", transport="none", version="v1", spawn=lambda: None
+    )
+    remote = StateClient(
+        None, dashboard_id="remote", transport="ssh", version="v1", spawn=lambda: None
+    )
+    local.start()
+    remote.start()
+    try:
+        local.wait_first_snapshot(3)
+        remote.wait_first_snapshot(3)
+        local.run_action(
+            RunAction(
+                118,
+                ["orphan", "destroy", "x"],
+                str(tmp_path),
+                "x",
+                False,
+                "local",
+                "none",
+                str(tmp_path),
+                "",
+            )
+        )
+        _until(lambda: 118 in remote.action_questions())
+        question = remote.action_questions()[118]
+        assert not question.can_answer
+        assert question.reason == "answer in a local dashboard"
+        remote.answer_action_question(118, question.question_id, None)
+        _until(lambda: remote.action_rejection(118) is not None)
+        assert not answers
+        local.answer_action_question(118, question.question_id, True)
+        _until(lambda: bool(answers))
+    finally:
+        local.close()
+        remote.close()
+
+
+def test_unrestricted_remote_orphan_runs_from_home(runtime_dir, tmp_path, monkeypatch):
+    from jailbee import global_config
+    from jailbee.config.models_remote import RemoteCommandPolicy
+    from jailbee.state_service import paths
+
+    config = global_config.GlobalConfig()
+    config.remote.ssh.commands = RemoteCommandPolicy(mode="allowlist", allow=["orphan destroy"])
+    config.remote.ssh.restrict_host = False
+    monkeypatch.setattr(global_config, "load_global_config", lambda path: (config, []))
+    monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+    spawned = []
+
+    class Child:
+        stdout = None
+
+        def __init__(self, sock):
+            sock.close()
+
+        def wait(self):
+            return 0
+
+        def kill(self):
+            pass
+
+    def spawn(*args, **kwargs):
+        spawned.append(kwargs["cwd"])
+        return Child(kwargs["prompt_sock"])
+
+    paths.ensure_runtime_dir()
+    server = StateServer(FakeGatherer(), version="v1", action_spawn=spawn)
+    thread = threading.Thread(
+        target=lambda: asyncio.run(server.serve(paths.socket_path())), daemon=True
+    )
+    thread.start()
+    track_server(server, thread)
+    _until(paths.socket_path().exists)
+    client = StateClient(
+        None, dashboard_id="remote", transport="ssh", version="v1", spawn=lambda: None
+    )
+    client.start()
+    try:
+        client.wait_first_snapshot(3)
+        client.run_action(
+            RunAction(
+                117,
+                ["orphan", "destroy", "x"],
+                str(tmp_path),
+                "x",
+                False,
+                "remote",
+                "none",
+                str(tmp_path),
+                "arbitrary",
+                environment={"PATH": "/bin"},
+            )
+        )
+        _until(
+            lambda: (
+                client.action_rejection(117) is not None
+                or (117 in client.action_entries() and client.action_entries()[117].finished)
+            )
+        )
+        assert client.action_rejection(117) is None
+        assert spawned == [tmp_path]
+    finally:
+        client.close()
+
+
 def test_remote_orphan_policy_is_checked_before_repo_scope(runtime_dir, tmp_path, monkeypatch):
     from jailbee import global_config
     from jailbee.config.models_remote import RemoteCommandPolicy
