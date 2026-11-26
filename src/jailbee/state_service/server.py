@@ -100,12 +100,11 @@ class StateServer:
     ) -> None:
         self._action_spawn = action_spawn
         self._engine = engine
+        self._actions: dict[int, ActionEntry] = {}
         if engine is not None:
             from jailbee.db.actions import load
 
             self._actions = {entry.entry_id: entry for entry in load(engine)}
-        else:
-            self._actions: dict[int, ActionEntry] = {}
         self._action_tasks: set[asyncio.Task[None]] = set()
         self._gatherer = gatherer
         self._version = version
