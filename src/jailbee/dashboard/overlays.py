@@ -7,7 +7,7 @@ the shown error belong to the native boxes in `jailbee.dashboard.tui.native`.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -120,6 +120,7 @@ class PickerEntry:
     label: str
     value: str
     key: str = ""  # a letter that chooses the entry (empty: Enter or the mouse only)
+    tone: Literal["accent", "error"] | None = None
 
 
 @dataclass(frozen=True)

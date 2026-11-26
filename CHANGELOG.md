@@ -10,6 +10,10 @@ before editing `## Unreleased`.
 
 ### Added
 
+- The terminal dashboard's notification queue counts pending questions separately
+  from failures: `?` and "awaiting answer" use the theme accent, while red `✗`
+  stays reserved for failures ([#168](https://github.com/VRTFinland/jailbee/issues/168)).
+
 - The web dashboard has a design system: Material 3 colours from one blue seed in
   both the light and dark themes (status colours readable at WCAG AA), the bundled
   Inter typeface and Material Symbols vector icons, brief transitions that stop
