@@ -54,7 +54,9 @@ def test_entry_question_shows_command_context_and_controls(kind):
     "buttons, expected",
     [(["later", "abort-command"], pm.LATER), (["abort-command", "later"], None)],
 )
-def test_question_burst_keeps_the_first_later_or_abort_and_the_underlying_screen(kind, buttons, expected):
+def test_question_burst_keeps_the_first_later_or_abort_and_the_underlying_screen(
+    kind, buttons, expected
+):
     from jailbee.dashboard.notifications import QueueEntry
 
     host = Host()
@@ -84,14 +86,23 @@ def test_question_burst_keeps_the_first_later_or_abort_and_the_underlying_screen
     "prompt, keys, expected",
     [
         (Prompt(1, "confirm", "Question?"), [("y", "y"), ("n", "n")], True),
-        (Prompt(1, "choose_one", "Question?", options=(WireOption("one", "One", "One", ""),)),
-         [("enter", "\r"), ("enter", "\r")], "one"),
+        (
+            Prompt(1, "choose_one", "Question?", options=(WireOption("one", "One", "One", ""),)),
+            [("enter", "\r"), ("enter", "\r")],
+            "one",
+        ),
         (Prompt(1, "choose_many", "Question?"), [("enter", "\r"), ("enter", "\r")], []),
-        (Prompt(1, "text", "Question?", default="main"), [("enter", "\r"), ("enter", "\r")], "main"),
+        (
+            Prompt(1, "text", "Question?", default="main"),
+            [("enter", "\r"), ("enter", "\r")],
+            "main",
+        ),
         (Prompt(1, "secret", "Question?"), [("enter", "\r"), ("enter", "\r")], ""),
     ],
 )
-def test_answer_key_burst_returns_once_without_popping_the_underlying_screen(prompt, keys, expected):
+def test_answer_key_burst_returns_once_without_popping_the_underlying_screen(
+    prompt, keys, expected
+):
     host = Host()
 
     async def script():
