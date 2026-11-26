@@ -163,6 +163,7 @@ def render_entry(
                 id=entry.id,
                 timestamp=entry.timestamp,
                 html=cache.get(entry.id, entry.text, render_markdown),
+                text=entry.text,
             )
         case AssistantText():
             body = cache.get(entry.id, entry.text, render_markdown)
