@@ -43,6 +43,8 @@ class ActionClient(Protocol):
 
     def status(self) -> str | None: ...
 
+    def action_rejection(self, entry_id: int) -> str | None: ...
+
 
 def run_actions(
     client: ActionClient,
@@ -90,7 +92,10 @@ def run_actions(
             repo_root=root,
             prefix=prefix or root,
         )
-        before = client.action_entries().get(entry_id)
+        if entry_id in client.action_entries():
+            results.append(RunResult(error="invalid or duplicate action id"))
+            outputs.append("")
+            break
         try:
             client.run_action(request)
         except Exception as exc:
@@ -98,9 +103,18 @@ def run_actions(
             results.append(RunResult(error=message))
             outputs.append("")
             break
-        last_output = before.output if before is not None else ""
+        last_output = ""
         while True:
+            rejection = client.action_rejection(entry_id)
+            if rejection is not None:
+                results.append(RunResult(refused=rejection))
+                outputs.append("")
+                return ActionOutcome(results, outcome_text.text(), outputs)
             snapshot = client.action_entries().get(entry_id)
+            if client.status() is not None and (snapshot is None or not snapshot.finished):
+                results.append(RunResult(error=client.status() or DISCONNECTED))
+                outputs.append(last_output)
+                return ActionOutcome(results, outcome_text.text(), outputs)
             if snapshot is None:
                 time.sleep(POLL_SECONDS)
                 if client.status() is not None:

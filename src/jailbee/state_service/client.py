@@ -122,6 +122,7 @@ class StateClient:
         self._sock: socket.socket | None = None
         self._latest: Snapshot | None = None
         self._action_entries: dict[int, ActionEntry] = {}
+        self._action_rejections: dict[int, str] = {}
         self._action_events: list[ActionEntry | ActionOutput | ActionFinish | ActionRejected] = []
         self._status: str | None = None
         self._active = True
@@ -181,6 +182,10 @@ class StateClient:
         with self._lock:
             events, self._action_events = self._action_events, []
             return events
+
+    def action_rejection(self, entry_id: int) -> str | None:
+        with self._lock:
+            return self._action_rejections.get(entry_id)
 
     def action_entries(self) -> dict[int, ActionEntry]:
         with self._lock:
@@ -285,7 +290,9 @@ class StateClient:
 
             with self._lock:
                 self._action_events.append(message)
-                if isinstance(message, ActionEntry):
+                if isinstance(message, ActionRejected):
+                    self._action_rejections[message.entry_id] = message.reason
+                elif isinstance(message, ActionEntry):
                     self._action_entries[message.entry_id] = message
                 elif (
                     not isinstance(message, ActionRejected)

@@ -13,6 +13,7 @@ retains pre-worker failures, including spawn errors, since no job can report the
 
 from __future__ import annotations
 
+import secrets
 from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Literal
@@ -149,7 +150,6 @@ class NotificationQueue:
 
     def __init__(self) -> None:
         self._entries: dict[int, QueueEntry] = {}
-        self._next_id = 1
         self.jobs: tuple[JobRow, ...] = ()
 
     def job(self, target: str) -> JobRow | None:
@@ -174,8 +174,9 @@ class NotificationQueue:
 
     def start(self, command: str, target: str, *, critical: bool = False) -> int:
         """A new running entry; returns its id. A critical one starts in the foreground."""
-        entry_id = self._next_id
-        self._next_id += 1
+        entry_id = secrets.randbits(63) or 1
+        while entry_id in self._entries:
+            entry_id = secrets.randbits(63) or 1
         self._entries[entry_id] = QueueEntry(
             entry_id, command, target, critical=critical, foreground=critical
         )

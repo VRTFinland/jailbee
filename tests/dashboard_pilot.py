@@ -144,6 +144,7 @@ class FakeStateClient:
             if app is None:
                 return None
             owned = app.session.queue.get(entry.entry_id) is not None
+            handoff_epoch = app._handoff_epoch
             if owned:
 
                 def announce():  # type: ignore[no-untyped-def]
@@ -151,14 +152,25 @@ class FakeStateClient:
                     text = self._action_entries[entry.entry_id].output
                     if current is not None and text.startswith(current.output):
                         app.session._entry_output(entry.entry_id, text[len(current.output) :])
-                    app.session._entry_asking(entry.entry_id, True)
+                    app.session._entry_question(entry.entry_id, True)
 
                 app._on_app_thread(announce)
             try:
-                return app._ask_from_worker(question, entry.entry_id if owned else None)
+                if app._prompts_closed:
+                    return None
+
+                async def ask():  # type: ignore[no-untyped-def]
+                    answer = await app._ask(
+                        question, entry.entry_id if owned else None, handoff_epoch
+                    )
+                    if owned:
+                        app.session._entry_question(entry.entry_id, False)
+                    return answer
+
+                return app.call_from_thread(ask)
             finally:
                 if owned:
-                    app._on_app_thread(lambda: app.session._entry_asking(entry.entry_id, False))
+                    app._on_app_thread(lambda: app.session._entry_question(entry.entry_id, False))
 
         def run():  # type: ignore[no-untyped-def]
             extra = {} if self.action_spawn is None else {"spawn": self.action_spawn}
@@ -203,6 +215,9 @@ class FakeStateClient:
             threading.Thread(target=run, daemon=True).start()
         else:
             run()
+
+    def action_rejection(self, entry_id):  # type: ignore[no-untyped-def]
+        return None
 
     def action_entries(self):  # type: ignore[no-untyped-def]
         return self._action_entries.copy()
