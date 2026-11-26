@@ -33,6 +33,27 @@ def test_unattended_settings_default_and_opt_out(make_cfg, tmp_path, monkeypatch
     assert json.loads((enabled_source / "50-jailbee.json").read_text()) == settings
 
 
+def test_unattended_permissions_survive_instruction_opt_out(make_cfg, tmp_path, monkeypatch):
+    from jailbee import agent_instructions
+    from tests.conftest import with_agent
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    cfg = make_cfg(tmp_path / "repo", agents={"claude": {"enabled": True}})
+    cfg._agent_instructions = False
+    no_memory = with_agent(cfg, "claude", global_instructions=None)
+    no_memory._agent_instructions = True
+    for opted_out in (no_memory, cfg):
+        claude_plugin.stage(opted_out)
+        devices = yaml.safe_load(binds_profile_yaml(opted_out))["devices"]
+        assert "agent-instructions-claude" not in devices
+        source = Path(devices["claude-managed-settings"]["source"])
+        settings = json.loads((source / "50-jailbee.json").read_text())
+        assert settings["permissions"]["defaultMode"] == "bypassPermissions"
+        assert settings["env"]["JAILBEE_CLAUDE_UNATTENDED"] == "1"
+        agent_instructions.sync_global_instructions(opted_out)
+        assert not (tmp_path / "data/jailbee/agent-instructions").exists()
+
+
 def test_packaged_plugin_manifests():
     root = Path(claude_plugin.__file__).parent / "claude_marketplace"
     market = json.loads((root / ".claude-plugin/marketplace.json").read_text())

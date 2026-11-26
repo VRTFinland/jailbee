@@ -401,10 +401,9 @@ def _check_upgrade_advice(cfg: Config) -> CheckResult:
 def _check_agent_instructions(cfg: Config) -> CheckResult:
     """Report host-wide instruction staging without requiring Incus."""
     from jailbee.agent_instructions import (
-        PREAMBLE,
-        UNATTENDED_INSTRUCTIONS,
         desired_content,
         instruction_agents,
+        instruction_prefix,
         source_path,
         staging_dir,
         unattended_for,
@@ -422,15 +421,13 @@ def _check_agent_instructions(cfg: Config) -> CheckResult:
         content = desired_content(source)
     except OSError as exc:
         return CheckResult(name, False, f"cannot read {display_path(source)}: {exc}")
+    # Keep one source snapshot even when agents use different policy prefixes.
+    remainder = content.removeprefix(instruction_prefix(source))
     stale: list[str] = []
     for agent, gi in agents:
         unattended = unattended_for(cfg, agent)
         target = staging_dir(agent, gi.file, unattended=unattended) / gi.file
-        expected = content
-        if unattended:
-            expected = content.replace(
-                PREAMBLE.encode(), (PREAMBLE + "\n\n" + UNATTENDED_INSTRUCTIONS).encode(), 1
-            )
+        expected = instruction_prefix(source, unattended=unattended) + remainder
         try:
             current = target.read_bytes()
         except FileNotFoundError:
@@ -447,7 +444,6 @@ def _check_agent_instructions(cfg: Config) -> CheckResult:
             "run any `jb` command (e.g. `jb ls`) to refresh",
         )
     # Use the content snapshot rather than reading the source a second time.
-    remainder = content.partition(b"\n")[2][len(PREAMBLE.encode()) + 1 :]
     if not remainder:
         return CheckResult(name, True, f"preamble only (no {display_path(source)})")
     size = len(remainder) - 1

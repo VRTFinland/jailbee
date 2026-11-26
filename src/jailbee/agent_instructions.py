@@ -93,17 +93,22 @@ def instruction_agents(cfg: Config) -> list[tuple[str, AgentGlobalInstructions]]
     ]
 
 
+def instruction_prefix(source: Path, *, unattended: bool = False) -> bytes:
+    """Render JailBee's managed memory independently of the optional host content."""
+    marker = MARKER_TEMPLATE.format(source=display_path(source)).encode()
+    preamble = PREAMBLE
+    if unattended:
+        preamble += "\n\n" + UNATTENDED_INSTRUCTIONS
+    return marker + b"\n" + preamble.encode() + b"\n"
+
+
 def desired_content(source: Path, *, unattended: bool = False) -> bytes:
     """Return the marker and preamble followed by any host source bytes."""
     try:
         content = source.read_bytes()
     except FileNotFoundError:
         content = None
-    marker = MARKER_TEMPLATE.format(source=display_path(source)).encode()
-    preamble = PREAMBLE
-    if unattended:
-        preamble += "\n\n" + UNATTENDED_INSTRUCTIONS
-    prefix = marker + b"\n" + preamble.encode() + b"\n"
+    prefix = instruction_prefix(source, unattended=unattended)
     return prefix if content is None else prefix + b"\n" + content
 
 
@@ -150,11 +155,7 @@ def sync_global_instructions(cfg: Config) -> None:
             if content is None:
                 if current is not None:
                     continue
-                fallback = MARKER_TEMPLATE.format(source=display_path(source)).encode()
-                preamble = PREAMBLE
-                if unattended:
-                    preamble += "\n\n" + UNATTENDED_INSTRUCTIONS
-                _write_atomically(target, fallback + b"\n" + preamble.encode() + b"\n")
+                _write_atomically(target, instruction_prefix(source, unattended=unattended))
             elif current != content:
                 _write_atomically(target, content)
         except OSError as exc:
