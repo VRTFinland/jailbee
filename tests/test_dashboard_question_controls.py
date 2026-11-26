@@ -104,9 +104,10 @@ def test_disconnect_closes_the_displayed_question(mocker, tmp_path):
                 await mounted_question(app, pilot, pm.TextModal)
                 close.set()
                 async with asyncio.timeout(5):
-                    while isinstance(app.screen, pm.TextModal) or not next(
-                        iter(app.session.queue)
-                    ).finished:
+                    while (
+                        isinstance(app.screen, pm.TextModal)
+                        or not next(iter(app.session.queue)).finished
+                    ):
                         await pilot.pause(0.01)
                 assert next(iter(app.session.queue)).pending_question is None
             finally:
