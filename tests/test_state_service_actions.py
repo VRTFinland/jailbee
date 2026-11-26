@@ -611,7 +611,17 @@ def test_action_does_not_starve_gatherer(runtime_dir, tmp_path):
     try:
         client.wait_first_snapshot(3)
         client.run_action(
-            RunAction(123, ["ls"], str(tmp_path), "target", False, "dashboard", "none", str(tmp_path), "repo")
+            RunAction(
+                123,
+                ["ls"],
+                str(tmp_path),
+                "target",
+                False,
+                "dashboard",
+                "none",
+                str(tmp_path),
+                "repo",
+            )
         )
         assert started.wait(3)
         client.refresh()
@@ -655,7 +665,9 @@ def test_slow_persistence_does_not_block_action_finish(runtime_dir, tmp_path, mo
     monkeypatch.setattr(actions, "save", slow_save)
     paths.ensure_runtime_dir()
     server = StateServer(
-        FakeGatherer(), version="v1", engine=engine,
+        FakeGatherer(),
+        version="v1",
+        engine=engine,
         action_spawn=lambda *a, **kw: Child(kw["prompt_sock"]),
     )
     thread = threading.Thread(
@@ -671,7 +683,17 @@ def test_slow_persistence_does_not_block_action_finish(runtime_dir, tmp_path, mo
     try:
         client.wait_first_snapshot(3)
         client.run_action(
-            RunAction(123, ["ls"], str(tmp_path), "target", False, "dashboard", "none", str(tmp_path), "repo")
+            RunAction(
+                123,
+                ["ls"],
+                str(tmp_path),
+                "target",
+                False,
+                "dashboard",
+                "none",
+                str(tmp_path),
+                "repo",
+            )
         )
         assert saving.wait(3)
         finish_child.set()
@@ -709,7 +731,9 @@ def test_save_failure_does_not_prevent_action_completion(runtime_dir, tmp_path, 
     monkeypatch.setattr(actions, "save", fail_save)
     paths.ensure_runtime_dir()
     server = StateServer(
-        FakeGatherer(), version="v1", engine=engine,
+        FakeGatherer(),
+        version="v1",
+        engine=engine,
         action_spawn=lambda *a, **kw: Child(kw["prompt_sock"]),
     )
     thread = threading.Thread(
@@ -725,7 +749,17 @@ def test_save_failure_does_not_prevent_action_completion(runtime_dir, tmp_path, 
     try:
         client.wait_first_snapshot(3)
         client.run_action(
-            RunAction(123, ["ls"], str(tmp_path), "target", False, "dashboard", "none", str(tmp_path), "repo")
+            RunAction(
+                123,
+                ["ls"],
+                str(tmp_path),
+                "target",
+                False,
+                "dashboard",
+                "none",
+                str(tmp_path),
+                "repo",
+            )
         )
         _until(lambda: 123 in client.action_entries() and client.action_entries()[123].finished)
         assert client.action_entries()[123].status == 0
