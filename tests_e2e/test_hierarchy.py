@@ -48,9 +48,11 @@ def test_hierarchy_links_counts_and_live_renesting(
     page.locator(".parent").get_by_role("link", name="orch", exact=True).click()
     expect(page.get_by_role("heading", name="Children (2)")).to_be_visible()
     assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
-    expect(page.get_by_role("region", name="Children").get_by_role(
-        "link", name="first State: working Runner: codex/opus", exact=True
-    )).to_be_visible()
+    expect(
+        page.get_by_role("region", name="Children").get_by_role(
+            "link", name="first State: working Runner: codex/opus", exact=True
+        )
+    ).to_be_visible()
     child_row = (
         page.get_by_role("region", name="Children")
         .get_by_role("listitem")
@@ -92,7 +94,9 @@ def test_cross_repo_counts_and_missing_parent_labels_agree_across_views(
     expect(parent_row).to_contain_text("Orchestrator · 1 child")
     parent_row.locator(".name").click()
     expect(page.get_by_role("heading", name="Children (1)")).to_be_visible()
-    page.get_by_role("region", name="Children").get_by_role("link", name="task State: working", exact=True).click()
+    page.get_by_role("region", name="Children").get_by_role(
+        "link", name="task State: working", exact=True
+    ).click()
     expect(page.locator(".parent")).not_to_contain_text("orchestrator not listed")
     server.push(snapshot_of(repo_group("alpha"), repo_group("beta", child)))
     expect(page.locator(".parent")).to_contain_text("orchestrator not listed")
