@@ -208,7 +208,8 @@ def test_ai_enables_description_update_with_default_off_config(tmp_path, mocker,
     mocker.patch("jailbee.prompting.is_interactive", return_value=False)
     confirm = mocker.patch("jailbee.prompting._confirm")
     generate = mocker.patch(
-        "jailbee.pr_ai.generate_pr_text", return_value=PrText("Updated title", "Updated body", "unused")
+        "jailbee.pr_ai.generate_pr_text",
+        return_value=PrText("Updated title", "Updated body", "unused"),
     )
     edit = mocker.patch("jailbee.pr.edit_pr")
 
