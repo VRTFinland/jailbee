@@ -27,12 +27,12 @@ export function useAgentChat(available: () => boolean, deliver: (text: string) =
         status.value = ""
         error.value = ""
     }
-    function finish() {
+    function finish(confirmed = true) {
         if (timer !== undefined) clearTimeout(timer)
         timer = undefined
         awaiting.value = false
         expected = null
-        status.value = "Delivered"
+        status.value = confirmed ? "Delivered" : "Pasted; transcript confirmation unavailable"
     }
     function observe(entries: RenderedEntry[]) {
         if (expected === null || !entries.some(entry => entry.kind === "user" && !entry.meta &&
@@ -61,7 +61,7 @@ export function useAgentChat(available: () => boolean, deliver: (text: string) =
             else {
                 awaiting.value = true
                 status.value = "Waiting for transcript"
-                timer = setTimeout(finish, WAIT_MS)
+                timer = setTimeout(() => finish(false), WAIT_MS)
             }
             return true
         } catch {

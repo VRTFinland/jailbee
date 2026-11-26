@@ -9,6 +9,7 @@ describe("agent chat", () => {
         expect(chat.awaiting.value).toBe(true)
         await vi.advanceTimersByTimeAsync(30000)
         expect(chat.awaiting.value).toBe(false)
+        expect(chat.status.value).toBe("Pasted; transcript confirmation unavailable")
         vi.useRealTimers()
     })
     it("matches trimmed and sanitized transcript text and gates concurrent sends", async () => {
