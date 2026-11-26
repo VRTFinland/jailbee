@@ -369,8 +369,9 @@ result rather than running it on every status line refresh. These headers are
 an internal interface of the ChatGPT backend and may change without notice.
 Quota headers are read even from HTTP error replies, so an exhausted subscription
 can still report its windows on HTTP 429. Missing or garbled numeric values are
-shown as `?` in text and `null` in JSON (a window without a valid nonzero duration
-is omitted).
+shown as `?` in text and `null` in JSON. A window without a valid nonzero
+duration is omitted from text and is `null` in JSON; a reply without any valid
+windows is not treated as quota.
 
 Exit codes:
 
