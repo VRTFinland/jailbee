@@ -24,7 +24,7 @@ def log_in_with_pin(page: Page, url: str, pin: str) -> None:
 
 def open_quick_settings(page: Page) -> None:
     """Open the menu unless it is already open."""
-    trigger = page.get_by_role("button", name="Quick settings", exact=True)
+    trigger = page.get_by_role("button", name="Quick settings", exact=True, include_hidden=True)
     if trigger.get_attribute("aria-expanded") != "true":
         trigger.click()
     expect(page.get_by_role("dialog", name="Quick settings")).to_be_visible()

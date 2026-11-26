@@ -1,5 +1,7 @@
 import {describe, expect, it} from "vitest"
-import {mount} from "@vue/test-utils"
+import {enableAutoUnmount, mount} from "@vue/test-utils"
+import {afterEach} from "vitest"
+enableAutoUnmount(afterEach)
 import {createMemoryHistory} from "vue-router"
 import {createAppRouter} from "../router"
 import GalleryView from "./GalleryView.vue"
@@ -105,7 +107,7 @@ describe("GalleryView", () => {
             expect(panel.text()).toContain("Open drawer")
             expect(panel.text()).toContain("Container actions")
             expect(panel.findAll("label").map((label) => label.text())).toEqual([
-                "Container name", "Invalid name", "Disabled field", "Theme", "Disabled select",
+                "Container name", "Invalid name", "Disabled field", "Theme", "Native preferences", "Disabled select",
             ])
         }
     })

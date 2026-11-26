@@ -76,6 +76,7 @@ def test_gallery_snapshot(
     overlays: list[tuple[str, str, Literal["dialog", "menu", "listbox"]]] = [
         ("dialog", "Open centred dialog", "dialog"),
         ("drawer", "Open drawer", "dialog"),
+        ("preferences", "Open preferences", "dialog"),
         ("menu", "Container actions", "menu"),
         ("select", "Theme", "listbox"),
     ]
@@ -83,10 +84,19 @@ def test_gallery_snapshot(
         control = panel.get_by_role(
             "combobox" if name == "select" else "button", name=trigger, exact=True
         )
+        trigger_box = None
+        if name == "preferences":
+            control.evaluate("el => el.scrollIntoView({block: 'start'})")
+            trigger_box = control.bounding_box()
         control.click()
         overlay = page.get_by_role(role)
         expect(overlay).to_be_visible()
-        if role == "dialog":
+        if name == "preferences":
+            box = overlay.bounding_box()
+            assert box is not None and trigger_box is not None
+            assert 0 <= box["y"] - (trigger_box["y"] + trigger_box["height"]) <= 8
+            assert 0 <= box["x"] and box["x"] + box["width"] <= width
+        elif role == "dialog":
             box = overlay.bounding_box()
             assert box is not None
             if width == 390:

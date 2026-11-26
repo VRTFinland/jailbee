@@ -1,3 +1,5 @@
+import {config} from "@vue/test-utils"
+config.global.stubs.DialogPortal = {template: "<slot />"}
 import {flushPromises, mount} from "@vue/test-utils"
 import {afterEach, beforeEach, describe, expect, it, vi} from "vitest"
 import {createMemoryHistory, createRouter} from "vue-router"
@@ -67,23 +69,31 @@ describe("Quick settings", () => {
         expect(wrapper.find('[aria-label="Show thinking"]').exists()).toBe(false)
         await wrapper.setProps({context: "session"})
         expect(wrapper.find('[aria-label="Active"]').exists()).toBe(false)
-        await wrapper.get('[aria-label="Show thinking"]').setValue(true)
+        await wrapper.get('[aria-label="Show thinking"]').trigger("click")
         expect(settings.showThinking).toBe(true)
         await wrapper.get('[aria-label="Agent context"]').setValue("collapsed")
         expect(settings.agentContext).toBe("collapsed")
-        await wrapper.get('[aria-label="Follow new messages"]').setValue(false)
+        await wrapper.get('[aria-label="Follow new messages"]').trigger("click")
         expect(localStorage.getItem("jailbee.followNewMessages")).toBe("0")
         await wrapper.setProps({context: null})
         expect(wrapper.find(".view-heading").exists()).toBe(false)
     })
 
+    it("activates a preference through its visible text label", async () => {
+        const wrapper = await menu("session")
+        const label = wrapper.findAll("label").find(label => label.text() === "Show thinking")!
+        ;(label.element as HTMLLabelElement).click()
+        await flushPromises()
+        expect(settings.showThinking).toBe(true)
+    })
+
     it("edits the existing e-ink follow preference independently of normal follow", async () => {
         settings.displayProfile = "eink"
         const wrapper = await menu("session")
-        await wrapper.get('[aria-label="Follow new messages"]').setValue(true)
+        await wrapper.get('[aria-label="Follow new messages"]').trigger("click")
         expect(localStorage.getItem("jailbee.einkFollow")).toBe("1")
         expect(settings.followNewMessages).toBe(true)
-        await wrapper.get('[aria-label="Follow new messages"]').setValue(false)
+        await wrapper.get('[aria-label="Follow new messages"]').trigger("click")
         expect(settings.einkFollow).toBe(false)
     })
 
@@ -119,7 +129,7 @@ describe("Quick settings", () => {
 
     it("repaginates when session metadata arrives after opening", async () => {
         vi.stubGlobal("innerHeight", 350)
-        const styles = vi.spyOn(window, "getComputedStyle").mockReturnValue({paddingTop: "8px", paddingBottom: "8px", borderTopWidth: "1px", borderBottomWidth: "1px"} as CSSStyleDeclaration)
+        const styles = vi.spyOn(window, "getComputedStyle").mockReturnValue({getPropertyValue: () => "4px", paddingTop: "8px", paddingBottom: "8px", borderTopWidth: "1px", borderBottomWidth: "1px"} as unknown as CSSStyleDeclaration)
         const geometry = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
             return {top: this.classList.contains("quick-panel") ? 50 : 0, height: 50} as DOMRect
         })
@@ -196,7 +206,9 @@ describe("Quick settings", () => {
         expect(wrapper.find('[role="dialog"]').exists()).toBe(false)
         expect(document.activeElement).toBe(icon.element)
         await icon.trigger("click")
-        await wrapper.get(".quick-backdrop").trigger("click")
+        await new Promise(resolve => setTimeout(resolve, 30))
+        await wrapper.get(".ui-dialog-scrim").trigger("pointerdown", {button: 0})
+        await flushPromises()
         expect(wrapper.find('[role="dialog"]').exists()).toBe(false)
         expect(document.activeElement).toBe(icon.element)
     })

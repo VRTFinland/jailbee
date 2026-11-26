@@ -109,10 +109,11 @@ describe("SessionView", () => {
         await wrapper.vm.$nextTick()
         expect(queryByRole(document.body, "dialog", {name: "Jump to"})).toBeNull()
         await wrapper.get('[aria-label="Quick settings"]').trigger("click")
-        await wrapper.get('[data-action="jump"]').trigger("click")
+        await flushPromises()
+        getByRole(document.body, "button", {name: "Jump to…"}).click()
         await flushPromises()
         expect(getByRole(document.body, "dialog", {name: "Jump to"})).toBeTruthy()
-        getByRole(getByRole(document.body, "dialog", {name: "Jump to"}), "button", {name: "Close dialog"}).click()
+        getByRole(getByRole(document.body, "dialog", {name: "Jump to"}), "button", {name: "Close"}).click()
         await flushPromises()
         await wrapper.get('button.page-indicator').trigger("click")
         await flushPromises()
@@ -123,11 +124,11 @@ describe("SessionView", () => {
     it("does not open jump over the quick settings dialog", async () => {
         const {wrapper} = await mountSession(vi.fn().mockResolvedValue(jsonResponse(200, transcript)))
         await wrapper.get('[aria-label="Quick settings"]').trigger("click")
-        expect(wrapper.findAll('[role="dialog"]')).toHaveLength(1)
+        expect(document.body.querySelectorAll('[role="dialog"]')).toHaveLength(1)
         document.activeElement?.dispatchEvent(new KeyboardEvent("keydown", {key: "j", bubbles: true}))
         await wrapper.vm.$nextTick()
         expect(queryByRole(document.body, "dialog", {name: "Jump to"})).toBeNull()
-        expect(wrapper.findAll('[role="dialog"]')).toHaveLength(1)
+        expect(document.body.querySelectorAll('[role="dialog"]')).toHaveLength(1)
     })
 
     it("jumps to a selected prompt and latest answer", async () => {
@@ -155,7 +156,7 @@ describe("SessionView", () => {
         await wrapper.vm.$nextTick()
         await flushPromises()
         const panel = getByRole(document.body, "dialog", {name: "Jump to"})
-        expect(Array.from(panel.querySelectorAll("button"), button => button.getAttribute("aria-label") ?? button.textContent)).toEqual(["Close dialog", "Start", "Latest answer", "End", "Fix it", "Next question"])
+        expect(Array.from(panel.querySelectorAll("button"), button => button.getAttribute("aria-label") ?? button.textContent)).toEqual(["Close", "Start", "Latest answer", "End", "Fix it", "Next question"])
     })
     it("fetches the session and renders prompts and answers with their models", async () => {
         const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, transcript))
@@ -175,9 +176,9 @@ describe("SessionView", () => {
     it("shows the session metadata in its menu", async () => {
         const {wrapper} = await mountSession(vi.fn().mockResolvedValue(jsonResponse(200, transcript)))
         await wrapper.get('[aria-label="Quick settings"]').trigger("click")
-        expect(wrapper.get('[aria-label="Session"]').text()).toContain("claude")
-        expect(wrapper.get('[aria-label="Session"]').text()).toContain("claude-opus-5-5")
-        expect(wrapper.get('[aria-label="Session"]').text()).toContain("s-1")
+        expect(document.body.querySelector('[aria-label="Session"]')?.textContent).toContain("claude")
+        expect(document.body.querySelector('[aria-label="Session"]')?.textContent).toContain("claude-opus-5-5")
+        expect(document.body.querySelector('[aria-label="Session"]')?.textContent).toContain("s-1")
     })
 
     it("folds each tool call with its result attached, not as a separate entry", async () => {

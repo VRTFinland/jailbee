@@ -1,8 +1,12 @@
 <script setup lang="ts">
-import {computed, inject, nextTick, onBeforeUnmount, onMounted, ref, watch} from "vue"
+import {computed, inject, nextTick, onBeforeUnmount, onMounted, ref, useId, watch} from "vue"
 import {useRoute, type RouteLocationRaw} from "vue-router"
 import {FONT_SIZE_RANGE, settings, THEMES, THEME_LABELS, updateSettings} from "../settings"
 import IconButton from "./ui/IconButton.vue"
+import Button from "./ui/Button.vue"
+import Dialog from "./ui/Dialog.vue"
+import Select from "./ui/Select.vue"
+import Switch from "./ui/Switch.vue"
 
 const props = defineProps<{context?: "containers" | "session" | null; session?: {agent: string; models: string[]; id: string} | null; parent?: {label: string; to: RouteLocationRaw}}>()
 const route = useRoute()
@@ -20,8 +24,7 @@ const fonts = [{field: "bodyFontSize", label: "Body", name: "body"}, {field: "co
 const filters = [{mode: "all", label: "All"}, {mode: "running", label: "Running"}, {mode: "active", label: "Active"}] as const
 const filtered = computed(() => props.context === "containers" && settings.containerFilter !== "all")
 const follow = computed(() => settings.displayProfile === "eink" ? settings.einkFollow : settings.followNewMessages)
-function setFollow(event: Event) {
-    const enabled = (event.target as HTMLInputElement).checked
+function setFollow(enabled: boolean) {
     updateSettings(settings.displayProfile === "eink" ? {einkFollow: enabled} : {followNewMessages: enabled})
 }
 function cycleTheme() {
@@ -34,20 +37,17 @@ let pages: HTMLElement[][] = []
 // Measure indivisible rows, not a fixed item count: font size and phone height
 // both change how many touch targets fit. No popover scroll is needed.
 function paginate() {
-    if (!panel.value) return
-    panel.value.style.transform = ""
-    const rect = panel.value.getBoundingClientRect()
-    const shift = rect.left < 8 ? 8 - rect.left : Math.min(0, window.innerWidth - 8 - rect.right)
-    panel.value.style.transform = `translateX(${shift}px)`
-    const rows = Array.from(panel.value.querySelectorAll<HTMLElement>(".menu-row"))
+    const element = panel()
+    if (!element) return
+    const rows = Array.from(element.querySelectorAll<HTMLElement>(".menu-row"))
     rows.forEach(row => { row.hidden = false })
-    const controls = panel.value.querySelector<HTMLElement>(".menu-pages")
+    const controls = element.querySelector<HTMLElement>(".menu-pages")
     if (controls) controls.hidden = false
-    const styles = getComputedStyle(panel.value)
+    const styles = getComputedStyle(element)
     const inset = parseFloat(styles.paddingTop) + parseFloat(styles.paddingBottom)
         + parseFloat(styles.borderTopWidth) + parseFloat(styles.borderBottomWidth)
     const guard = document.querySelector(".bottom-guard")?.getBoundingClientRect().height ?? 32
-    const available = Math.max(1, window.innerHeight - panel.value.getBoundingClientRect().top
+    const available = Math.max(1, window.innerHeight - element.getBoundingClientRect().top
         - guard - inset - (controls?.getBoundingClientRect().height ?? 0))
     pages = [[]]
     let height = 0
@@ -71,7 +71,7 @@ function showPage() {
 function turn(delta: number) {
     page.value = Math.max(0, Math.min(pageCount.value - 1, page.value + delta))
     showPage()
-    panel.value?.focus({preventScroll: true})
+    panel()?.focus({preventScroll: true})
 }
 watch(() => [props.context, props.session, props.parent, settings.bodyFontSize, settings.codeFontSize, settings.displayProfile], () => {
     page.value = 0
@@ -80,9 +80,23 @@ watch(() => [props.context, props.session, props.parent, settings.bodyFontSize, 
 const open = ref(false)
 const triggerButton = ref<InstanceType<typeof IconButton> | null>(null)
 const trigger = computed<HTMLButtonElement | null>(() => triggerButton.value?.$el ?? null)
-const panel = ref<HTMLElement | null>(null)
+const panelId = `quick-settings-${useId()}`
+function panel() { return document.getElementById(panelId) }
+let restoreOnClose = true
+function returnFocus(event: Event) {
+    event.preventDefault()
+    if (restoreOnClose) trigger.value?.focus({preventScroll: true})
+}
+watch(open, async value => {
+    if (!value) return
+    restoreOnClose = true
+    page.value = 0
+    await nextTick()
+    paginate()
+})
 
 async function close(restoreFocus = true) {
+    restoreOnClose = restoreFocus
     open.value = false
     if (restoreFocus) {
         await nextTick()
@@ -90,24 +104,6 @@ async function close(restoreFocus = true) {
     }
 }
 watch(() => route.path, () => { if (open.value) void close(false) })
-async function toggle() {
-    if (open.value) return close()
-    open.value = true
-    page.value = 0
-    await nextTick()
-    paginate()
-    focusable()[0]?.focus({preventScroll: true})
-}
-function focusable(): HTMLElement[] {
-    return Array.from(panel.value?.querySelectorAll<HTMLElement>("button:not(:disabled), a, input, select") ?? [])
-        .filter(el => !el.closest("[hidden]"))
-}
-function onEscape(event: KeyboardEvent) {
-    if (open.value && event.key === "Escape") {
-        event.preventDefault()
-        void close()
-    }
-}
 function onKey(event: KeyboardEvent) {
     if (!open.value) return
     if (["PageDown", "PageUp"].includes(event.key) || (settings.displayProfile === "eink" && ["n", "m"].includes(event.key) && !(event.target instanceof HTMLSelectElement))) {
@@ -115,110 +111,80 @@ function onKey(event: KeyboardEvent) {
         event.stopImmediatePropagation()
         turn(["PageDown", "m"].includes(event.key) ? 1 : -1)
     }
-    if (event.key === "Tab") {
-        const controls = focusable()
-        const first = controls[0]
-        const last = controls[controls.length - 1]
-        if (event.shiftKey && (document.activeElement === first || document.activeElement === panel.value)) {
-            event.preventDefault()
-            last?.focus()
-        } else if (!event.shiftKey && document.activeElement === last) {
-            event.preventDefault()
-            first?.focus()
-        }
-    }
+
 }
 onMounted(() => {
     window.addEventListener("keydown", onKey, true)
-    window.addEventListener("keydown", onEscape)
     window.addEventListener("resize", paginate)
 })
 onBeforeUnmount(() => {
     window.removeEventListener("keydown", onKey, true)
-    window.removeEventListener("keydown", onEscape)
     window.removeEventListener("resize", paginate)
 })
 </script>
 
 <template>
     <div class="quick-settings">
-        <IconButton ref="triggerButton" icon="menu" label="Quick settings" class="quick-trigger"
-            :variant="settings.showTitleBar ? 'text' : 'tonal'" aria-haspopup="dialog" :aria-expanded="open" :aria-describedby="filtered ? 'filter-description' : undefined" @click="toggle" />
-        <span v-if="filtered" id="filter-description" class="filter-marker"><span class="visually-hidden">Container filter enabled</span></span>
-        <div v-if="open" class="quick-backdrop" @click="close()" />
-        <section v-if="open" ref="panel" class="quick-panel" role="dialog" aria-label="Quick settings" aria-modal="true" tabindex="-1">
+        <Dialog v-model:open="open" title="Quick settings" placement="popover" preserve-scroll hide-header
+            :id="panelId" class="quick-panel" aria-label="Quick settings" @close-auto-focus="returnFocus" @positioned="paginate">
+        <template #trigger><IconButton ref="triggerButton" icon="menu" label="Quick settings" class="quick-trigger"
+            :variant="settings.showTitleBar ? 'text' : 'tonal'" aria-haspopup="dialog" :aria-expanded="open" :aria-describedby="filtered ? 'filter-description' : undefined" /></template>
+
             <router-link v-if="!settings.showTitleBar && parent" class="menu-row" :to="parent.to" @click="close(false)">Back to {{ parent.label }}</router-link>
             <div v-if="session" class="menu-row session-info" aria-label="Session">
                 <strong>Session</strong><span>Agent: {{ session.agent }}</span><span>Models: {{ session.models.join(", ") || "—" }}</span><span>Session ID: {{ session.id }}</span>
             </div>
             <div v-for="font in fonts" :key="font.field" class="menu-row font-row">
                 <span>{{ font.label }}: {{ settings[font.field] }}px</span>
-                <button type="button" :aria-label="`Decrease ${font.name} font size`"
+                <IconButton :label="`Decrease ${font.name} font size`"
                     :disabled="settings[font.field] <= FONT_SIZE_RANGE.min"
-                    @click="updateSettings({[font.field]: settings[font.field] - 1})">&minus;</button>
-                <button type="button" :aria-label="`Increase ${font.name} font size`"
+                    @click="updateSettings({[font.field]: settings[font.field] - 1})" icon="remove" />
+                <IconButton :label="`Increase ${font.name} font size`"
                     :disabled="settings[font.field] >= FONT_SIZE_RANGE.max"
-                    @click="updateSettings({[font.field]: settings[font.field] + 1})">+</button>
+                    @click="updateSettings({[font.field]: settings[font.field] + 1})" icon="add" />
             </div>
-            <button type="button" class="menu-row theme-cycle" :aria-label="`Theme: ${THEME_LABELS[settings.theme]}`" @click="cycleTheme">Theme: {{ THEME_LABELS[settings.theme] }}</button>
+            <Button type="button" class="menu-row theme-cycle" :aria-label="`Theme: ${THEME_LABELS[settings.theme]}`" @click="cycleTheme">Theme: {{ THEME_LABELS[settings.theme] }}</Button>
             <template v-if="context">
                 <div class="menu-row view-heading">View</div>
                 <div v-if="context === 'containers'" role="group" aria-label="Container filter">
-                    <button v-for="filter in filters" :key="filter.mode" type="button" class="menu-row"
+                    <Button v-for="filter in filters" :key="filter.mode" type="button" class="menu-row" :variant="settings.containerFilter === filter.mode ? 'tonal' : 'text'"
                         :aria-label="filter.label" :title="filter.label" :aria-pressed="settings.containerFilter === filter.mode"
-                        @click="updateSettings({containerFilter: filter.mode})">{{ filter.label }}</button>
+                        @click="updateSettings({containerFilter: filter.mode})">{{ filter.label }}</Button>
                 </div>
                 <template v-else>
-                    <button type="button" class="menu-row" data-action="jump" @click="showJump">Jump to…</button>
-                    <label class="menu-row"><input type="checkbox" aria-label="Follow new messages" :checked="follow" @change="setFollow" /> Follow new messages</label>
-                    <label class="menu-row"><input type="checkbox" aria-label="Show thinking" :checked="settings.showThinking" @change="updateSettings({showThinking: ($event.target as HTMLInputElement).checked})" /> Show thinking</label>
-                    <label class="menu-row context-row">Agent context
-                        <select aria-label="Agent context" :value="settings.agentContext" @change="updateSettings({agentContext: ($event.target as HTMLSelectElement).value as 'hidden' | 'collapsed' | 'shown'})">
-                            <option value="hidden">Hidden</option><option value="collapsed">Collapsed</option><option value="shown">Shown</option>
-                        </select>
-                    </label>
+                    <Button type="button" class="menu-row" data-action="jump" @click="showJump">Jump to…</Button>
+                    <label class="menu-row toggle-row"><span>Follow new messages</span><Switch label="Follow new messages" :model-value="follow" @update:model-value="setFollow" /></label>
+                    <label class="menu-row toggle-row"><span>Show thinking</span><Switch label="Show thinking" :model-value="settings.showThinking" @update:model-value="updateSettings({showThinking: $event})" /></label>
+                    <Select native class="menu-row context-row" label="Agent context" aria-label="Agent context" :model-value="settings.agentContext"
+                        :options="[{value: 'hidden', label: 'Hidden'}, {value: 'collapsed', label: 'Collapsed'}, {value: 'shown', label: 'Shown'}]"
+                        @update:model-value="updateSettings({agentContext: $event as 'hidden' | 'collapsed' | 'shown'})" />
                 </template>
             </template>
-            <button type="button" class="menu-row settings-action" @click="showSettings">Settings</button>
+            <Button type="button" class="menu-row settings-action" @click="showSettings">Settings</Button>
             <nav class="menu-pages" hidden aria-label="Settings pages">
-                <button type="button" aria-label="Previous settings page" :disabled="page === 0" @click="turn(-1)">&uarr;</button>
+                <IconButton label="Previous settings page" :disabled="page === 0" @click="turn(-1)" icon="page-up" />
                 <span role="status">{{ page + 1 }} / {{ pageCount }}</span>
-                <button type="button" aria-label="Next settings page" :disabled="page === pageCount - 1" @click="turn(1)">&darr;</button>
+                <IconButton label="Next settings page" :disabled="page === pageCount - 1" @click="turn(1)" icon="page-down" />
             </nav>
-        </section>
+        </Dialog>
+        <span v-if="filtered" id="filter-description" class="filter-marker"><span class="visually-hidden">Container filter enabled</span></span>
+
     </div>
 </template>
 
 <style scoped>
-.quick-settings { position: relative; flex: none; z-index: 40; margin-left: auto; }
+.quick-settings { position: relative; flex: none; z-index: var(--md-layer-sticky); margin-left: auto; }
+.quick-settings:not(.title-menu) { position: fixed; top: calc(var(--app-banner-height, 0) + var(--quick-trigger-top)); right: var(--md-space-12); }
 .session-info { flex-direction: column; align-items: flex-start; overflow-wrap: anywhere; user-select: text; }
-.quick-settings:not(.title-menu) { position: fixed; top: calc(var(--app-banner-height, 0px) + var(--quick-trigger-top)); right: 0.75rem; }
-.filter-marker { pointer-events: none; }
-.quick-backdrop { position: fixed; inset: 0; background: rgb(0 0 0 / 20%); z-index: -1; }
-.quick-panel { position: absolute; top: calc(var(--md-target-min) + var(--md-space-4)); right: 0; width: min(22rem, calc(100vw - 2rem)); padding: 0.5rem; border: 1px solid var(--border-strong); border-radius: var(--radius); background: var(--surface); color: var(--text); box-shadow: 0 4px 16px rgb(0 0 0 / 20%); }
-.menu-row { display: flex; align-items: center; gap: 0.5rem; box-sizing: border-box; width: 100%; min-height: 2.75rem; padding: 0.25rem 0.5rem; margin: 0; color: inherit; text-decoration: none; font: inherit; border: 0; background: transparent; text-align: left; }
+.menu-row { display: flex; align-items: center; gap: var(--md-space-8); width: 100%; margin: 0; }
 .menu-row[hidden], .menu-pages[hidden] { display: none; }
-.menu-row[aria-pressed="true"] { background: var(--notice-bg); outline: 2px solid var(--accent); outline-offset: -2px; }
 .font-row { flex-wrap: wrap; }
 .font-row > span { flex: 1 1 5rem; }
 .font-row button { flex-shrink: 0; }
-.quick-panel button, .quick-panel select { font: inherit; color: inherit; min-height: 2.75rem; }
-.font-row button, .menu-pages button { min-width: 2.75rem; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
-.context-row { justify-content: space-between; flex-wrap: wrap; }
-.view-heading { color: var(--muted); border-top: 1px solid var(--border); }
-.menu-pages { display: flex; align-items: center; justify-content: space-between; padding-top: 0.5rem; }
-.visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
-.filter-marker { position: absolute; top: 0.2rem; right: 0.2rem; width: 0.5rem; height: 0.5rem; border-radius: 50%; background: var(--accent); border: 1px solid var(--text); }
-[data-profile="eink"] .quick-panel, [data-theme="eink"] .quick-panel { box-shadow: none; }
-[data-profile="eink"] .quick-backdrop { background: transparent; }
-/* Keep a full touch-target row plus paging controls reachable in landscape,
-   even when the document's reading font is set to its maximum. */
-@media (max-height: 480px) {
-    .quick-panel { font-size: min(1rem, 16px); padding: 8px; }
-    .menu-row { min-height: 44px; padding: 4px 8px; gap: 8px; }
-    .quick-panel button, .quick-panel select { min-height: 44px; }
-    .font-row button, .menu-pages button { min-width: 44px; }
-    .font-row > span { flex-basis: 80px; }
-    .menu-pages { padding-top: 8px; }
-}
+.toggle-row { justify-content: space-between; }
+.context-row { flex-wrap: wrap; }
+.view-heading { padding-block: var(--md-space-8); }
+.menu-pages { display: flex; align-items: center; justify-content: space-between; padding-top: var(--md-space-8); }
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+.filter-marker { pointer-events: none; position: absolute; top: var(--md-space-4); right: var(--md-space-4); width: var(--md-space-8); height: var(--md-space-8); border-radius: var(--md-shape-full); background: var(--md-primary); border: 1px solid var(--md-on-surface); }
 </style>

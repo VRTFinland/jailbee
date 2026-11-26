@@ -27,7 +27,7 @@ def test_floating_trigger_has_opaque_surface_and_panel_tracks_its_target_size(
         theme,
     )
     page.reload()
-    trigger = page.get_by_role("button", name="Quick settings", exact=True)
+    trigger = page.get_by_role("button", name="Quick settings", exact=True, include_hidden=True)
     expect(trigger).to_be_visible()
     assert trigger.evaluate("el => getComputedStyle(el).backgroundColor") not in {
         "transparent",
@@ -53,7 +53,7 @@ def test_floating_trigger_has_opaque_surface_and_panel_tracks_its_target_size(
 def test_menu_is_at_right_edge_and_does_not_overlap_title(logged_in: Page, width: int) -> None:
     page = logged_in
     page.set_viewport_size({"width": width, "height": 600})
-    icon = page.get_by_role("button", name="Quick settings", exact=True)
+    icon = page.get_by_role("button", name="Quick settings", exact=True, include_hidden=True)
     heading = page.get_by_role("heading", name="JailBee", exact=True)
     expect(icon).to_be_visible()
     icon_box = icon.bounding_box()
@@ -86,14 +86,14 @@ def test_menu_context_paging_and_live_preferences(
         page.get_by_role("radio", name="E-ink (page turns, no animation, slow refresh)").check()
         page.get_by_role("button", name="Close settings").click()
         expect(page.get_by_role("dialog", name="Settings")).to_have_count(0)
-    icon = page.get_by_role("button", name="Quick settings", exact=True)
+    icon = page.get_by_role("button", name="Quick settings", exact=True, include_hidden=True)
     open_quick_settings(page)
     panel = page.get_by_role("dialog", name="Quick settings")
     expect(panel.get_by_role("button", name="All", exact=True)).to_have_count(0)
     panel.get_by_role("button", name="Increase body font size").click()
     expect(page.locator("html")).to_have_css("font-size", "17px")
-    reveal_setting(page, "checkbox", "Show thinking")
-    panel.get_by_role("checkbox", name="Show thinking").check()
+    reveal_setting(page, "switch", "Show thinking")
+    panel.get_by_role("switch", name="Show thinking").check()
     reveal_setting(page, "combobox", "Agent context")
     panel.get_by_role("combobox", name="Agent context").select_option("collapsed")
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
@@ -120,7 +120,7 @@ def test_menu_context_paging_and_live_preferences(
     expect(icon).to_be_focused()
     open_settings_overlay(page)
     expect(page.get_by_role("slider", name="Body:")).to_have_value("17")
-    expect(page.get_by_role("checkbox", name="Show thinking")).to_be_checked()
+    expect(page.get_by_role("switch", name="Show thinking")).to_be_checked()
     expect(page.get_by_role("combobox", name="Agent context")).to_have_value("collapsed")
     page.get_by_role("radio", name="Dark", exact=True).check()
     page.get_by_role("button", name="Close settings").click()
@@ -128,13 +128,13 @@ def test_menu_context_paging_and_live_preferences(
     open_quick_settings(page)
     expect(panel.get_by_role("button", name="Theme: Dark", exact=True)).to_be_visible()
     # Outside click dismisses and returns focus without moving the document.
-    page.locator(".quick-backdrop").click(position={"x": 5, "y": 200})
+    page.locator(".ui-dialog-scrim").click(position={"x": 1, "y": 200})
     expect(icon).to_be_focused()
     page.goto(f"{server.url}/#/containers/work-main")
     expect(page.get_by_role("heading", name="work-main", exact=True)).to_be_visible()
     open_quick_settings(page)
     expect(panel.locator(".view-heading")).to_have_count(0)
-    expect(panel.get_by_role("checkbox")).to_have_count(0)
+    expect(panel.get_by_role("switch")).to_have_count(0)
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
     page.keyboard.press("Escape")
     page.goto(f"{server.url}/#/")
@@ -211,7 +211,7 @@ def test_small_viewport_pages_show_every_context_row_in_order(
             panel.locator(".menu-row:visible").evaluate_all(
                 "rows => rows.map(row => (row.classList.contains('font-row') "
                 "? row.querySelector('span').innerText : row.classList.contains('context-row') "
-                "? row.childNodes[0].textContent : row.innerText)"
+                "? row.querySelector('label').textContent : row.innerText)"
                 ".replace(/\\s+/g, ' ').trim())"
             )
         )
@@ -273,7 +273,7 @@ def test_resizing_menu_clamps_pages_and_keeps_all_rows_reachable(
             panel.locator(".menu-row:visible").evaluate_all(
                 "rows => rows.map(row => (row.classList.contains('font-row') "
                 "? row.querySelector('span').innerText : row.classList.contains('context-row') "
-                "? row.childNodes[0].textContent : row.innerText)"
+                "? row.querySelector('label').textContent : row.innerText)"
                 ".replace(/\\s+/g, ' ').trim())"
             )
         )
@@ -331,13 +331,15 @@ def test_escape_after_font_stepper_disables_closes_menu(logged_in: Page) -> None
     page.evaluate("document.activeElement.blur()")
     page.keyboard.press("Escape")
     expect(panel).to_have_count(0)
-    expect(page.get_by_role("button", name="Quick settings", exact=True)).to_be_focused()
+    expect(
+        page.get_by_role("button", name="Quick settings", exact=True, include_hidden=True)
+    ).to_be_focused()
 
 
 def test_escape_on_trigger_closes_open_menu(logged_in: Page) -> None:
     page = logged_in
     open_quick_settings(page)
-    icon = page.get_by_role("button", name="Quick settings", exact=True)
+    icon = page.get_by_role("button", name="Quick settings", exact=True, include_hidden=True)
     icon.focus()
     page.keyboard.press("Escape")
     expect(page.get_by_role("dialog", name="Quick settings")).to_have_count(0)
@@ -353,7 +355,9 @@ def test_escape_on_closed_select_closes_menu_and_restores_focus(
     panel.get_by_role("combobox", name="Agent context").focus()
     page.keyboard.press("Escape")
     expect(panel).to_have_count(0)
-    expect(page.get_by_role("button", name="Quick settings", exact=True)).to_be_focused()
+    expect(
+        page.get_by_role("button", name="Quick settings", exact=True, include_hidden=True)
+    ).to_be_focused()
 
 
 def test_menu_follow_opt_out_keeps_live_entries_from_scrolling(
@@ -363,8 +367,8 @@ def test_menu_follow_opt_out_keeps_live_entries_from_scrolling(
     page.get_by_role("button", name="Latest answer").click()
     page.get_by_role("button", name="Scroll to bottom").click()
     wait_for_scroll_settled(page)
-    reveal_setting(page, "checkbox", "Follow new messages")
-    page.get_by_role("checkbox", name="Follow new messages", exact=True).uncheck()
+    reveal_setting(page, "switch", "Follow new messages")
+    page.get_by_role("switch", name="Follow new messages", exact=True).uncheck()
     page.keyboard.press("Escape")
     start = page.evaluate("scrollY")
     with transcript.open("a") as stream:

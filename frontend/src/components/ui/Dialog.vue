@@ -1,32 +1,59 @@
 <script setup lang="ts">
-import {ref} from "vue"
+import {computed, nextTick, onBeforeUnmount, ref, watch} from "vue"
 import {DialogRoot, DialogTrigger, DialogPortal, DialogOverlay, DialogContent, DialogTitle, DialogDescription, DialogClose} from "reka-ui"
 import IconButton from "./IconButton.vue"
 import {useOverlayScope} from "./overlayScope"
 
 defineOptions({inheritAttrs: false})
-withDefaults(defineProps<{
+const props = withDefaults(defineProps<{
     title: string
     description?: string
-    placement?: "dialog" | "drawer"
-}>(), {placement: "dialog", description: undefined})
+    placement?: "dialog" | "drawer" | "popover"
+    closeLabel?: string
+    /** Live readers keep following the document while preferences are open. */
+    preserveScroll?: boolean
+    /** Paginated forms account for their own header and dismissal control. */
+    hideHeader?: boolean
+}>(), {placement: "dialog", description: undefined, closeLabel: "Close dialog", preserveScroll: false, hideHeader: false})
+const emit = defineEmits<{positioned: []}>()
 const open = defineModel<boolean>("open", {default: false})
 const anchor = ref<HTMLElement>()
 const scope = useOverlayScope(anchor, open)
+const position = ref<Record<string, string>>()
+const anchored = computed(() => props.placement === "popover")
+function place() {
+    if (!anchored.value || !anchor.value) return
+    const trigger = anchor.value.querySelector("button")?.getBoundingClientRect()
+    if (!trigger) return
+    position.value = {
+        top: `calc(${trigger.bottom}px + var(--md-space-4))`,
+        right: `clamp(var(--md-space-4), ${window.innerWidth - trigger.right}px, calc(100vw - min(22rem, 100vw - var(--md-space-32)) - var(--md-space-4)))`,
+    }
+    void nextTick(() => emit("positioned"))
+}
+watch(open, async value => {
+    if (value) {
+        await nextTick()
+        place()
+        window.addEventListener("resize", place)
+    } else window.removeEventListener("resize", place)
+})
+onBeforeUnmount(() => window.removeEventListener("resize", place))
 </script>
 
 <template>
     <span ref="anchor">
         <DialogRoot v-model:open="open">
             <DialogTrigger v-if="$slots.trigger" as-child><slot name="trigger" /></DialogTrigger>
-            <DialogPortal>
-                <div v-if="open" v-bind="scope" class="ui-overlay-scope">
-                    <DialogOverlay class="ui-dialog-scrim" />
-                    <DialogContent class="ui-dialog ui-focus-ring" :data-placement="placement"
+            <DialogPortal v-if="open">
+                <div v-bind="scope" class="ui-overlay-scope">
+                    <div v-if="preserveScroll" class="ui-dialog-scrim" @pointerdown.left.self.prevent />
+                    <DialogOverlay v-else class="ui-dialog-scrim" />
+                    <DialogContent class="ui-dialog ui-focus-ring" :data-placement="placement" :style="position"
                         aria-modal="true" v-bind="{...$attrs, ...(!description && {'aria-describedby': undefined})}">
-                        <header class="ui-dialog-header">
+                        <header class="ui-dialog-header" :class="{'ui-dialog-hidden-header': hideHeader}">
                             <DialogTitle class="ui-dialog-title">{{ title }}</DialogTitle>
-                            <DialogClose as-child><IconButton icon="close" label="Close dialog" /></DialogClose>
+                            <DialogClose v-if="!hideHeader" as-child><IconButton icon="close" :label="closeLabel" /></DialogClose>
                         </header>
                         <DialogDescription v-if="description" class="ui-dialog-description">{{ description }}</DialogDescription>
                         <slot :close="() => open = false" />
@@ -44,6 +71,7 @@ const scope = useOverlayScope(anchor, open)
 <style src="./overlays.css"></style>
 <style scoped>
 .ui-dialog-scrim {
+    pointer-events: auto;
     position: fixed;
     inset: 0;
     z-index: var(--md-layer-scrim);
@@ -64,6 +92,20 @@ const scope = useOverlayScope(anchor, open)
     font-size: var(--md-type-body-large-size);
     line-height: var(--md-type-body-large-line-height);
     animation: ui-overlay-appear var(--md-motion-duration) var(--md-motion-easing);
+}
+.ui-dialog[data-placement="popover"] {
+    inset: auto;
+    width: min(22rem, calc(100vw - var(--md-space-32)));
+    max-height: none;
+    padding: var(--md-space-8);
+    border-radius: var(--md-shape-medium);
+}
+.ui-dialog-hidden-header {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
 }
 .ui-dialog-header {
     display: flex;

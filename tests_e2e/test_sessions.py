@@ -224,7 +224,7 @@ def test_thinking_is_hidden_until_enabled_in_settings(session_page: Page) -> Non
     open_session(page)
     expect(page.get_by_text("Read auth.py first.", exact=True)).to_have_count(0)
     open_settings(page)
-    page.get_by_role("checkbox", name="Show thinking").check()
+    page.get_by_role("switch", name="Show thinking").check()
     page.go_back()
     expect(page.get_by_text("Read auth.py first.", exact=True)).to_be_visible()
     expect(page.get_by_text("Done.", exact=True)).to_be_visible()

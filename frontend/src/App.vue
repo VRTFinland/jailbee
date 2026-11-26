@@ -4,7 +4,7 @@
 import {nextTick, onBeforeUnmount, onMounted, provide, ref, watch} from "vue"
 import SettingsPanel from "./components/SettingsPanel.vue"
 import Button from "./components/ui/Button.vue"
-import IconButton from "./components/ui/IconButton.vue"
+import Dialog from "./components/ui/Dialog.vue"
 import {fetchServerMode, getToken} from "./api"
 import {useRoute, useRouter} from "vue-router"
 import {useDashboard} from "./dashboard"
@@ -14,7 +14,6 @@ const route = useRoute()
 const router = useRouter()
 const dashboard = useDashboard()
 const settingsOpen = ref(false)
-const settingsDialog = ref<HTMLElement | null>(null)
 let settingsTrigger: HTMLElement | null = null
 let scrollRestoration: ScrollRestoration | null = null
 let restorationFrame: number | undefined
@@ -40,7 +39,6 @@ function showSettings(trigger: HTMLElement | null) {
         history.pushState({...history.state, jailbeeSettings: route.fullPath}, "", location.href)
     }
     settingsOpen.value = true
-    void nextTick(() => settingsDialog.value?.focus({preventScroll: true}))
 }
 provide("open-settings", showSettings)
 function dismissSettings() {
@@ -53,32 +51,18 @@ function onPopState() {
     if (open) keepReaderScroll()
     else releaseReaderScroll()
     void nextTick(() => {
-        if (open) settingsDialog.value?.focus({preventScroll: true})
-        else {
+        if (!open) {
             const trigger = settingsTrigger?.isConnected ? settingsTrigger
                 : document.querySelector<HTMLElement>('[aria-label="Quick settings"][aria-haspopup]')
             trigger?.focus({preventScroll: true})
         }
     })
 }
-function settingsKey(event: KeyboardEvent) {
-    if (!settingsOpen.value) return
-    event.stopImmediatePropagation()
-    if (event.key === "Escape") {
-        event.preventDefault()
-        event.stopImmediatePropagation()
-        dismissSettings()
-    } else if (event.key === "Tab") {
-        const controls = Array.from(settingsDialog.value?.querySelectorAll<HTMLElement>("button:not(:disabled), input:not(:disabled), select:not(:disabled), a[href]") ?? [])
-        const first = controls[0], last = controls[controls.length - 1]
-        if (event.shiftKey && (document.activeElement === first || document.activeElement === settingsDialog.value)) {
-            event.preventDefault()
-            last?.focus()
-        } else if (!event.shiftKey && document.activeElement === last) {
-            event.preventDefault()
-            first?.focus()
-        }
-    }
+function settingsFocus(event: Event) {
+    event.preventDefault()
+    const trigger = settingsTrigger?.isConnected ? settingsTrigger
+        : document.querySelector<HTMLElement>('[aria-label="Quick settings"][aria-haspopup]')
+    trigger?.focus({preventScroll: true})
 }
 watch(() => route.fullPath, () => {
     if (settingsOpen.value) {
@@ -162,7 +146,6 @@ async function checkMode() {
 }
 onMounted(() => {
     window.addEventListener("popstate", onPopState)
-    window.addEventListener("keydown", settingsKey, true)
     modeTimer = setInterval(() => {
         void checkMode()
     }, 2_000)
@@ -173,7 +156,6 @@ onBeforeUnmount(() => {
     if (restorationFrame !== undefined) cancelAnimationFrame(restorationFrame)
     if (scrollRestoration !== null) history.scrollRestoration = scrollRestoration
     window.removeEventListener("popstate", onPopState)
-    window.removeEventListener("keydown", settingsKey, true)
     clearInterval(modeTimer)
     window.removeEventListener("online", checkMode)
     document.removeEventListener("visibilitychange", checkMode)
@@ -190,22 +172,14 @@ onBeforeUnmount(() => {
     </aside>
     <!-- Route-specific documents must reload and release their live follow on navigation. -->
     <div :inert="settingsOpen || undefined"><router-view :key="route.path" /></div>
-    <div v-if="settingsOpen" class="settings-backdrop" @click.self="dismissSettings">
-        <section ref="settingsDialog" class="settings-dialog" role="dialog" aria-label="Settings" aria-modal="true" tabindex="-1">
-            <header class="settings-header"><h2>Settings</h2><IconButton icon="close" label="Close settings" @click="dismissSettings" /></header>
-            <SettingsPanel />
-        </section>
-    </div>
+    <Dialog :open="settingsOpen" title="Settings" placement="drawer" close-label="Close settings" preserve-scroll
+        aria-label="Settings" @update:open="value => { if (!value) dismissSettings() }"
+        @close-auto-focus="settingsFocus">
+        <SettingsPanel />
+    </Dialog>
 </template>
 
 <style scoped>
-/* The settings overlay keeps its history/scroll contract; ticket 11 migrates its behaviour to Dialog. */
-.settings-backdrop { position: fixed; inset: 0; z-index: var(--md-layer-dialog); background: transparent; }
-.settings-dialog { position: absolute; right: 0; top: 0; bottom: 0; width: min(36rem, 100%); overflow-y: auto; background: var(--md-surface-container-low); color: var(--md-on-surface); border-left: 1px solid var(--md-outline); }
-.settings-header { display: flex; align-items: center; justify-content: space-between; padding: var(--md-space-16); border-bottom: 1px solid var(--md-outline-variant); }
-.settings-header h2 { margin: 0; font-size: var(--md-type-title-large-size); }
-[data-profile="eink"] .settings-dialog { border: 1px solid var(--md-outline); }
-@media (max-width: 600px) { .settings-dialog { top: auto; width: 100%; height: 92%; border: 1px solid var(--md-outline); } }
 .outdated {
     position: sticky;
     top: 0;

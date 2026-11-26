@@ -61,6 +61,17 @@ describe.each([
 })
 
 describe("Select", () => {
+    it("preserves native platform selection for paginated preference forms", async () => {
+        const wrapper = render(defineComponent({components: {Select}, data: () => ({value: "hidden"}), template: `
+            <Select v-model="value" native label="Agent context" :options="[
+                {value: 'hidden', label: 'Hidden'}, {value: 'shown', label: 'Shown'}]" />
+            <output>{{ value }}</output>`,
+        }))
+        const control = getByRole(document.body, "combobox", {name: "Agent context"})
+        expect(control.tagName).toBe("SELECT")
+        await userEvent.setup().selectOptions(control, "shown")
+        expect(wrapper.get("output").text()).toBe("shown")
+    })
     it("keeps every injected viewport stylesheet allowed by the server CSP", async () => {
         const user = userEvent.setup()
         render(defineComponent({components: {Select}, template: '<Select label="Theme" :options="[{value: \'light\', label: \'Light\'}]" />'}))
@@ -177,6 +188,25 @@ describe("Menu", () => {
 })
 
 describe("Dialog", () => {
+    it("supports a labelled anchored preferences form without freezing the live document", async () => {
+        const user = userEvent.setup()
+        render(defineComponent({components: {Dialog, Button, Field}, template: `
+            <Dialog title="Quick settings" placement="popover" preserve-scroll close-label="Close preferences">
+                <template #trigger><Button>Preferences</Button></template>
+                <Field label="Device" /><Button>Save</Button>
+            </Dialog>`,
+        }))
+        const opener = getByRole(document.body, "button", {name: "Preferences"})
+        await user.click(opener)
+        await settle()
+        const dialog = getByRole(document.body, "dialog", {name: "Quick settings"})
+        expect(dialog.getAttribute("data-placement")).toBe("popover")
+        expect(document.body.style.overflow).not.toBe("hidden")
+        expect(getByRole(dialog, "button", {name: "Close preferences"})).toBeTruthy()
+        await user.keyboard("{Escape}")
+        await settle()
+        expect(document.activeElement).toBe(opener)
+    })
     it("renders actions inside the modal and forwards attrs to the modal, not its anchor", async () => {
         const user = userEvent.setup()
         render(defineComponent({components: {Dialog, Button}, template: `

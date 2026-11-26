@@ -17,7 +17,9 @@ withDefaults(defineProps<{
     disabled?: boolean
     name?: string
     required?: boolean
-}>(), {placeholder: "Choose an option", disabled: false, name: undefined, required: false})
+    /** Platform picker for preference forms with measured, indivisible pages. */
+    native?: boolean
+}>(), {placeholder: "Choose an option", disabled: false, name: undefined, required: false, native: false})
 const value = defineModel<string>({default: ""})
 const open = defineModel<boolean>("open", {default: false})
 const anchor = ref<HTMLElement>()
@@ -25,9 +27,13 @@ const scope = useOverlayScope(anchor, open)
 </script>
 
 <template>
-    <div ref="anchor">
-        <FieldFrame :id="id" :label="label" :help="help" :error="error" :class="$attrs.class" v-slot="{controlAttrs}">
-            <SelectRoot v-model="value" v-model:open="open" :disabled="disabled" :name="name" :required="required">
+    <div ref="anchor" :class="$attrs.class">
+        <FieldFrame :id="id" :label="label" :help="help" :error="error" v-slot="{controlAttrs}">
+            <select v-if="native" v-model="value" v-bind="controlAttrs($attrs)" :disabled="disabled" :name="name" :required="required"
+                class="ui-input ui-focus-ring">
+                <option v-for="option in options" :key="option.value" :value="option.value" :disabled="option.disabled">{{ option.label }}</option>
+            </select>
+            <SelectRoot v-else v-model="value" v-model:open="open" :disabled="disabled" :name="name" :required="required">
                 <SelectTrigger v-bind="controlAttrs($attrs)" class="ui-input ui-select ui-state-layer ui-focus-ring">
                     <SelectValue :placeholder="placeholder" />
                     <SelectIcon><Icon name="expand" size="small" /></SelectIcon>

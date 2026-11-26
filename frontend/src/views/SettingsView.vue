@@ -11,5 +11,5 @@ import SettingsPanel from "../components/SettingsPanel.vue"
 </template>
 
 <style scoped>
-.page { max-width: 36rem; margin: 0 auto; }
+.page { margin: 0 auto; }
 </style>

@@ -106,7 +106,9 @@ def test_list_page_turns_reserve_the_visible_title_boundary(
     path = {"front": "/", "repo": "/repos/work", "container": "/containers/work-orch"}[view]
     page.goto(f"{server.url}/#{path}")
     page.reload()
-    expect(page.get_by_role("button", name="Quick settings", exact=True)).to_be_visible()
+    expect(
+        page.get_by_role("button", name="Quick settings", exact=True, include_hidden=True)
+    ).to_be_visible()
     expect(page.locator('a[href="#/containers/work-task-59"]').first).to_be_attached()
     page.evaluate("window.scrollTo(0, 0)")
     wait_for_scroll_settled(page)
