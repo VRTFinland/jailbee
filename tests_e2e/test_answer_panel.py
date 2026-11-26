@@ -242,7 +242,9 @@ def test_panel_refusal_keeps_answers_and_latest_message_controls_scope(
         stream.write(record(3, "assistant", "A newer plain answer; no question set."))
     server.watches.open[-1].fire()
     if profile == "normal":
-        expect(page.get_by_text("A newer plain answer; no question set.", exact=True)).to_be_attached()
+        expect(
+            page.get_by_text("A newer plain answer; no question set.", exact=True)
+        ).to_be_attached()
     expect(panel).to_have_count(0)
     expect(page.get_by_role("textbox", name="Message agent")).to_be_visible()
 
@@ -266,7 +268,10 @@ def test_question_jump_handles_markdown_soft_breaks(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    latest = "Context before questions.\n❓ **Q12** - **Deploy**: Choose.\na) Canary\n➡️ a: Safe\n❓ **Q1** - **Owner**: Who?"
+    latest = (
+        "Context before questions.\n❓ **Q12** - **Deploy**: Choose.\n"
+        "a) Canary\n➡️ a: Safe\n❓ **Q1** - **Owner**: Who?"
+    )
     open_questions(page, make_server, tmp_path, monkeypatch, latest=latest)
     panel = page.get_by_role("complementary", name="Answer questions")
     panel.get_by_role("button", name="Expand answers", exact=True).click()
