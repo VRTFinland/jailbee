@@ -297,7 +297,11 @@ class StateServer:
         config, _ = load_global_config(default_global_config_path())
         policy = getattr(config.remote, client.transport)
         root_path, cwd_path = Path(root).resolve(), Path(cwd).resolve()
-        matches = [repo for repo in registered_repos(engine=self._engine) if repo.root.resolve() == root_path]
+        matches = [
+            repo
+            for repo in registered_repos(engine=self._engine)
+            if repo.root.resolve() == root_path
+        ]
         if not matches or matches[0].prefix in policy.excluded_repos:
             raise ValueError("repository is not visible to this remote dashboard")
         if not cwd_path.is_relative_to(root_path):
@@ -349,7 +353,11 @@ class StateServer:
         entry = replace(
             entry,
             cwd_root=(root if client.transport != "none" else request.cwd_root or root),
-            excluded_prefixes=(list(client.excluded_prefixes) if client.transport != "none" else list(request.excluded_prefixes)),
+            excluded_prefixes=(
+                list(client.excluded_prefixes)
+                if client.transport != "none"
+                else list(request.excluded_prefixes)
+            ),
         )
         self._actions[entry.entry_id] = entry
         self._broadcast_action(entry)
