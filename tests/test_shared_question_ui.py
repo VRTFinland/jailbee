@@ -111,7 +111,15 @@ def test_resolution_closes_only_the_matching_question(mocker, tmp_path, covered)
     app = make_app(mocker, [RepoGroup("alpha", str(tmp_path), None, [])])
     client = app.session.client
     client._action_entries[42] = ActionEntry(
-        42, ["start", "alpha"], str(tmp_path), "alpha", False, "other", "none", str(tmp_path), "alpha"
+        42,
+        ["start", "alpha"],
+        str(tmp_path),
+        "alpha",
+        False,
+        "other",
+        "none",
+        str(tmp_path),
+        "alpha",
     )
     client._action_questions[42] = ActionQuestion(42, 7, Prompt(1, "text", "First?"))
 

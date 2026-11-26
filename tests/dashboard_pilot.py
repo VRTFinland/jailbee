@@ -97,7 +97,14 @@ class FakeStateClient:
     every time, so a test that mutates it changes what the next tick sees."""
 
     def __init__(
-        self, groups, *, git_enabled=False, status=None, fail=None, update=None, system=None,
+        self,
+        groups,
+        *,
+        git_enabled=False,
+        status=None,
+        fail=None,
+        update=None,
+        system=None,
         excluded_prefixes=(),
     ):  # type: ignore[no-untyped-def]
         self.groups = groups
