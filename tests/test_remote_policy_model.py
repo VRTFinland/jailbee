@@ -15,6 +15,7 @@ from jailbee.config.models_remote import (
 from jailbee.global_config import GlobalConfig, load_global_config
 
 POLICY_KEYS = {
+    "agent_chat",
     "commands",
     "restrict_host",
     "excluded_repos",
@@ -37,6 +38,7 @@ def test_web_defaults_to_the_most_restrictive_policy():
     assert web.orchestration == "off"
     assert web.network is False
     assert web.files_enabled() is False
+    assert web.agent_chat is False
     assert web.rdp is False
     assert web.excluded_repos == []
 
@@ -96,6 +98,9 @@ def test_web_files_default_follows_commands_mode_but_stays_off_when_disabled():
 
 def test_ssh_keeps_its_own_defaults():
     ssh = RemoteSSHConfig()
+    assert ssh.agent_chat is False
+    assert RemoteSSHConfig(agent_chat=True).policy.agent_chat is True
+    assert RemoteWebConfig(agent_chat=True).policy.agent_chat is True
     assert ssh.commands.mode == "full"
     assert ssh.orchestration == "ssh"
     assert ssh.restrict_host is True
