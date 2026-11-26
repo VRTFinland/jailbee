@@ -47,8 +47,10 @@ def stylesheet() -> str:
     rules.extend(
         [
             ".highlight .c, .highlight .c1, .highlight .cm { font-style: italic; }",
-            ".highlight .nt, .highlight .k, .highlight .kc { font-weight: var(--md-type-emphasis-weight); }",
-            '[data-theme="eink"] .highlight .s, [data-theme="eink"] .highlight .s2 { font-style: italic; }',
+            ".highlight .nt, .highlight .k, .highlight .kc "
+            "{ font-weight: var(--md-type-emphasis-weight); }",
+            '[data-theme="eink"] .highlight .s, [data-theme="eink"] .highlight .s2 '
+            "{ font-style: italic; }",
             ".highlight .ge { font-style: italic; }",
             ".highlight .gs, .highlight .ges { font-weight: var(--md-type-emphasis-weight); }",
             ".highlight .ges { font-style: italic; }",
