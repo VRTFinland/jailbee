@@ -78,8 +78,10 @@ def test_quit_confirmation_survives_unpaced_answer_bursts(mocker, tmp_path, keys
             # Pilot.press waits between keys; one terminal read does not.
             burst(*[(key, key) for key in keys])(app)
             await pilot.pause()
-            # Keys already routed to the old confirmation may be discarded, but
-            # must neither answer twice nor remove another screen.
+            # Repeated answers must keep the first decision. In nqy, q/y may
+            # already have been routed to the old modal and safely discarded.
+            if keys != "nqy":
+                assert app.quit_requested is (keys[0] == "y")
             if not app.quit_requested:
                 assert not answers
                 assert any(e.pending_question for e in app.session.queue)
