@@ -26,13 +26,17 @@ from jailbee.state_service import StaleDashboard, StateServiceError, StateServic
 from jailbee.state_service.paths import ensure_runtime_dir, log_path, socket_path, spawn_lock_path
 from jailbee.state_service.protocol import (
     PROTOCOL,
+    ActionEntry,
+    ActionFinish,
+    ActionOutput,
+    ActionRejected,
     Active,
-    RunAction, ActionEntry, ActionOutput, ActionFinish, ActionRejected,
     GatherError,
     Hello,
     Message,
     ProtocolError,
     Refresh,
+    RunAction,
     Shutdown,
     Snapshot,
     decode,
@@ -165,7 +169,9 @@ class StateClient:
                 raise StateServiceUnavailable("state service disconnected")
             self._sock.sendall(encode(request))
 
-    def drain_action_events(self) -> list[ActionEntry | ActionOutput | ActionFinish | ActionRejected]:
+    def drain_action_events(
+        self,
+    ) -> list[ActionEntry | ActionOutput | ActionFinish | ActionRejected]:
         with self._lock:
             events, self._action_events = self._action_events, []
             return events
@@ -267,13 +273,16 @@ class StateClient:
     def _dispatch(self, message: Message) -> bool:
         """Apply ``message``; True when it was a snapshot."""
         if isinstance(message, (ActionEntry, ActionOutput, ActionFinish, ActionRejected)):
-            from jailbee.dashboard.runner import OUTPUT_KEEP_CHARS, OUTPUT_DROPPED_MARKER
+            from jailbee.dashboard.runner import OUTPUT_DROPPED_MARKER, OUTPUT_KEEP_CHARS
 
             with self._lock:
                 self._action_events.append(message)
                 if isinstance(message, ActionEntry):
                     self._action_entries[message.entry_id] = message
-                elif not isinstance(message, ActionRejected) and message.entry_id in self._action_entries:
+                elif (
+                    not isinstance(message, ActionRejected)
+                    and message.entry_id in self._action_entries
+                ):
                     entry = self._action_entries[message.entry_id]
                     if isinstance(message, ActionOutput):
                         output = entry.output + message.chunk
@@ -282,8 +291,14 @@ class StateClient:
                         self._action_entries[message.entry_id] = replace(entry, output=output)
                     else:
                         self._action_entries[message.entry_id] = replace(
-                            entry, finished=True, status=message.status, refused=message.refused,
-                            error=message.error, cancelled=message.cancelled, declined=message.declined)
+                            entry,
+                            finished=True,
+                            status=message.status,
+                            refused=message.refused,
+                            error=message.error,
+                            cancelled=message.cancelled,
+                            declined=message.declined,
+                        )
             self._notify()
             return False
         if isinstance(message, Snapshot):

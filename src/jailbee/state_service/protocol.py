@@ -192,7 +192,19 @@ class ActionFinish:
     declined: bool = False
 
 
-Message = Hello | Active | Refresh | Shutdown | Snapshot | GatherError | RunAction | ActionEntry | ActionOutput | ActionFinish | ActionRejected
+Message = (
+    Hello
+    | Active
+    | Refresh
+    | Shutdown
+    | Snapshot
+    | GatherError
+    | RunAction
+    | ActionEntry
+    | ActionOutput
+    | ActionFinish
+    | ActionRejected
+)
 
 _NAMES: dict[type[Any], str] = {
     RunAction: "run_action",

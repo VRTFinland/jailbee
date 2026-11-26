@@ -427,7 +427,12 @@ def test_wire_schema_names_every_field_that_crosses_the_wire():
 
     memory = schema["snapshot"]["$defs"]["MemoryStatus"]["properties"]
     assert {"swap_cached", "zswapped"} <= memory.keys()
-    assert schema["hello"]["properties"].keys() == {"protocol", "version", "cwd_root", "dashboard_id"}
+    assert schema["hello"]["properties"].keys() == {
+        "protocol",
+        "version",
+        "cwd_root",
+        "dashboard_id",
+    }
 
 
 def test_wire_schema_leaves_out_docstrings_and_titles():

@@ -23,11 +23,15 @@ from jailbee import __version__
 from jailbee.state_service.paths import ensure_runtime_dir, lock_path, socket_path
 from jailbee.state_service.protocol import (
     PROTOCOL,
+    ActionEntry,
+    ActionFinish,
+    ActionOutput,
+    ActionRejected,
     Active,
-    RunAction, ActionEntry, ActionOutput, ActionFinish, ActionRejected,
     Hello,
     ProtocolError,
     Refresh,
+    RunAction,
     Shutdown,
     Snapshot,
     decode,
@@ -90,6 +94,7 @@ class StateServer:
     ) -> None:
         self._action_spawn = action_spawn
         self._actions: dict[int, ActionEntry] = {}
+        self._action_tasks: set[asyncio.Task[None]] = set()
         self._gatherer = gatherer
         self._version = version
         self._idle_timeout = idle_timeout
@@ -154,7 +159,9 @@ class StateServer:
             await writer.drain()
             # A client of another version only gets to ask us to go away.
             if hello.protocol == PROTOCOL and hello.version == self._version:
-                client = _Client(writer, Path(hello.cwd_root) if hello.cwd_root else None, hello.dashboard_id)
+                client = _Client(
+                    writer, Path(hello.cwd_root) if hello.cwd_root else None, hello.dashboard_id
+                )
                 self._clients.add(client)
                 if client.dashboard_id is not None:
                     for entry in self._actions.values():
@@ -194,14 +201,26 @@ class StateServer:
         from jailbee.dashboard.runner import popen_spawn, run_action
 
         if not client.dashboard_id or request.origin != client.dashboard_id:
-            client.writer.write(encode(ActionRejected(request.entry_id, "dashboard identity mismatch")))
+            client.writer.write(
+                encode(ActionRejected(request.entry_id, "dashboard identity mismatch"))
+            )
             return
         if request.entry_id <= 0 or request.entry_id >= 2**63 or request.entry_id in self._actions:
-            client.writer.write(encode(ActionRejected(request.entry_id, "invalid or duplicate action id")))
+            client.writer.write(
+                encode(ActionRejected(request.entry_id, "invalid or duplicate action id"))
+            )
             return
-        entry = ActionEntry(request.entry_id, request.argv, request.cwd, request.target,
-                            request.critical, request.origin, request.transport,
-                            request.repo_root, request.prefix)
+        entry = ActionEntry(
+            request.entry_id,
+            request.argv,
+            request.cwd,
+            request.target,
+            request.critical,
+            request.origin,
+            request.transport,
+            request.repo_root,
+            request.prefix,
+        )
         self._actions[entry.entry_id] = entry
         client.writer.write(encode(entry))
         loop = asyncio.get_running_loop()
@@ -211,19 +230,34 @@ class StateServer:
 
         def run() -> None:
             try:
-                result = run_action(request.argv, cwd=Path(request.cwd), transport=request.transport,
-                                    policy=None, on_prompt=cancel_action_question, spawn=self._action_spawn or popen_spawn,
-                                    on_output=send_output, address_flags=request.address_flags)
-                finish = ActionFinish(request.entry_id, result.status, result.refused, result.error,
-                                      result.cancelled, result.declined)
+                result = run_action(
+                    request.argv,
+                    cwd=Path(request.cwd),
+                    transport=request.transport,
+                    policy=None,
+                    on_prompt=cancel_action_question,
+                    spawn=self._action_spawn or popen_spawn,
+                    on_output=send_output,
+                    address_flags=request.address_flags,
+                )
+                finish = ActionFinish(
+                    request.entry_id,
+                    result.status,
+                    result.refused,
+                    result.error,
+                    result.cancelled,
+                    result.declined,
+                )
             except Exception as exc:
                 finish = ActionFinish(request.entry_id, error=str(exc))
             loop.call_soon_threadsafe(self._action_finish, client, finish)
 
-        asyncio.create_task(asyncio.to_thread(run))
+        task = asyncio.create_task(asyncio.to_thread(run))
+        self._action_tasks.add(task)
+        task.add_done_callback(self._action_tasks.discard)
 
     def _action_output(self, client: _Client, entry_id: int, chunk: str) -> None:
-        from jailbee.dashboard.runner import OUTPUT_KEEP_CHARS, OUTPUT_DROPPED_MARKER
+        from jailbee.dashboard.runner import OUTPUT_DROPPED_MARKER, OUTPUT_KEEP_CHARS
 
         entry = self._actions[entry_id]
         output = entry.output + chunk
@@ -236,14 +270,17 @@ class StateServer:
 
     def _action_finish(self, client: _Client, finish: ActionFinish) -> None:
         self._actions[finish.entry_id] = replace(
-            self._actions[finish.entry_id], finished=True, status=finish.status,
-            refused=finish.refused, error=finish.error, cancelled=finish.cancelled,
+            self._actions[finish.entry_id],
+            finished=True,
+            status=finish.status,
+            refused=finish.refused,
+            error=finish.error,
+            cancelled=finish.cancelled,
             declined=finish.declined,
         )
         for recipient in self._clients:
             if recipient.dashboard_id == self._actions[finish.entry_id].origin:
                 recipient.writer.write(encode(finish))
-
 
     async def _broadcast(self, line: bytes) -> None:
         clients = list(self._clients)
