@@ -191,6 +191,8 @@ interface RenderedBase {
 export interface RenderedUser extends RenderedBase {
     kind: "user"
     html: string
+    /** Original text, when provided by the server. */
+    text?: string
     /** An agent's own wrapper text (`<command-name>`, `<system-reminder>`, ...). */
     meta: boolean
     /** What a meta record is ("Task notification", "Command: /model", "Shell: ls"). */

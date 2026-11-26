@@ -118,11 +118,11 @@ describe("SessionView live follow", () => {
         fetchMock.mockImplementation(async (url: string) => new Response(JSON.stringify(
             url.endsWith("/messages") ? {code: "delivered", message: "Pasted"} : transcript,
         ), {status: 200, headers: {"Content-Type": "application/json"}}))
-        await wrapper.get("textarea").setValue("Hello agent")
+        await wrapper.get("textarea").setValue("**bold**\nnext")
         await wrapper.get('[aria-label="Send message"]').trigger("click")
         await flushPromises()
         expect(wrapper.text()).not.toContain("Delivered")
-        await append(sessionKey, [{kind: "user", id: "u2", timestamp: null, html: "<p>Hello agent</p>", meta: false, label: null, expandable: false}])
+        await append(sessionKey, [{kind: "user", id: "u2", timestamp: null, html: "<p><strong>bold</strong><br>next</p>", text: "**bold**\nnext", meta: false, label: null, expandable: false}])
         expect(wrapper.text()).toContain("Delivered")
         expect(fetchMock.mock.calls.some(call => String(call[0]).endsWith("/messages"))).toBe(true)
         delete transcript.chat

@@ -81,12 +81,9 @@ const sendStatus = ref("")
 let awaitingText: string | null = null
 let matched = false
 function matchesMessage(entries: RenderedEntry[], text: string): boolean {
-    return entries.some(entry => {
-        if (entry.kind !== "user" || entry.meta) return false
-        const element = document.createElement("div")
-        element.innerHTML = entry.html
-        return (element.textContent ?? "").trim() === text.trim()
-    })
+    const normalize = (value: string) => value.replace(/\r\n/g, "\n")
+    return entries.some(entry => entry.kind === "user" && !entry.meta &&
+        entry.text !== undefined && normalize(entry.text) === normalize(text))
 }
 async function sendMessage(text: string) {
     if (sending.value || !transcript.value?.chat?.available || agentId.value !== null) return
