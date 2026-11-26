@@ -1,7 +1,7 @@
 // Mirror of src/jailbee/web/protocol.py. Bump PROTOCOL_VERSION in both files
 // on any change either side could misread.
 
-export const PROTOCOL_VERSION = 7
+export const PROTOCOL_VERSION = 8
 
 export const CLOSE_UNAUTHORIZED = 4001
 export const CLOSE_PROTOCOL_MISMATCH = 4002
@@ -210,6 +210,7 @@ export interface EntryContent {
 export interface RenderedAssistant extends RenderedBase {
     kind: "assistant"
     html: string
+    text?: string | null
     model: string | null
 }
 

@@ -168,7 +168,11 @@ def render_entry(
         case AssistantText():
             body = cache.get(entry.id, entry.text, render_markdown)
             return RenderedAssistant(
-                id=entry.id, timestamp=entry.timestamp, html=body, model=entry.model
+                id=entry.id,
+                timestamp=entry.timestamp,
+                html=body,
+                model=entry.model,
+                text=entry.text,
             )
         case Thinking():
             body = cache.get(entry.id, entry.text, render_markdown) if entry.text else ""
