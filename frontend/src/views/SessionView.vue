@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import Button from "../components/ui/Button.vue"
+import AgentComposer from "../components/AgentComposer.vue"
 import TranscriptEntry from "../components/ui/TranscriptEntry.vue"
 import TitleBar from "../components/TitleBar.vue"
 // One agent session as a readable document. Every `html` field is rendered
@@ -15,6 +16,7 @@ import {usePager} from "../composables/usePager"
 import {useDashboard} from "../dashboard"
 import type {
     EntryContent,
+    MessageOutcome,
     RenderedEntry,
     RenderedSubagent,
     RenderedToolResult,
@@ -73,6 +75,42 @@ const sessionRef = computed(() => ({
 
 const transcript = ref<TranscriptView | null>(null)
 const error = ref<string | null>(null)
+const sending = ref(false)
+const sendError = ref("")
+const sendStatus = ref("")
+let awaitingText: string | null = null
+let matched = false
+function matchesMessage(entries: RenderedEntry[], text: string): boolean {
+    return entries.some(entry => {
+        if (entry.kind !== "user" || entry.meta) return false
+        const element = document.createElement("div")
+        element.innerHTML = entry.html
+        return (element.textContent ?? "").trim() === text.trim()
+    })
+}
+async function sendMessage(text: string) {
+    if (sending.value || !transcript.value?.chat?.available || agentId.value !== null) return
+    sending.value = true
+    sendError.value = ""
+    sendStatus.value = ""
+    awaitingText = text
+    matched = false
+    try {
+        const result = await apiFetch<MessageOutcome>(`/api/repos/${transcriptPath.value}/messages`, {
+            method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({text}),
+        })
+        if (result.code !== "delivered") {
+            awaitingText = null
+            sendError.value = result.message
+        } else if (matched) {
+            awaitingText = null
+            sendStatus.value = "Delivered"
+        } else sendStatus.value = "Waiting for transcript"
+    } catch {
+        awaitingText = null
+        sendError.value = "The message could not be sent."
+    } finally { sending.value = false }
+}
 const thinking = computed(() => settings.showThinking)
 const parentTitle = ref("Parent session")
 const sessionContainer = ref<string | null>(null)
@@ -330,7 +368,12 @@ function startFollowing(view: TranscriptView) {
         },
         view.offset,
         settings.agentContext,
-        {onAppend: (entries) => {
+        {onAppend: (entries, chat) => {
+            if (transcript.value === activeTranscript && transcript.value && chat) transcript.value.chat = chat
+            if (awaitingText !== null && matchesMessage(entries, awaitingText)) {
+                matched = true
+                if (!sending.value) { awaitingText = null; sendStatus.value = "Delivered" }
+            }
             appendQueue = appendQueue.then(async () => {
                 if (!unmounted && transcript.value === activeTranscript) await onLiveAppend(entries)
             })
@@ -567,6 +610,10 @@ watch(
                         </TranscriptEntry>
                     </template>
                 </article>
+                <AgentComposer v-if="agentId === null" class="agent-composer"
+                    :available="transcript.chat?.available ?? false"
+                    :reason="transcript.chat?.message || 'Messaging is unavailable.'"
+                    :sending="sending" :error="sendError" :status="sendStatus" @send="sendMessage" />
                 <Button
                     v-if="jumpLabel"
                     :variant="pending.length > 0 || unseen !== null ? 'tonal' : 'primary'"
@@ -595,6 +642,13 @@ watch(
     content: "";
     display: block;
     height: max(calc(var(--md-target-min) + var(--md-space-32)), calc(100dvh - var(--session-readable-top)));
+}
+.agent-composer {
+    position: sticky;
+    bottom: calc(var(--guard-bottom) + var(--page-nav-height));
+    z-index: var(--md-layer-sticky);
+    background: var(--md-surface);
+    padding: var(--md-space-8);
 }
 .muted {
     color: var(--md-on-surface-variant);
