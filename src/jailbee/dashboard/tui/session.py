@@ -205,7 +205,7 @@ from jailbee.remote_ssh.repo_scope import RemoteRepoScope
 from jailbee.remote_ssh.router import RouteError
 from jailbee.remote_ssh.session import host_restricted
 from jailbee.state_service import StateServiceUnavailable
-from jailbee.tui import console, error
+from jailbee.tui import error
 from jailbee.update_check import dismiss as dismiss_update
 
 if TYPE_CHECKING:

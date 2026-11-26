@@ -40,8 +40,8 @@ from jailbee.state_service.protocol import (
     Active,
     ActivityQuery,
     AnswerActionQuestion,
-    Drain,
     DismissAction,
+    Drain,
     GatherError,
     Hello,
     Message,
@@ -541,7 +541,10 @@ class StateClient:
         detail = (
             "an unknown number of actions"
             if activity is None
-            else f"{activity.running_actions} actions and {activity.pending_questions} pending questions"
+            else (
+                f"{activity.running_actions} actions and "
+                f"{activity.pending_questions} pending questions"
+            )
         )
         return prompting.choose_one(
             "state service replacement",

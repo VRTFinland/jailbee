@@ -38,8 +38,8 @@ from jailbee.state_service.protocol import (
     Active,
     ActivityQuery,
     AnswerActionQuestion,
-    Drain,
     DismissAction,
+    Drain,
     Hello,
     ProtocolError,
     Refresh,
@@ -271,9 +271,13 @@ class StateServer:
                 elif isinstance(message, (ActivityQuery, Drain)):
                     if isinstance(message, Drain):
                         self._draining = True
-                    writer.write(encode(ServiceActivity(
-                        len(self._action_tasks), len(self._questions), self._draining
-                    )))
+                    writer.write(
+                        encode(
+                            ServiceActivity(
+                                len(self._action_tasks), len(self._questions), self._draining
+                            )
+                        )
+                    )
                     await writer.drain()
                 elif client is None:
                     continue

@@ -360,7 +360,9 @@ def test_running_old_service_drains_past_startup_timeouts(runtime_dir, tmp_path,
     old.start()
     original = _client(old, dashboard_id="one")
     original.wait_first_snapshot(3)
-    original.run_action(RunAction(1, ["ls"], str(tmp_path), "t", False, "one", "none", str(tmp_path), "repo"))
+    original.run_action(
+        RunAction(1, ["ls"], str(tmp_path), "t", False, "one", "none", str(tmp_path), "repo")
+    )
     assert started.wait(2)
     new = Spawner(version="v1")
     client = _client(new, connect_timeout=0.2)
@@ -369,7 +371,9 @@ def test_running_old_service_drains_past_startup_timeouts(runtime_dir, tmp_path,
     waiter.start()
     try:
         _until(lambda: old.servers[0]._draining)
-        original.run_action(RunAction(2, ["ls"], str(tmp_path), "t", False, "one", "none", str(tmp_path), "repo"))
+        original.run_action(
+            RunAction(2, ["ls"], str(tmp_path), "t", False, "one", "none", str(tmp_path), "repo")
+        )
         _until(lambda: original.action_rejection(2) is not None)
         time.sleep(0.6)
         assert waiter.is_alive()
@@ -384,7 +388,9 @@ def test_running_old_service_drains_past_startup_timeouts(runtime_dir, tmp_path,
         waiter.join(2)
 
 
-def test_replacement_prompt_runs_on_waiting_thread_and_can_interrupt(runtime_dir, tmp_path, monkeypatch):
+def test_replacement_prompt_runs_on_waiting_thread_and_can_interrupt(
+    runtime_dir, tmp_path, monkeypatch
+):
     from jailbee import prompting
     from jailbee.state_service.protocol import RunAction
 
@@ -409,7 +415,9 @@ def test_replacement_prompt_runs_on_waiting_thread_and_can_interrupt(runtime_dir
     old.start()
     original = _client(old, dashboard_id="one")
     original.wait_first_snapshot(3)
-    original.run_action(RunAction(1, ["ls"], str(tmp_path), "t", False, "one", "none", str(tmp_path), "repo"))
+    original.run_action(
+        RunAction(1, ["ls"], str(tmp_path), "t", False, "one", "none", str(tmp_path), "repo")
+    )
     assert started.wait(2)
     caller = threading.get_ident()
     questions = []
