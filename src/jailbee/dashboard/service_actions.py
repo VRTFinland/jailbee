@@ -156,8 +156,12 @@ def run_actions(
                 time.sleep(POLL_SECONDS)
                 continue
             disconnected_at = None
-            if acknowledged and snapshot is None and (
-                sent_generation != generation or batch_acknowledged
+            # Batch entries are published together before any action starts;
+            # a replay containing only other IDs must not cause a resubmit.
+            if (
+                acknowledged
+                and snapshot is None
+                and (sent_generation != generation or batch_acknowledged)
             ):
                 results.append(RunResult(error="action missing after state service reconnect"))
                 outputs.append(last_output)
