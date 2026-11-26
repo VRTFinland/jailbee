@@ -178,6 +178,77 @@ def test_shutdown_kills_verbose_child_and_persists_interrupted(runtime_dir, tmp_
         engine.dispose()
 
 
+def test_service_action_uses_request_environment_not_server_environment(
+    runtime_dir, tmp_path, monkeypatch
+):
+    captured = {}
+
+    class Child:
+        stdout = None
+
+        def __init__(self, prompt_sock):
+            prompt_sock.close()
+
+        def wait(self):
+            return 0
+
+        def kill(self):
+            pass
+
+    def spawn(_argv, *, cwd, env, prompt_sock):
+        captured.update(env)
+        return Child(prompt_sock)
+
+    monkeypatch.setenv("JAILBEE_REMOTE_SESSION", "1")
+    monkeypatch.setenv("JAILBEE_REMOTE_TRANSPORT", "ssh")
+    monkeypatch.setenv("SSH_AUTH_SOCK", "/service/agent.sock")
+    monkeypatch.setenv("DISPLAY", ":service")
+
+    from jailbee.state_service import paths
+
+    paths.ensure_runtime_dir()
+    server = StateServer(FakeGatherer(), version="v1", action_spawn=spawn)
+    thread = threading.Thread(
+        target=lambda: asyncio.run(server.serve(paths.socket_path())), daemon=True
+    )
+    thread.start()
+    track_server(server, thread)
+    _until(paths.socket_path().exists)
+    client = StateClient(None, dashboard_id="dashboard", version="v1", spawn=lambda: None)
+    client.start()
+    try:
+        client.wait_first_snapshot(3)
+        client.run_action(
+            RunAction(
+                777,
+                ["ls"],
+                str(tmp_path),
+                "target",
+                False,
+                "dashboard",
+                "none",
+                str(tmp_path),
+                "repo",
+                environment={"PATH": "/request/bin", "DISPLAY": ":request"},
+                excluded_prefixes=["secret-repo"],
+            )
+        )
+        _until(
+            lambda: (
+                client.action_entries().get(777, None) is not None
+                and client.action_entries()[777].finished
+            )
+        )
+        assert captured["PATH"] == "/request/bin"
+        assert captured["DISPLAY"] == ":request"
+        assert "SSH_AUTH_SOCK" not in captured
+        assert "JAILBEE_REMOTE_SESSION" not in captured
+        assert "JAILBEE_REMOTE_TRANSPORT" not in captured
+        assert client.action_entries()[777].excluded_prefixes == ["secret-repo"]
+    finally:
+        client.close()
+
+
 def test_action_streams_output_and_result(runtime_dir, tmp_path):
     class Child:
         def __init__(self, prompt_sock):
@@ -1071,6 +1142,7 @@ def test_running_action_is_interrupted_after_restart(runtime_dir, tmp_path):
         action_spawn=lambda *a, **kw: Child(kw["prompt_sock"]),
     )
     stopped = threading.Event()
+    leaked_tasks = []
 
     def run_server():
         loop = asyncio.new_event_loop()
@@ -1080,6 +1152,7 @@ def test_running_action_is_interrupted_after_restart(runtime_dir, tmp_path):
             stopped.set()
             release.wait(5)
             loop.run_until_complete(asyncio.gather(*server._action_tasks))
+            leaked_tasks.extend(task for task in asyncio.all_tasks(loop) if not task.done())
         finally:
             loop.close()
 
@@ -1130,3 +1203,6 @@ def test_running_action_is_interrupted_after_restart(runtime_dir, tmp_path):
     finally:
         release.set()
         client.close()
+        thread.join(5)
+        assert not thread.is_alive()
+        assert not leaked_tasks

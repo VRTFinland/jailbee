@@ -220,18 +220,23 @@ def popen_spawn(
 
 
 def _child_env(
-    transport: Transport, policy: RemotePolicy | None, client: str | None = None
+    transport: Transport,
+    policy: RemotePolicy | None,
+    client: str | None = None,
+    *,
+    base: Mapping[str, str] | None = None,
 ) -> dict[str, str]:
+    environment = os.environ if base is None else base
     if transport == "none" or policy is None:
-        return dict(os.environ)
+        return dict(environment)
     from jailbee.remote_ssh.repo_scope import scope_for_session
     from jailbee.remote_ssh.session import child_environment, host_restricted
 
-    excluded = sorted(scope_for_session().excluded | frozenset(policy.excluded_repos))
+    excluded = sorted(scope_for_session(environment).excluded | frozenset(policy.excluded_repos))
     return child_environment(
-        os.environ,
+        environment,
         transport=transport,
-        restricted=host_restricted(policy.restrict_host),
+        restricted=host_restricted(policy.restrict_host, environment),
         excluded_repos=excluded,
         client=client,
     )
@@ -376,6 +381,7 @@ def run_action(
     on_output: OutputSink,
     client: str | None = None,
     address_flags: Sequence[str] = (),
+    environment: Mapping[str, str] | None = None,
     spawn: Spawner = popen_spawn,
     audit: AuditSink | None = None,
     on_disconnect: Callable[[], None] | None = None,
@@ -386,8 +392,10 @@ def run_action(
     ``argv`` is the action without the program name and is policy-checked
     exactly as given. ``address_flags`` (``--config`` ...) are added only for
     the local transport. ``client`` is the remote client's identity (key
-    fingerprint, device name) for the audit record. ``on_prompt`` runs on the
-    calling thread, one prompt at a time; ``on_output`` runs on a helper thread.
+    fingerprint, device name) for the audit record. ``environment`` is the
+    caller's base environment; omitted preserves the historical process environment.
+    ``on_prompt`` runs on the calling thread, one prompt at a time; ``on_output``
+    runs on a helper thread.
     A refusal returns ``RunResult(refused=...)`` and starts nothing. A handler
     exception kills the child, is audited as ``error`` and propagates.
     """
@@ -423,7 +431,7 @@ def run_action(
 
     full = cli_argv(dact.addressed(argv, address_flags, transport=transport))
     try:
-        env = _child_env(transport, policy, client)
+        env = _child_env(transport, policy, client, base=environment)
     except Exception as exc:  # scope snapshot unreadable: fail closed, nothing started
         record("refused")
         return RunResult(refused=f"remote policy snapshot unavailable: {exc}")

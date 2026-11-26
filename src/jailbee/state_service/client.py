@@ -150,6 +150,11 @@ class StateClient:
         """Identity advertised to the state service for hosted actions."""
         return self._dashboard_id
 
+    @property
+    def excluded_prefixes(self) -> tuple[str, ...]:
+        """Repository prefixes excluded from this dashboard's view."""
+        return tuple(self._excluded_prefixes)
+
     # ---- the dashboard's side ------------------------------------------------
 
     def start(self) -> None:

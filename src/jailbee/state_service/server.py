@@ -119,6 +119,7 @@ class StateServer:
         self._action_cancellations: dict[int, ActionCancellation] = {}
         self._persist_pending: dict[int, ActionEntry | None] = {}
         self._persist_task: asyncio.Task[None] | None = None
+        self._persistence_closed = False
         self._gatherer = gatherer
         self._version = version
         self._idle_timeout = idle_timeout
@@ -156,8 +157,15 @@ class StateServer:
             for writer in list(self._writers):
                 _abort(writer)
             await server.wait_closed()
-            if self._persist_task is not None:
-                await self._persist_task
+            # Action callbacks may arrive while the current write is in flight.
+            # Drain them before closing persistence; later callbacks belong to a
+            # stopped service and must not create orphan tasks.
+            while self._persist_task is not None:
+                task = self._persist_task
+                await asyncio.shield(task)
+                if self._persist_task is task:
+                    self._persist_task = None
+            self._persistence_closed = True
 
     async def _schedule(self) -> None:
         while not self._stopping:
@@ -340,6 +348,7 @@ class StateServer:
                     on_output=send_output,
                     address_flags=request.address_flags,
                     cancellation=cancellation,
+                    environment=request.environment,
                 )
                 finish = ActionFinish(
                     request.entry_id,
@@ -498,7 +507,7 @@ class StateServer:
         self._queue_persist(entry_id, None)
 
     def _queue_persist(self, entry_id: int, entry: ActionEntry | None) -> None:
-        if self._engine is None:
+        if self._engine is None or self._persistence_closed:
             return
         self._persist_pending[entry_id] = entry
         if self._persist_task is None or self._persist_task.done():

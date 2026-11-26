@@ -71,9 +71,10 @@ from jailbee.update_check import UpdateNotice
 # 43 adds ContainerInfo.start_identity for precise host-side boot recovery.
 # 44 distinguishes registered repos with unloadable configs from true orphans.
 # 45 adds action hosting messages. 46 adds action scope and dismissal.
-# 47 adds an atomic action replay boundary.
-# 48 adds shared action questions and answers.
-PROTOCOL = 48
+# 47 adds an atomic action replay boundary. 48 adds shared action questions,
+# answers and request-scoped action environment.
+# 49 adds the action environment's request-scoped transport fields.
+PROTOCOL = 49
 
 # Allows escaped output tails and ordinary snapshots while bounding incoming lines.
 MAX_WIRE_LINE_BYTES = 16 * 1024 * 1024
@@ -157,6 +158,7 @@ class RunAction:
     address_flags: list[str] = field(default_factory=list)
     cwd_root: str | None = None
     excluded_prefixes: list[str] = field(default_factory=list)
+    environment: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

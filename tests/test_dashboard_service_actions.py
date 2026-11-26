@@ -88,6 +88,7 @@ def test_capped_service_tail_replaces_local_output_instead_of_appending_old_text
 
     class Client:
         dashboard_id = "origin"
+        excluded_prefixes = ()
 
         def __init__(self):
             self.sent = False
@@ -160,6 +161,7 @@ def test_batch_resumes_after_disconnect_without_resubmitting_accepted_action(tmp
 
     class Client:
         dashboard_id = "origin"
+        excluded_prefixes = ()
 
         def __init__(self):
             self.entries = {}
@@ -221,6 +223,7 @@ def test_disconnect_timeout_returns_partial_output(tmp_path, monkeypatch):
 
     class Client:
         dashboard_id = "origin"
+        excluded_prefixes = ()
 
         def action_connection(self):
             return None
@@ -324,3 +327,125 @@ def test_real_service_replays_accepted_action_and_continues_batch(runtime_dir, t
     finally:
         release.set()
         client.close()
+
+
+def test_acknowledged_action_missing_from_replay_fails_without_resubmitting(tmp_path, monkeypatch):
+    from jailbee.state_service.protocol import ActionEntry
+
+    monkeypatch.setattr("jailbee.dashboard.service_actions.POLL_SECONDS", 0)
+
+    class Client:
+        dashboard_id = "origin"
+        excluded_prefixes = ()
+        calls = 0
+        sends = 0
+
+        def action_connection(self):
+            self.calls += 1
+            if self.calls > 10:
+                raise AssertionError("action did not settle")
+            return 1 if self.calls <= 2 else 2
+
+        def action_entries(self):
+            if self.sends and self.calls == 2:
+                return {
+                    1: ActionEntry(
+                        1,
+                        ["ls"],
+                        str(tmp_path),
+                        "x",
+                        False,
+                        "origin",
+                        "none",
+                        str(tmp_path),
+                        "repo",
+                        output="partial",
+                    )
+                }
+            return {}
+
+        def action_rejection(self, entry_id):
+            return None
+
+        def status(self):
+            return None
+
+        def run_action(self, request):
+            self.sends += 1
+
+    class Progress:
+        def entry_id(self, index):
+            return 1
+
+        def output(self, index, chunk):
+            pass
+
+        def question(self, index, asking):
+            pass
+
+    client = Client()
+    outcome = run_actions(
+        client, [ActionRun(["ls"], tmp_path)], Progress(), groups=[], transport="none"
+    )
+    assert client.sends == 1
+    assert outcome.results[0].error
+    assert outcome.outputs == ["partial"]
+
+
+def test_finished_snapshot_settles_while_disconnected(tmp_path, monkeypatch):
+    from jailbee.state_service.protocol import ActionEntry
+
+    monkeypatch.setattr("jailbee.dashboard.service_actions.RECONNECT_TIMEOUT_SECONDS", 0)
+
+    class Client:
+        dashboard_id = "origin"
+        excluded_prefixes = ()
+        sent = False
+
+        def action_connection(self):
+            return None if self.sent else 1
+
+        def action_entries(self):
+            if not self.sent:
+                return {}
+            return {
+                1: ActionEntry(
+                    1,
+                    ["ls"],
+                    str(tmp_path),
+                    "x",
+                    False,
+                    "origin",
+                    "none",
+                    str(tmp_path),
+                    "repo",
+                    output="done",
+                    finished=True,
+                    status=0,
+                )
+            }
+
+        def action_rejection(self, entry_id):
+            return None
+
+        def status(self):
+            return "offline"
+
+        def run_action(self, request):
+            self.sent = True
+
+    class Progress:
+        def entry_id(self, index):
+            return 1
+
+        def output(self, index, chunk):
+            pass
+
+        def question(self, index, asking):
+            pass
+
+    outcome = run_actions(
+        Client(), [ActionRun(["ls"], tmp_path)], Progress(), groups=[], transport="none"
+    )
+    assert outcome.results[0].status == 0
+    assert outcome.output == "done"

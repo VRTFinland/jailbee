@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import secrets
 import time
 from collections.abc import Sequence
@@ -38,6 +39,9 @@ class ActionClient(Protocol):
 
     @property
     def dashboard_id(self) -> str | None: ...
+
+    @property
+    def excluded_prefixes(self) -> Sequence[str]: ...
 
     def run_action(self, request: RunAction) -> None: ...
 
@@ -96,6 +100,8 @@ def run_actions(
             transport=transport,
             repo_root=root,
             prefix=prefix or root,
+            excluded_prefixes=list(client.excluded_prefixes),
+            environment=dict(os.environ),
         )
         if entry_id in client.action_entries():
             results.append(RunResult(error="invalid or duplicate action id"))
@@ -119,6 +125,8 @@ def run_actions(
                 results.append(RunResult(refused=rejection))
                 outputs.append("")
                 return ActionOutcome(results, outcome_text.text(), outputs)
+            if snapshot is not None and snapshot.finished:
+                generation = generation or sent_generation or 1
             if generation is None or (
                 uncertain_generation is not None and generation == uncertain_generation
             ):
@@ -132,6 +140,11 @@ def run_actions(
                 time.sleep(POLL_SECONDS)
                 continue
             disconnected_at = None
+            if acknowledged and snapshot is None and sent_generation != generation:
+                results.append(RunResult(error="action missing after state service reconnect"))
+                outputs.append(last_output)
+                outcome_text.append(last_output)
+                return ActionOutcome(results, outcome_text.text(), outputs)
             if sent and not acknowledged and sent_generation != generation:
                 sent = False
             if not sent:
