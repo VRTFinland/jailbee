@@ -109,6 +109,7 @@ def test_session_summary_returns_metadata_without_transcript_entries(client: Tes
         "last_activity": "2026-11-01T10:05:01Z",
         "models": ["claude-opus-5-5", "claude-sonnet-5"],
         "container": None,
+        "live": False,
     }
 
 

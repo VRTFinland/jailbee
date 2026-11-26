@@ -1,5 +1,6 @@
 import {flushPromises, mount} from "@vue/test-utils"
-import {describe, expect, it, vi} from "vitest"
+import {beforeEach, describe, expect, it, vi} from "vitest"
+import {settings, updateSettings} from "../settings"
 import {createMemoryHistory} from "vue-router"
 import {setToken} from "../api"
 import {createAppRouter} from "../router"
@@ -54,10 +55,11 @@ function serve(live: unknown = liveList, history: unknown = historyList, status 
     ))
 }
 
-async function mountContainer(fetchMock: ReturnType<typeof vi.fn<typeof fetch>>, dashboard?: Dashboard, name = "alpha-1") {
+async function mountContainer(fetchMock: ReturnType<typeof vi.fn<typeof fetch>>, dashboard?: Dashboard, name = "alpha-1", from = "/") {
     setToken("tok")
     vi.stubGlobal("fetch", withDashboardMode(fetchMock))
     const router = createAppRouter(createMemoryHistory())
+    await router.push(from)
     await router.push(`/containers/${name}`)
     await router.isReady()
     const wrapper = mount(ContainerView, {global: {plugins: [router], provide: dashboard ? {[DASHBOARD]: dashboard} : {}}})
@@ -66,6 +68,71 @@ async function mountContainer(fetchMock: ReturnType<typeof vi.fn<typeof fetch>>,
 }
 
 describe("ContainerView", () => {
+    // Existing history cases explicitly choose the all-sessions preference.
+    beforeEach(() => updateSettings({liveSessionsOnly: false, openOnlyLiveSession: false}))
+
+    it("filters to live sessions for this visit without changing the saved default", async () => {
+        updateSettings({liveSessionsOnly: true})
+        const {wrapper, router} = await mountContainer(serve())
+        expect(wrapper.findAll("li.session")).toHaveLength(1)
+        expect(wrapper.find('input[type="search"]').exists()).toBe(false)
+        expect(wrapper.find('nav[aria-label="Earlier sessions"]').exists()).toBe(false)
+        await wrapper.get('[role="switch"][aria-label="Live only"]').trigger("click")
+        await flushPromises()
+        expect(wrapper.findAll("li.session")).toHaveLength(2)
+        expect(wrapper.text()).toContain("All sessions")
+        expect(settings.liveSessionsOnly).toBe(true)
+        expect(router.currentRoute.value.name).toBe("container")
+        wrapper.unmount()
+    })
+
+    it("offers all sessions in the no-live empty state", async () => {
+        updateSettings({liveSessionsOnly: true})
+        const {wrapper} = await mountContainer(serve({...liveList, sessions: []}))
+        expect(wrapper.text()).toContain("No live sessions")
+        await wrapper.findAll("button").find(button => button.text() === "Show all sessions")!.trigger("click")
+        await flushPromises()
+        expect(wrapper.text()).toContain("Untitled session")
+        wrapper.unmount()
+    })
+
+    it.each([0, 1, 2])("opens directly only with one live session (%i)", async count => {
+        updateSettings({liveSessionsOnly: true, openOnlyLiveSession: true})
+        const {wrapper, router} = await mountContainer(serve({...liveList,
+            sessions: Array.from({length: count}, (_, i) => ({...liveList.sessions[0], session_id: `live-${i}`})),
+        }))
+        expect(router.currentRoute.value.name).toBe(count === 1 ? "session" : "container")
+        wrapper.unmount()
+    })
+
+    it("replaces the container list so Back reaches the entry page", async () => {
+        updateSettings({liveSessionsOnly: true, openOnlyLiveSession: true})
+        const {wrapper, router} = await mountContainer(serve())
+        expect(router.currentRoute.value.path).toBe("/repos/alpha/sessions/claude/s-live")
+        router.back()
+        await flushPromises()
+        expect(router.currentRoute.value.path).toBe("/")
+        wrapper.unmount()
+    })
+
+    it("does not bounce back after navigating up from that session", async () => {
+        updateSettings({liveSessionsOnly: true, openOnlyLiveSession: true})
+        const {wrapper, router} = await mountContainer(serve(), undefined, "alpha-1", "/repos/alpha/sessions/claude/s-live")
+        expect(router.currentRoute.value.name).toBe("container")
+        wrapper.unmount()
+    })
+
+    it("does not jump if the user switches to all sessions before live data arrives", async () => {
+        updateSettings({liveSessionsOnly: true, openOnlyLiveSession: true})
+        let answer: (response: Response) => void = () => {}
+        const {wrapper, router} = await mountContainer(vi.fn(() => new Promise<Response>(resolve => {answer = resolve})))
+        await wrapper.get('[role="switch"][aria-label="Live only"]').trigger("click")
+        answer(jsonResponse(200, liveList))
+        await flushPromises()
+        expect(router.currentRoute.value.name).toBe("container")
+        wrapper.unmount()
+    })
+
     it("marks a live session with a vector and words while keeping history unmarked", async () => {
         const {wrapper} = await mountContainer(serve())
         const rows = wrapper.findAll("li.session")

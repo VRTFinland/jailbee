@@ -20,6 +20,19 @@ describe("SettingsView", () => {
         expect(document.documentElement.dataset.theme).toBe("eink")
     })
 
+    it("lets the user turn off live filtering and direct opening", async () => {
+        const wrapper = mount(SettingsView, {global: {stubs: {RouterLink: true, QuickSettings: true}}})
+        for (const label of ["Show only live sessions", "Open the only live session directly"]) {
+            const toggle = wrapper.get(`[role="switch"][aria-label="${label}"]`)
+            expect(toggle.attributes("aria-checked")).toBe("true")
+            await toggle.trigger("click")
+        }
+        reloadSettings()
+        expect(settings.liveSessionsOnly).toBe(false)
+        expect(settings.openOnlyLiveSession).toBe(false)
+        wrapper.unmount()
+    })
+
     it("defaults Agent context to hidden and stores the choice", async () => {
         const wrapper = mount(SettingsView, {global: {stubs: {RouterLink: true, QuickSettings: true}}})
         expect((wrapper.get('select[aria-label="Agent context"]').element as HTMLSelectElement).value).toBe("hidden")

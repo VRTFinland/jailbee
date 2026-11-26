@@ -45,6 +45,7 @@ def server(make_server: Callable[..., E2EServer], corpus_home: Path) -> E2EServe
 
 @pytest.fixture
 def reader(server: E2EServer, page: Page) -> Page:
+    page.add_init_script("localStorage.setItem('jailbee.liveSessionsOnly', '0')")
     log_in_with_pin(page, server.url, server.pin.current)
     return page
 

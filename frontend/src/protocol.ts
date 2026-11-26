@@ -129,6 +129,7 @@ export type ServerMessage = ServerHello | FrontPage | Status | TranscriptAppend 
 
 /** One row of `GET /api/repos/{prefix}/sessions` (REST, not the WebSocket). */
 export interface SessionSummary {
+    live: boolean
     session_id: string
     agent: string
     title: string

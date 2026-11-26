@@ -127,6 +127,24 @@ def test_a_containers_live_sessions_come_from_the_snapshot_alone(client: TestCli
     assert first["last_activity"].startswith("2026-11-01T")
 
 
+def test_repo_live_marks_use_the_same_snapshot_as_the_container_list(client: TestClient) -> None:
+    rows = client.get("/api/repos/alpha/sessions").json()["sessions"]
+    assert {r["session_id"]: r["live"] for r in rows} == {
+        SESSION_A: True,
+        SESSION_B: False,
+    }
+
+
+def test_repo_live_sessions_include_a_process_whose_transcript_is_not_written_yet(home: Path) -> None:
+    (home / "projects" / "-work-repo" / f"{SESSION_A}.jsonl").unlink()
+    for client in open_client(home):
+        rows = client.get("/api/repos/alpha/sessions").json()["sessions"]
+        active = next(r for r in rows if r["session_id"] == SESSION_A)
+        assert active["live"] is True
+        assert active["container"] == "alpha-1"
+        assert active["title"] == ""
+
+
 def test_a_containers_history_is_its_recorded_sessions_that_are_not_live(
     client: TestClient,
 ) -> None:

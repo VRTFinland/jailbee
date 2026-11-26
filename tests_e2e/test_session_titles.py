@@ -35,6 +35,7 @@ def test_session_list_prefers_the_typed_prompt_and_transcript_marks_clear_as_met
     log_in_with_pin(page, server.url, server.pin.current)
 
     page.goto(f"{server.url}/#/repos/work")
+    page.get_by_role("button", name="Show all sessions", exact=True).click()
 
     session_link = page.get_by_role("link", name=prompt)
     expect(session_link).to_be_visible()
@@ -67,6 +68,7 @@ def test_a_mixed_user_record_titles_by_the_typed_text_and_shows_the_reminder_as_
     # the repository's URL afresh instead, as test_agent_context does.
     page.goto(f"{server.url}/#/repos/work")
     page.reload()
+    page.get_by_role("button", name="Show all sessions", exact=True).click()
 
     expect(page.get_by_role("link", name=f"{typed} claude unattributed", exact=True)).to_have_text(
         typed

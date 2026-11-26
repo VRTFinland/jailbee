@@ -1,7 +1,7 @@
 import {config} from "@vue/test-utils"
 config.global.stubs.DialogPortal = {template: "<slot />"}
 import {flushPromises, mount} from "@vue/test-utils"
-import {afterEach, describe, expect, it, vi} from "vitest"
+import {afterEach, beforeEach, describe, expect, it, vi} from "vitest"
 import {createMemoryHistory} from "vue-router"
 import {setToken} from "../api"
 import {createAppRouter} from "../router"
@@ -20,6 +20,7 @@ function jsonResponse(status: number, body: unknown): Response {
 
 const sessions = [
     {
+        live: true,
         session_id: "s-new",
         agent: "claude",
         title: "Fix the login bug",
@@ -28,6 +29,7 @@ const sessions = [
         container: "alpha-1",
     },
     {
+        live: false,
         session_id: "s-old",
         agent: "claude",
         title: "",
@@ -37,10 +39,11 @@ const sessions = [
     },
 ]
 
-async function mountRepo(fetchMock: ReturnType<typeof vi.fn<typeof fetch>>, dashboard?: Dashboard) {
+async function mountRepo(fetchMock: ReturnType<typeof vi.fn<typeof fetch>>, dashboard?: Dashboard, from = "/") {
     setToken("tok")
     vi.stubGlobal("fetch", withDashboardMode(fetchMock))
     const router = createAppRouter(createMemoryHistory())
+    await router.push(from)
     await router.push("/repos/alpha")
     await router.isReady()
     const wrapper = mount(RepoView, {global: {plugins: [router], provide: dashboard ? {[DASHBOARD]: dashboard} : {}}})
@@ -49,6 +52,33 @@ async function mountRepo(fetchMock: ReturnType<typeof vi.fn<typeof fetch>>, dash
 }
 
 describe("RepoView", () => {
+    beforeEach(() => updateSettings({liveSessionsOnly: false, openOnlyLiveSession: false}))
+
+    it("shows only live sessions by default and allows all sessions for this visit", async () => {
+        updateSettings({liveSessionsOnly: true})
+        const {wrapper} = await mountRepo(vi.fn().mockResolvedValue(jsonResponse(200, {sessions})))
+        expect(wrapper.findAll("li.session")).toHaveLength(1)
+        await wrapper.get('[role="switch"][aria-label="Live only"]').trigger("click")
+        expect(wrapper.findAll("li.session")).toHaveLength(2)
+        wrapper.unmount()
+    })
+
+    it.each([0, 1, 2])("jumps only when exactly one repo session is live (%i)", async count => {
+        updateSettings({liveSessionsOnly: true, openOnlyLiveSession: true})
+        const rows = Array.from({length: count}, (_, i) => ({...sessions[0], session_id: `live-${i}`}))
+        const {wrapper, router} = await mountRepo(vi.fn().mockResolvedValue(jsonResponse(200, {sessions: rows})))
+        expect(router.currentRoute.value.name).toBe(count === 1 ? "session" : "repo")
+        wrapper.unmount()
+    })
+
+    it("does not bounce back when returning from the live session", async () => {
+        updateSettings({liveSessionsOnly: true, openOnlyLiveSession: true})
+        const {wrapper, router} = await mountRepo(vi.fn().mockResolvedValue(jsonResponse(200, {sessions})),
+            undefined, "/repos/alpha/sessions/claude/s-new")
+        expect(router.currentRoute.value.name).toBe("repo")
+        wrapper.unmount()
+    })
+
     afterEach(() => updateSettings({displayProfile: "normal"}))
 
     it("shows the repository's nested containers and updates when a child disappears", async () => {
