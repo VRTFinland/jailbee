@@ -2,15 +2,14 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-import json
-
-from jailbee.web import auth_admin, chat
 from starlette.concurrency import run_in_threadpool
 
+from jailbee.web import auth_admin, chat
 from jailbee.web.container_sessions import live_session_containers, session_containers
 from jailbee.web.deps import Context, RequireSession
 from jailbee.web.protocol import (
@@ -137,7 +136,14 @@ class MessageResponse(BaseModel):
 
 
 @router.post("/api/repos/{prefix}/sessions/{agent}/{session_id}/messages")
-async def send_message(prefix: str, agent: str, session_id: str, body: MessageRequest, ctx: Context, auth: RequireSession) -> MessageResponse:
+async def send_message(
+    prefix: str,
+    agent: str,
+    session_id: str,
+    body: MessageRequest,
+    ctx: Context,
+    auth: RequireSession,
+) -> MessageResponse:
     if not ctx.scope.allows(prefix):
         raise HTTPException(status_code=404, detail="Unknown session")
     await ctx.homes_ready()
@@ -148,9 +154,15 @@ async def send_message(prefix: str, agent: str, session_id: str, body: MessageRe
         raise HTTPException(status_code=404, detail="Unknown session")
     outcome = await run_in_threadpool(chat.send, ctx, prefix, agent, session_id, body.text)
     await run_in_threadpool(
-        auth_admin.record_event, ctx.deps.engine, "agent_message",
-        clock=ctx.deps.clock, method=outcome.code, device_name=auth.session.device_name,
-        source=json.dumps({"prefix": prefix, "agent": agent, "session_id": session_id, "text": body.text}),
+        auth_admin.record_event,
+        ctx.deps.engine,
+        "agent_message",
+        clock=ctx.deps.clock,
+        method=outcome.code,
+        device_name=auth.session.device_name,
+        source=json.dumps(
+            {"prefix": prefix, "agent": agent, "session_id": session_id, "text": body.text}
+        ),
     )
     return MessageResponse(code=outcome.code, message=outcome.message)
 

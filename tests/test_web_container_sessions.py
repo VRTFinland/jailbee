@@ -297,7 +297,9 @@ def test_a_session_two_containers_saw_belongs_to_the_one_that_saw_it_last(
 
 def test_web_chat_delivers_and_audits_exact_message(home, tmp_path, monkeypatch):
     from unittest.mock import Mock
+
     from sqlalchemy import select
+
     from jailbee.accounts.adapters.base import get_adapter
     from jailbee.db.models import WebAuthEvent
 
@@ -311,23 +313,43 @@ def test_web_chat_delivers_and_audits_exact_message(home, tmp_path, monkeypatch)
     monkeypatch.setattr("jailbee.web.chat.load_repo_config", lambda path: Mock())
     incus = Mock()
     incus.list_containers.return_value = [{"name": "alpha-1", "status": "Running"}]
-    incus.exec.side_effect = ["42 10 123\n10 1 22\n", "%1 10\n", "────────\n> \n────────\n", "", "", ""]
+    incus.exec.side_effect = [
+        "42 10 123\n10 1 22\n",
+        "%1 10\n",
+        "────────\n> \n────────\n",
+        "",
+        "",
+        "",
+    ]
     snap = snapshot_of(repo_group("alpha", container("alpha-1", agent_status=live(SESSION_A))))
     engine = get_engine()
     pin = PinHolder(generate=pin_sequence())
-    deps = WebDeps(snapshot_source=FakeSourceFactory(initial=snap), engine=engine, pin=pin, agent_chat=True, incus_factory=lambda: incus, agent_homes={"alpha": [("claude", home)]}.get)
+    deps = WebDeps(
+        snapshot_source=FakeSourceFactory(initial=snap),
+        engine=engine,
+        pin=pin,
+        agent_chat=True,
+        incus_factory=lambda: incus,
+        agent_homes={"alpha": [("claude", home)]}.get,
+    )
     with TestClient(create_app(deps)) as client:
-        token = client.post("/api/auth", json={"method": "pin", "pin": pin.current, "device_name": "reader"}).json()["token"]
+        token = client.post(
+            "/api/auth", json={"method": "pin", "pin": pin.current, "device_name": "reader"}
+        ).json()["token"]
         client.headers["Authorization"] = f"Bearer {token}"
         with client.websocket_connect("/api/ws") as ws:
             ws.send_text(json.dumps({"type": "auth", "v": PROTOCOL_VERSION, "token": token}))
             ws.receive_json()
             client.get("/api/repos/alpha/sessions")
             text = "hello\nworld"
-            response = client.post(f"/api/repos/alpha/sessions/claude/{SESSION_A}/messages", json={"text": text})
+            response = client.post(
+                f"/api/repos/alpha/sessions/claude/{SESSION_A}/messages", json={"text": text}
+            )
             assert response.json()["code"] == "delivered"
             assert incus.exec_with_input.call_args.args[2] == text
     with Session(engine) as db:
-        event = db.exec(select(WebAuthEvent).where(WebAuthEvent.event == "agent_message")).first()[0]
+        event = db.exec(select(WebAuthEvent).where(WebAuthEvent.event == "agent_message")).first()[
+            0
+        ]
         assert event.device_name == "reader"
         assert json.loads(event.source)["text"] == text

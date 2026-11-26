@@ -434,9 +434,16 @@ def test_a_repo_lists_only_sessions_started_in_its_own_containers_repo_dir(
 def test_chat_disabled_in_snapshot_and_post(client: TestClient) -> None:
     url = f"/api/repos/alpha/sessions/claude/{SESSION_A}"
     assert client.get(url).json()["chat"] == {
-        "available": False, "code": "permission_denied", "message": "Agent chat is disabled"
+        "available": False,
+        "code": "permission_denied",
+        "message": "Agent chat is disabled",
     }
     response = client.post(url + "/messages", json={"text": "hello"})
     assert response.status_code == 200
     assert response.json()["code"] == "permission_denied"
-    assert client.post(url.replace("alpha", "secret") + "/messages", json={"text": "hello"}).status_code == 404
+    assert (
+        client.post(
+            url.replace("alpha", "secret") + "/messages", json={"text": "hello"}
+        ).status_code
+        == 404
+    )

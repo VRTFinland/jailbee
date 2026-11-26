@@ -291,7 +291,9 @@ class TranscriptView(BaseModel):
     last_activity: datetime | None
     models: list[str]
     entries: list[RenderedEntry]
-    chat: ChatAvailability = ChatAvailability(available=False, code="permission_denied", message="Agent chat is disabled")
+    chat: ChatAvailability = ChatAvailability(
+        available=False, code="permission_denied", message="Agent chat is disabled"
+    )
     offset: int = 0
     """Byte offset the entries were read to: where a live `Subscribe` resumes."""
 

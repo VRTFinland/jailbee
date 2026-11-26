@@ -9,12 +9,11 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
-
-from jailbee.web import chat
 from typing import TYPE_CHECKING
 
 from starlette.concurrency import run_in_threadpool
 
+from jailbee.web import chat
 from jailbee.web.protocol import (
     FollowKey,
     MetaMode,
@@ -84,25 +83,41 @@ class ConnectionFollows:
         async def deliver(entries: list[RenderedEntry], next_offset: int) -> None:
             if not await self._authorized():
                 return  # revoked: the socket is closed, nothing more is sent
-            status = await run_in_threadpool(chat.availability, ctx, key.prefix, key.agent, key.session_id)
-            await self._send(TranscriptAppend(key=key, entries=entries, offset=next_offset, chat=status))
+            status = await run_in_threadpool(
+                chat.availability, ctx, key.prefix, key.agent, key.session_id
+            )
+            await self._send(
+                TranscriptAppend(key=key, entries=entries, offset=next_offset, chat=status)
+            )
 
         self._followers[key] = ctx.follows.follow(key, source, path, offset, deliver, meta)
         if ctx.deps.agent_chat and key.subagent_id is None:
             self._chat_tasks[key] = asyncio.create_task(self._watch_chat(key))
 
     async def _watch_chat(self, key: FollowKey) -> None:
-        previous = await run_in_threadpool(chat.availability, self._ctx, key.prefix, key.agent, key.session_id)
+        previous = await run_in_threadpool(
+            chat.availability, self._ctx, key.prefix, key.agent, key.session_id
+        )
         if await self._authorized() and key in self._followers:
-            await self._send(TranscriptAppend(key=key, entries=[], offset=self._followers[key].offset, chat=previous))
+            await self._send(
+                TranscriptAppend(
+                    key=key, entries=[], offset=self._followers[key].offset, chat=previous
+                )
+            )
         while True:
             await asyncio.sleep(2)
             if not await self._authorized():
                 return
-            current = await run_in_threadpool(chat.availability, self._ctx, key.prefix, key.agent, key.session_id)
+            current = await run_in_threadpool(
+                chat.availability, self._ctx, key.prefix, key.agent, key.session_id
+            )
             if current != previous and key in self._followers:
                 previous = current
-                await self._send(TranscriptAppend(key=key, entries=[], offset=self._followers[key].offset, chat=current))
+                await self._send(
+                    TranscriptAppend(
+                        key=key, entries=[], offset=self._followers[key].offset, chat=current
+                    )
+                )
 
     def _drop(self, key: FollowKey) -> None:
         task = self._chat_tasks.pop(key, None)
