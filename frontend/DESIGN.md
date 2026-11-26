@@ -81,7 +81,7 @@ a component. The names are Material 3 roles under the `md` prefix.
 | Icon sizes | `--md-icon-*` (`extra-small`, `small`, `medium`, `large`) | Via `Icon`'s `size`. |
 | Shape | `--md-shape-*` (`none`, `extra-small` 4px, `small` 8px, `medium` 12px, `large` 16px, `extra-large` 28px, `full`) | Every border radius. |
 | Spacing | `--md-space-*` (`4`, `8`, `12`, `16`, `24`, `32`) | Every margin, padding, gap and inset. See the naming rule below. |
-| Content layout | `--md-layout-content-max`, `--md-layout-page-tap-zone`, `--md-layout-answer-*` | Maximum readable content width and the e-ink edge tap-zone inset, shared by the transcript and its composer; answer-panel half/full viewport bounds. |
+| Content layout | `--md-layout-content-max`, `--md-layout-page-tap-zone`, `--md-layout-answer-*`, `--md-layout-reader-min` | Maximum readable content width and the e-ink edge tap-zone inset, shared by the transcript and its composer; answer-panel half/full viewport bounds. |
 | Hit targets | `--md-target-min`, `--md-target-row` | `min` 44px: the smallest any control may be. `row` 48px with a fine pointer, 56px with a coarse one. |
 | Layers | `--md-layer-*` (bottom to top: `raised`, `sticky`, `scrim`, `dialog`, `popover`) | Every z-index. A menu or select opened from a dialog sits above it. |
 | State layers | `--md-state-*` (`hover-opacity`, `pressed-opacity`) | Through `ui-state-layer`; zero in e-ink. |

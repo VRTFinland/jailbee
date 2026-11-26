@@ -231,7 +231,7 @@ def test_panel_refusal_keeps_answers_and_latest_message_controls_scope(
         def execute(name: str, command: list[str]) -> str:
             if "capture-pane" in " ".join(command):
                 return "────────\n> occupied\n────────\n"
-            return original(name, command)
+            return str(original(name, command))
 
         incus.exec.side_effect = execute
         route.continue_()
