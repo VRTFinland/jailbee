@@ -3,6 +3,8 @@
 // the server says which methods are on (`GET /api/auth/methods`).
 import {computed, onMounted, ref, watch} from "vue"
 import {useRoute, useRouter} from "vue-router"
+import Button from "../components/ui/Button.vue"
+import Field from "../components/ui/Field.vue"
 import {
     type AuthMethod,
     fetchAuthMethods,
@@ -92,66 +94,63 @@ async function submit() {
     <main class="login">
         <h1>JailBee</h1>
         <div v-if="codeMethods.length > 1" class="tabs" role="tablist">
-            <button
+            <Button
                 v-for="m in codeMethods"
                 :key="m"
                 type="button"
                 role="tab"
                 :data-method="m"
                 :aria-selected="active === m"
-                :class="['tab', {active: active === m}]"
+                class="tab"
+                :variant="active === m ? 'tonal' : 'text'"
                 @click="choose(m)"
             >
                 {{ LABELS[m] }}
-            </button>
+            </Button>
         </div>
         <p v-if="codeMethods.length === 0">Log in with your security key.</p>
         <p v-else-if="active === 'pin'">Enter the PIN printed by <code>jailbee remote web serve</code>.</p>
         <p v-else>Enter the 6-digit code from your authenticator app.</p>
         <form class="form" @submit.prevent="submit">
-            <label v-if="codeMethods.length > 0 && active === 'pin'">
-                <span>PIN</span>
-                <input
-                    v-model="pin"
-                    name="pin"
-                    class="digits"
-                    type="text"
-                    inputmode="numeric"
-                    autocomplete="one-time-code"
-                    pattern="[0-9]*"
-                    maxlength="6"
-                    placeholder="000000"
-                    autofocus
-                />
-            </label>
-            <label v-else-if="codeMethods.length > 0">
-                <span>Code</span>
-                <input
-                    v-model="code"
-                    name="code"
-                    class="digits"
-                    type="text"
-                    inputmode="numeric"
-                    autocomplete="one-time-code"
-                    pattern="[0-9]*"
-                    maxlength="6"
-                    placeholder="000000"
-                    autofocus
-                />
-            </label>
-            <button v-if="codeMethods.length > 0" type="submit" class="primary" :disabled="!ready || loading">
+            <Field
+                v-if="codeMethods.length > 0 && active === 'pin'"
+                v-model="pin"
+                label="PIN"
+                name="pin"
+                type="text"
+                inputmode="numeric"
+                autocomplete="one-time-code"
+                pattern="[0-9]*"
+                maxlength="6"
+                placeholder="000000"
+                autofocus
+            />
+            <Field
+                v-else-if="codeMethods.length > 0"
+                v-model="code"
+                label="Code"
+                name="code"
+                type="text"
+                inputmode="numeric"
+                autocomplete="one-time-code"
+                pattern="[0-9]*"
+                maxlength="6"
+                placeholder="000000"
+                autofocus
+            />
+            <Button v-if="codeMethods.length > 0" type="submit" variant="primary" :disabled="!ready || loading">
                 {{ loading ? "…" : "Log in" }}
-            </button>
-            <button
+            </Button>
+            <Button
                 v-if="securityKey"
                 type="button"
                 data-test="security-key"
-                :class="codeMethods.length > 0 ? 'secondary' : 'primary'"
+                :variant="codeMethods.length > 0 ? 'tonal' : 'primary'"
                 :disabled="loading"
                 @click="useSecurityKey"
             >
                 Use security key
-            </button>
+            </Button>
         </form>
         <p v-if="error" class="error" role="alert">{{ error }}</p>
     </main>
@@ -161,85 +160,29 @@ async function submit() {
 .login {
     max-width: 22rem;
     margin: 0 auto;
-    padding: max(4rem, calc(var(--quick-trigger-top) + var(--quick-trigger-size) + 0.75rem)) var(--space-3) 4rem;
+    padding: max(calc(var(--md-space-32) + var(--md-space-32)), calc(var(--quick-trigger-top) + var(--quick-trigger-size) + var(--md-space-12))) var(--md-space-16) calc(var(--md-space-32) + var(--md-space-32));
 }
 .login h1 {
-    margin-bottom: var(--space-2);
+    margin-bottom: var(--md-space-8);
+    font-size: var(--md-type-title-large-size);
+    line-height: var(--md-type-title-large-line-height);
+    font-weight: var(--md-type-title-large-weight);
 }
 .form {
     display: flex;
     flex-direction: column;
-    gap: var(--space-3);
-    margin-top: var(--space-4);
-}
-label {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-1);
-}
-input {
-    font: inherit;
-    padding: var(--space-2) var(--space-3);
-    border: 1px solid var(--border-strong);
-    border-radius: var(--radius);
-    background: var(--surface);
-    color: var(--text);
-    min-height: 3rem;
+    gap: var(--md-space-16);
+    margin-top: var(--md-space-24);
 }
 .tabs {
     display: flex;
-    margin-top: var(--space-3);
-    border: 1px solid var(--border-strong);
-    border-radius: var(--radius);
-    overflow: hidden;
+    margin-top: var(--md-space-16);
 }
 .tab {
     flex: 1;
-    font: inherit;
-    min-height: 2.75rem;
-    border: none;
-    background: var(--surface);
-    color: var(--text);
-    cursor: pointer;
-}
-.tab + .tab {
-    border-left: 1px solid var(--border-strong);
-}
-.tab.active {
-    background: var(--accent);
-    color: var(--accent-text);
-}
-.digits {
-    font-family: var(--font-mono);
-    font-size: 1.5rem;
-    letter-spacing: 0.4em;
-    text-align: center;
-}
-.primary {
-    font: inherit;
-    min-height: 3rem;
-    border: none;
-    border-radius: var(--radius);
-    background: var(--accent);
-    color: var(--accent-text);
-    cursor: pointer;
-}
-.secondary {
-    font: inherit;
-    min-height: 3rem;
-    border: 1px solid var(--border-strong);
-    border-radius: var(--radius);
-    background: var(--surface);
-    color: var(--text);
-    cursor: pointer;
-}
-.primary:disabled,
-.secondary:disabled {
-    opacity: 0.5;
-    cursor: default;
 }
 .error {
-    margin-top: var(--space-3);
-    color: var(--danger);
+    margin-top: var(--md-space-16);
+    color: var(--md-error);
 }
 </style>

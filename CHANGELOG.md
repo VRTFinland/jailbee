@@ -29,7 +29,9 @@ before editing `## Unreleased`.
   opaque floating menu controls, and their layout, filters and live updates preserved.
   The container view uses the same rows, a labelled search field, tonal history
   paging buttons and vector live-session chips while preserving session ordering,
-  search, pagination and orchestration links
+  search, pagination and orchestration links.
+  Login and security-key setup use the shared fields and buttons, preserving PIN,
+  authenticator-code, one-time-link and security-key flows
   ([#167](https://github.com/VRTFinland/jailbee/issues/167)).
 - Web dashboard reader improvements: compact breadcrumb title bars and session details,
   an in-context settings overlay, configurable e-ink page controls and page step,
