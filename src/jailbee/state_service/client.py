@@ -20,7 +20,7 @@ import time
 from collections import deque
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import replace
-from typing import IO, TYPE_CHECKING
+from typing import IO, TYPE_CHECKING, Any
 
 from jailbee import __version__
 from jailbee.state_service import StaleDashboard, StateServiceError, StateServiceUnavailable
@@ -32,6 +32,9 @@ from jailbee.state_service.protocol import (
     ActionEntry,
     ActionFinish,
     ActionOutput,
+    ActionQuestion,
+    ActionQuestionResolved,
+    AnswerActionQuestion,
     ActionRejected,
     ActionSyncEnd,
     ActionSyncStart,
@@ -129,6 +132,9 @@ class StateClient:
         self._sock: socket.socket | None = None
         self._latest: Snapshot | None = None
         self._action_entries: dict[int, ActionEntry] = {}
+        self._action_questions: dict[int, ActionQuestion] = {}
+        self._replay_questions: dict[int, ActionQuestion] | None = None
+        self._question_resolutions: deque[ActionQuestionResolved] = deque()
         self._action_rejections: dict[int, str] = {}
         self._replay_entries: dict[int, ActionEntry] | None = None
         self._action_events: deque[
@@ -201,6 +207,22 @@ class StateClient:
     def action_entries(self) -> dict[int, ActionEntry]:
         with self._lock:
             return self._action_entries.copy()
+
+    def action_questions(self) -> dict[int, ActionQuestion]:
+        with self._lock:
+            return self._action_questions.copy()
+
+    def drain_question_resolutions(self) -> list[ActionQuestionResolved]:
+        with self._lock:
+            resolutions = list(self._question_resolutions)
+            self._question_resolutions.clear()
+            return resolutions
+
+    def answer_action_question(self, entry_id: int, question_id: int, value: Any) -> None:
+        with self._lock:
+            if self._sock is None:
+                raise StateServiceUnavailable("state service disconnected")
+            self._sock.sendall(encode(AnswerActionQuestion(entry_id, question_id, value)))
 
     def dismiss_action(self, entry_id: int) -> None:
         """Dismiss a finished shared entry for every dashboard."""
@@ -305,12 +327,26 @@ class StateClient:
         if isinstance(message, ActionSyncStart):
             with self._lock:
                 self._replay_entries = {}
+                self._replay_questions = {}
             return False
         if isinstance(message, ActionSyncEnd):
             with self._lock:
                 if self._replay_entries is not None:
                     self._action_entries = self._replay_entries
                     self._replay_entries = None
+                if self._replay_questions is not None:
+                    self._action_questions = self._replay_questions
+                    self._replay_questions = None
+            self._notify()
+            return False
+        if isinstance(message, (ActionQuestion, ActionQuestionResolved)):
+            with self._lock:
+                questions = self._replay_questions if self._replay_questions is not None else self._action_questions
+                if isinstance(message, ActionQuestion):
+                    questions[message.entry_id] = message
+                elif (current := questions.get(message.entry_id)) is not None and current.question_id == message.question_id:
+                    del questions[message.entry_id]
+                    self._question_resolutions.append(message)
             self._notify()
             return False
         if isinstance(message, ActionDismissed):
