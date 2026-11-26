@@ -181,6 +181,8 @@ def test_remote_cannot_answer_or_abort_local_question(runtime_dir, tmp_path, mon
     config = global_config.GlobalConfig()
     config.remote.ssh.commands = RemoteCommandPolicy(mode="disabled")
     monkeypatch.setattr(global_config, "load_global_config", lambda path: (config, []))
+    from jailbee.remote_ssh import repo_scope
+    monkeypatch.setattr(repo_scope, "registered_repos", lambda **kwargs: [repo_scope.RepoChoice("repo", tmp_path)])
     answers = []
 
     class Child:
@@ -250,6 +252,86 @@ def test_remote_cannot_answer_or_abort_local_question(runtime_dir, tmp_path, mon
     finally:
         local.close()
         remote.close()
+
+
+def test_allowed_ssh_action_ignores_service_environment(runtime_dir, tmp_path, monkeypatch):
+    from jailbee import global_config
+    from jailbee.config.models_remote import RemoteCommandPolicy
+    from jailbee.state_service import paths
+
+    config = global_config.GlobalConfig()
+    config.remote.ssh.commands = RemoteCommandPolicy(mode="allowlist", allow=["ls"])
+    monkeypatch.setattr(global_config, "load_global_config", lambda path: (config, []))
+    from jailbee.remote_ssh import repo_scope
+    monkeypatch.setattr(repo_scope, "registered_repos", lambda **kwargs: [repo_scope.RepoChoice("repo", tmp_path)])
+    monkeypatch.setenv("JAILBEE_REMOTE_SESSION", "1")
+    monkeypatch.setenv("JAILBEE_REMOTE_TRANSPORT", "ssh")
+    monkeypatch.delenv("JAILBEE_REMOTE_EXCLUDED_REPOS", raising=False)
+    spawned = []
+
+    class Child:
+        stdout = None
+        def __init__(self, sock):
+            sock.close()
+        def wait(self):
+            return 0
+        def kill(self):
+            pass
+
+    def spawn(*args, **kwargs):
+        spawned.append(kwargs["env"])
+        return Child(kwargs["prompt_sock"])
+
+    paths.ensure_runtime_dir()
+    server = StateServer(FakeGatherer(), version="v1", action_spawn=spawn)
+    thread = threading.Thread(target=lambda: asyncio.run(server.serve(paths.socket_path())), daemon=True)
+    thread.start()
+    track_server(server, thread)
+    _until(paths.socket_path().exists)
+    client = StateClient(None, dashboard_id="remote", transport="ssh", version="v1", spawn=lambda: None)
+    client.start()
+    try:
+        client.wait_first_snapshot(3)
+        client.run_action(RunAction(114, ["ls"], str(tmp_path), "x", False, "remote", "none", str(tmp_path), "repo", environment={"PATH": "/bin"}))
+        _until(lambda: 114 in client.action_entries() and client.action_entries()[114].finished)
+        assert client.action_entries()[114].status == 0
+        assert len(spawned) == 1
+    finally:
+        client.close()
+
+
+def test_remote_cannot_spoof_registered_repo_scope(runtime_dir, tmp_path, monkeypatch):
+    from jailbee import global_config
+    from jailbee.config.models_remote import RemoteCommandPolicy
+    from jailbee.remote_ssh import repo_scope
+    from jailbee.state_service import paths
+
+    public = tmp_path / "public"
+    private = tmp_path / "private"
+    public.mkdir()
+    private.mkdir()
+    config = global_config.GlobalConfig()
+    config.remote.ssh.commands = RemoteCommandPolicy(mode="allowlist", allow=["ls"])
+    config.remote.ssh.excluded_repos = ["private"]
+    monkeypatch.setattr(global_config, "load_global_config", lambda path: (config, []))
+    monkeypatch.setattr(repo_scope, "registered_repos", lambda **kwargs: [repo_scope.RepoChoice("public", public), repo_scope.RepoChoice("private", private)])
+    spawned = []
+    paths.ensure_runtime_dir()
+    server = StateServer(FakeGatherer(), version="v1", action_spawn=lambda *a, **kw: spawned.append(True))
+    thread = threading.Thread(target=lambda: asyncio.run(server.serve(paths.socket_path())), daemon=True)
+    thread.start()
+    track_server(server, thread)
+    _until(paths.socket_path().exists)
+    client = StateClient(None, dashboard_id="remote", transport="ssh", version="v1", spawn=lambda: None)
+    client.start()
+    try:
+        client.wait_first_snapshot(3)
+        client.run_action(RunAction(115, ["ls"], str(private), "x", False, "remote", "none", str(public), "public", environment={"PATH": "/bin"}))
+        _until(lambda: client.action_rejection(115) is not None)
+        assert not spawned
+        assert 115 not in client.action_entries()
+    finally:
+        client.close()
 
 
 def test_action_streams_output_and_result(runtime_dir, tmp_path):

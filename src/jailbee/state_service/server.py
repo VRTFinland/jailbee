@@ -290,6 +290,22 @@ class StateServer:
         )
         return policy
 
+    def _remote_repo(self, client: _Client, root: str, cwd: str) -> tuple[str, str]:
+        from jailbee.global_config import default_global_config_path, load_global_config
+        from jailbee.remote_ssh.repo_scope import registered_repos
+
+        config, _ = load_global_config(default_global_config_path())
+        policy = getattr(config.remote, client.transport)
+        root_path, cwd_path = Path(root).resolve(), Path(cwd).resolve()
+        matches = [repo for repo in registered_repos(engine=self._engine) if repo.root.resolve() == root_path]
+        if not matches or matches[0].prefix in policy.excluded_repos:
+            raise ValueError("repository is not visible to this remote dashboard")
+        if not cwd_path.is_relative_to(root_path):
+            raise ValueError("action directory is outside the registered repository")
+        if client.cwd_root is not None and not root_path.is_relative_to(client.cwd_root.resolve()):
+            raise ValueError("repository is outside the dashboard scope")
+        return str(root_path), matches[0].prefix
+
     def _question_for_client(self, client: _Client, question: ActionQuestion) -> ActionQuestion:
         entry = self._actions[question.entry_id]
         try:
@@ -313,6 +329,9 @@ class StateServer:
             return
         try:
             policy = self._check_policy(client, request.argv)
+            root, prefix = request.repo_root, request.prefix
+            if client.transport != "none":
+                root, prefix = self._remote_repo(client, request.repo_root, request.cwd)
         except (ValueError, OSError) as exc:
             self._send_action(client, ActionRejected(request.entry_id, str(exc)))
             return
@@ -324,13 +343,13 @@ class StateServer:
             request.critical,
             request.origin,
             client.transport,
-            request.repo_root,
-            request.prefix,
+            root,
+            prefix,
         )
         entry = replace(
             entry,
-            cwd_root=request.cwd_root or request.repo_root,
-            excluded_prefixes=list(request.excluded_prefixes),
+            cwd_root=(root if client.transport != "none" else request.cwd_root or root),
+            excluded_prefixes=(list(client.excluded_prefixes) if client.transport != "none" else list(request.excluded_prefixes)),
         )
         self._actions[entry.entry_id] = entry
         self._broadcast_action(entry)
@@ -446,6 +465,13 @@ class StateServer:
         self._broadcast_action(ActionQuestionResolved(entry_id, question.question_id, answered_by))
 
     def _in_scope(self, entry: ActionEntry, client: _Client) -> bool:
+        if client.transport != "none":
+            try:
+                root, prefix = self._remote_repo(client, entry.repo_root, entry.cwd)
+            except (ValueError, OSError):
+                return False
+            if root != str(Path(entry.repo_root).resolve()) or prefix != entry.prefix:
+                return False
         if entry.prefix in client.excluded_prefixes:
             return False
         if client.cwd_root is None or entry.cwd_root is None:
