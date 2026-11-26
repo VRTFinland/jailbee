@@ -5,6 +5,7 @@
 import {inject, reactive, type InjectionKey} from "vue"
 import {
     PROTOCOL_VERSION,
+    type ChatAvailability,
     type ClientMessage,
     type FollowKey,
     type MetaMode,
@@ -32,7 +33,7 @@ export interface DashboardState {
 
 export interface FollowHandlers {
     /** New entries, in transcript order. */
-    onAppend(entries: RenderedEntry[]): void
+    onAppend(entries: RenderedEntry[], chat?: ChatAvailability): void
     /** The server refused the subscription; nothing more arrives. */
     onError?(message: string): void
 }
@@ -134,7 +135,7 @@ export class Dashboard {
                 const entry = this.follows.get(keyId(message.key))
                 if (entry === undefined) return
                 entry.offset = message.offset
-                entry.handlers.onAppend(message.entries)
+                entry.handlers.onAppend(message.entries, message.chat)
                 break
             }
             case "subscribe_error": {

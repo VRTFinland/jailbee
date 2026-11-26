@@ -109,12 +109,24 @@ export interface Status {
 }
 
 /** Entries a followed transcript gained; never empty. */
+export interface ChatAvailability {
+    available: boolean
+    code: string
+    message: string
+}
+
+export interface MessageOutcome {
+    code: string
+    message: string
+}
+
 export interface TranscriptAppend {
     type: "append"
     v: number
     key: FollowKey
     entries: RenderedEntry[]
     offset: number
+    chat?: ChatAvailability
 }
 
 /** A subscription refused (unknown or hidden session): nothing follows. */
@@ -248,6 +260,7 @@ export interface TranscriptView {
     last_activity: string | null
     models: string[]
     entries: RenderedEntry[]
+    chat?: ChatAvailability
     /** Byte offset the entries were read to: where a live subscription resumes. */
     offset: number
 }
