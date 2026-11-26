@@ -1632,6 +1632,12 @@ resolution follow the new base. Built for **stacked-PR
 chains**: when a parent PR (say `feat/a`) merges to `main`, retarget the dependent
 container from `feat/a` to `main`.
 
+The base may be a local branch or an already-fetched upstream branch, as with
+`jailbee new`. Local wins when both exist; a remote-only base is anchored from
+`refs/remotes/<upstream>/<NEWBASE>` without creating a local branch. The CLI,
+terminal dashboard and Qt dashboard offer the same base candidates, excluding
+the current base. Retarget itself does not fetch from the network.
+
 | Flag | Effect |
 |---|---|
 | `--merge` | After retargeting, merge the new base into the container's branch (equivalent to a follow-up `jailbee git push <name> --merge`). Without it, JailBee just flips the label and prints the `jailbee git push --merge` command to run. |

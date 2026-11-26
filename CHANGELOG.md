@@ -454,6 +454,10 @@ before editing `## Unreleased`.
 
 ### Changed
 
+- `jailbee git retarget` accepts already-fetched upstream branches as bases,
+  without creating a local host branch. Its CLI, dashboard and shell-completion
+  candidates now match the new-container base picker (local branches first,
+  then upstream-only branches); the current base is omitted from the picker.
 - Successful broker destruction of a child marks read only the unread,
   broker-generated `idle` notices snapshotted for that child before destruction.
   Other messages, children and orchestrators are unaffected
@@ -536,6 +540,11 @@ before editing `## Unreleased`.
 
 ### Fixed
 
+- Pulling a container into a fetched-only base no longer creates the host's
+  local base branch at the container tip without checking the upstream history.
+  It fast-forwards only when the fetched base is included; diverged histories
+  require the existing `--checkout` merge flow. Base-anchor refresh on start
+  also falls back to the fetched upstream ref when no local base exists.
 - Container restarts stop successfully before detaching runtime sockets, so a
   failed or still-running shutdown no longer strands a running container's GUI
   or fails immediately on Incus's "busy running a stop operation" error.
