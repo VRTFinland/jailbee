@@ -912,8 +912,9 @@ credential lands in the holder as usual.
 `agents.claude.unattended: true` is the default for `claude` and `claude-jb`,
 including children. Managed settings select bypass permissions without the
 acceptance dialog and remove AskUserQuestion and EnterPlanMode. ExitPlanMode stays
-for user-entered plan mode. The plugin's `PermissionRequest` hook auto-rejects
-remaining permission prompts with guidance to use a safer command shape, or ask
+for user-entered plan mode with Claude Code's normal approval dialog; the hook
+leaves it undecided. The plugin's `PermissionRequest` hook auto-rejects other
+permission prompts with guidance to use a safer command shape, or ask
 the user if unavoidable. Managed-policy memory defines conversational questions:
 
 ```text

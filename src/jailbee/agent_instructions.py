@@ -75,7 +75,7 @@ def staging_dir(agent: str, filename: str, *, unattended: bool = False) -> Path:
     """
     root = staging_root() / agent / "by-file" / filename
     # Different repo settings must not overwrite each other's mounted memory.
-    return root / "unattended" if unattended else root
+    return root / ("unattended" if unattended else "interactive")
 
 
 def unattended_for(cfg: Config, agent: str) -> bool:

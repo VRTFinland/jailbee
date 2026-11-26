@@ -3435,8 +3435,9 @@ status and model guidance, and use **jailbee-orchestration-child** when the
 agent is a child (by environment variable, first prompt or adoption). Detailed
 environment instructions live in the skill, not the always-loaded preamble.
 Jailbee stages the preamble followed by the host instructions in `~/.local/share/jailbee/agent-instructions/<agent>/by-file/<file>/`
-(`$XDG_DATA_HOME/jailbee/agent-instructions/...` if set). Unattended Claude uses
-an `unattended/` subdirectory so repos opting out keep independent policy mounts.
+(`$XDG_DATA_HOME/jailbee/agent-instructions/...` if set), in sibling
+`interactive/` and `unattended/` directories. Each container mounts only its selected
+policy directory, so repos opting out neither expose nor overwrite unattended memory.
 Its numbered-question instruction follows the preamble even without a host file
 (see [Unattended Claude sessions](agents.md#unattended-claude-sessions)). Under each
 agent's own file name, and mounts that directory read-only into containers
