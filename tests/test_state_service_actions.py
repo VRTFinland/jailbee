@@ -642,6 +642,96 @@ def test_slow_action_reader_is_dropped_without_blocking_other_client(
         slow.close()
 
 
+def test_finished_history_is_bounded_and_evictions_reach_connected_clients(runtime_dir, tmp_path):
+    from sqlalchemy import create_engine
+
+    from jailbee.db import _ensure_schema
+    from jailbee.state_service import paths
+
+    class Child:
+        stdout = None
+
+        def __init__(self, sock):
+            sock.close()
+
+        def wait(self):
+            return 0
+
+        def kill(self):
+            pass
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'state.db'}")
+    _ensure_schema(engine)
+    paths.ensure_runtime_dir()
+    server = StateServer(
+        FakeGatherer(),
+        version="v1",
+        engine=engine,
+        action_spawn=lambda *a, **kw: Child(kw["prompt_sock"]),
+    )
+    thread = threading.Thread(
+        target=lambda: asyncio.run(server.serve(paths.socket_path())), daemon=True
+    )
+    thread.start()
+    track_server(server, thread)
+    _until(paths.socket_path().exists)
+    client = StateClient(
+        None, dashboard_id="dashboard", version="v1", spawn=lambda: None, backoff=(0.05,)
+    )
+    client.start()
+    try:
+        client.wait_first_snapshot(3)
+        for entry_id in range(1, 103):
+            client.run_action(
+                RunAction(
+                    entry_id,
+                    ["true"],
+                    str(tmp_path),
+                    "target",
+                    False,
+                    "dashboard",
+                    "none",
+                    str(tmp_path),
+                    "repo",
+                )
+            )
+            _until(
+                lambda entry_id=entry_id: (
+                    client.action_entries().get(entry_id, None) is not None
+                    and client.action_entries()[entry_id].finished
+                )
+            )
+        _until(lambda: len(client.action_entries()) == 100)
+        assert 1 not in client.action_entries()
+        assert 101 in client.action_entries()
+    finally:
+        client.close()
+        server._stopping = True
+        thread.join(timeout=5)
+
+    paths.socket_path().unlink(missing_ok=True)
+    restarted = StateServer(FakeGatherer(), version="v1", engine=engine)
+    thread = threading.Thread(
+        target=lambda: asyncio.run(restarted.serve(paths.socket_path())), daemon=True
+    )
+    thread.start()
+    track_server(restarted, thread)
+    _until(paths.socket_path().exists)
+    recovered = StateClient(
+        None, dashboard_id="recovered", version="v1", spawn=lambda: None, backoff=(0.05,)
+    )
+    recovered.start()
+    try:
+        recovered.wait_first_snapshot(3)
+        assert len(recovered.action_entries()) == 100
+        assert 1 not in recovered.action_entries()
+        assert 102 in recovered.action_entries()
+    finally:
+        recovered.close()
+        restarted._stopping = True
+        thread.join(timeout=5)
+
+
 def test_finished_action_survives_server_restart(runtime_dir, tmp_path):
     from sqlalchemy import create_engine
 

@@ -94,9 +94,13 @@ other dashboards can inspect its entry without a terminal hand-off block.
 Lifecycle jobs remain in the same queue alongside these actions.
 
 Entries and their capped output tails are stored in the host state database
-until dismissed. After a state service restart, an entry left running or awaiting
-an answer is shown as **interrupted**, in the failure colour, and counts as
-needing attention. Pending questions themselves are not stored. In this first
+until dismissed or automatically pruned. The service retains at most the 100
+newest finished entries, and no finished entry older than seven days; running,
+awaiting and interrupted entries are never pruned. Every dashboard receives
+automatic dismissals so its in-memory queue stays in sync. After a state service
+restart, an entry left running or awaiting an answer is shown as **interrupted**,
+in the failure colour, and counts as needing attention. Pending questions
+themselves are not stored. In this first
 action-host slice, a command that asks through the service receives cancellation;
 shared question delivery and action-aware service lifetime are follow-up work.
 The full queue controls are in [Commands](commands.md#terminal-dashboard-actions).
