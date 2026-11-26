@@ -74,8 +74,8 @@ from jailbee.update_check import UpdateNotice
 # 47 adds an atomic action replay boundary. 48 adds shared action questions,
 # answers and request-scoped action environment.
 # 49 adds the action environment's request-scoped transport fields.
-# 50 adds the stable cross-version activity and drain messages.
-PROTOCOL = 50
+# 52 adds the stable cross-version activity and drain messages.
+PROTOCOL = 52
 
 # Allows escaped output tails and ordinary snapshots while bounding incoming lines.
 MAX_WIRE_LINE_BYTES = 16 * 1024 * 1024

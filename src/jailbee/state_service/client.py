@@ -61,7 +61,7 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-ACTIVITY_PROTOCOL = 50
+ACTIVITY_PROTOCOL = 52
 ACTION_HOST_PROTOCOL = 45
 CONNECT_TIMEOUT_SECONDS = 5.0
 BACKOFF_SECONDS: tuple[float, ...] = (1.0, 2.0, 4.0, 8.0, 10.0)
@@ -181,7 +181,11 @@ class StateClient:
                 activity = self._replacement
                 waiting = self._replacement_waiting
             if pending:
-                answer = self._ask_replacement(activity)
+                try:
+                    answer = self._ask_replacement(activity)
+                except BaseException:
+                    self.close()
+                    raise
                 with self._lock:
                     self._replacement_answer = answer
                     self._replacement_pending = False

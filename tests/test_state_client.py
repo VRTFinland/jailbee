@@ -366,6 +366,25 @@ def test_unknown_old_service_can_be_replaced_only_by_explicit_choice(runtime_dir
         client.close()
 
 
+def test_cancelled_replacement_prompt_closes_client(runtime_dir, monkeypatch):
+    from jailbee import prompting
+
+    old = Spawner(version="v0")
+    old.start()
+    monkeypatch.setattr(client_module, "ACTIVITY_PROTOCOL", PROTOCOL + 1)
+    monkeypatch.setattr(prompting, "is_interactive", lambda: True)
+
+    def cancel(*args, **kwargs):
+        raise prompting.Cancelled()
+
+    monkeypatch.setattr(prompting, "choose_one", cancel)
+    client = _client(Spawner(version="v1"))
+    with pytest.raises(prompting.Cancelled):
+        client.wait_first_snapshot(3)
+    assert not client._thread.is_alive()
+    assert old.threads[0].is_alive()
+
+
 def test_close_unblocks_startup_waiting_for_unknown_service(runtime_dir, monkeypatch):
     old = Spawner(version="v0")
     old.start()
