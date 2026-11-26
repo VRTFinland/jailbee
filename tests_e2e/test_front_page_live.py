@@ -116,7 +116,7 @@ def test_snapshots_add_change_and_remove_containers_without_reloading(
             )
         )
     )
-    expect(main).to_contain_text("Stopped")
+    expect(main.locator('[data-status="stopped"]')).to_have_text("stopped")
     expect(logged_in.get_by_role("link", name="next", exact=True)).to_be_visible()
 
     server.push(snapshot_of(repo_group("work", container("work-next", "work"))))

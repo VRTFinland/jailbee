@@ -58,6 +58,15 @@ describe("Button", () => {
 })
 
 describe("IconButton", () => {
+    it("defaults to text and exposes a tonal variant for floating controls", () => {
+        const text = mount(IconButton, {props: {icon: "menu", label: "Menu"}})
+        const tonal = mount(IconButton, {props: {icon: "menu", label: "Menu", variant: "tonal"}})
+        expect(text.get("button").attributes("data-variant")).toBe("text")
+        expect(tonal.get("button").attributes("data-variant")).toBe("tonal")
+        text.unmount()
+        tonal.unmount()
+    })
+
     it("is a button named by its required label, its icon decorative", () => {
         const wrapper = mount(IconButton, {props: {icon: "menu", label: "Menu"}})
         const button = wrapper.get("button")
@@ -120,6 +129,17 @@ describe("Switch", () => {
 })
 
 describe("StatusChip", () => {
+    it("can emphasize a status without changing its words or meaning", async () => {
+        const chip = mount(StatusChip, {props: {status: "idle", label: "idle 5m", emphasis: true}})
+        expect(chip.attributes("data-emphasis")).toBe("true")
+        expect(chip.attributes("data-status")).toBe("idle")
+        expect(chip.text()).toBe("idle 5m")
+        await chip.setProps({emphasis: false})
+        expect(chip.attributes("data-emphasis")).toBeUndefined()
+        expect(chip.text()).toBe("idle 5m")
+        chip.unmount()
+    })
+
     it.each([
         ["running", "running"], ["frozen", "frozen"], ["stopped", "stopped"], ["booting", "booting"],
         ["autostart", "autostart"], ["job", "job"], ["failed", "failed"],
@@ -140,6 +160,17 @@ describe("StatusChip", () => {
 })
 
 describe("ListRow", () => {
+    it("can mark supporting context without changing its content or selection", async () => {
+        const row = mount(ListRow, {props: {title: "Ancestor", context: true, selected: true}})
+        expect(row.classes()).toContain("filter-context")
+        expect(row.text()).toBe("Ancestor")
+        expect(row.attributes("aria-current")).toBe("true")
+        await row.setProps({context: false})
+        expect(row.classes()).not.toContain("filter-context")
+        expect(row.attributes("aria-current")).toBe("true")
+        row.unmount()
+    })
+
     it("is a list item with a title, a secondary line and a trailing slot", () => {
         const wrapper = mount(ListRow, {
             props: {title: "dev-plan", secondary: "waiting for you · 2 min"},
