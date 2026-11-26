@@ -2341,14 +2341,16 @@ def test_pull_into_remote_only_base_refuses_to_drop_upstream_commits(
     update = mocker.patch("jailbee.sync.git.update_ref")
     mocker.patch("jailbee.sync.git.host_tree_dirty", return_value=False)
 
-    with pytest.raises(sync.SyncError, match="diverged|Cannot check fetched base"):
+    with pytest.raises(sync.SyncError, match=r"diverged|Cannot check fetched base"):
         sync.merge_from_container(cfg, incus, "feat-x", allow_checkout=checkout, ff="always")
 
     ff.assert_not_called()
     update.assert_not_called()
 
 
-def test_pull_into_remote_only_base_fast_forwards_when_upstream_is_included(mocker, make_cfg, tmp_path):
+def test_pull_into_remote_only_base_fast_forwards_when_upstream_is_included(
+    mocker, make_cfg, tmp_path
+):
     from jailbee import sync
 
     cfg, incus = _remote_only_pull_setup(mocker, make_cfg, tmp_path)
@@ -2375,15 +2377,20 @@ def test_pull_remote_only_divergence_checkout_seeds_from_upstream(mocker, make_c
     checkout = mocker.patch("jailbee.sync.git.checkout_branch")
     merge = mocker.patch("jailbee.sync.git.merge_ref")
     mocker.patch("jailbee.sync.git.get_head_sha", return_value="merged-tip")
-    mocker.patch("jailbee.sync.git.rev_parse", side_effect=lambda root, ref: {
-        "refs/remotes/origin/release/2.1": "upstream-tip",
-        "refs/jailbee/feat-x/feat/x": "container-tip",
-        "HEAD": "merged-tip",
-    }.get(ref))
+    mocker.patch(
+        "jailbee.sync.git.rev_parse",
+        side_effect=lambda root, ref: {
+            "refs/remotes/origin/release/2.1": "upstream-tip",
+            "refs/jailbee/feat-x/feat/x": "container-tip",
+            "HEAD": "merged-tip",
+        }.get(ref),
+    )
 
     result = sync.merge_from_container(cfg, incus, "feat-x", allow_checkout=True)
 
-    update.assert_called_once_with(cfg.repo_root, "refs/heads/release/2.1", "upstream-tip", old_oid="")
+    update.assert_called_once_with(
+        cfg.repo_root, "refs/heads/release/2.1", "upstream-tip", old_oid=""
+    )
     checkout.assert_called_once_with(cfg.repo_root, "release/2.1")
     merge.assert_called_once()
     assert result.pre_merge_head == "upstream-tip"

@@ -2128,7 +2128,9 @@ def merge_from_container(
             pre_merge_head = tracking_base
             ancestor = git.is_ancestor(cfg.repo_root, tracking_base, fetched_ref)
             if ancestor is None:
-                raise SyncError(f"Cannot check fetched base '{target}' against container '{short}'.")
+                raise SyncError(
+                    f"Cannot check fetched base '{target}' against container '{short}'."
+                )
             can_fast_forward = ancestor
 
     if can_fast_forward and git.fast_forward_branch(cfg.repo_root, target, fetched_ref):
