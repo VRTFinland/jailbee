@@ -69,6 +69,36 @@ def test_latest_session_record_wins_before_session_id_lookup(setup_session):
     incus.exec_with_input.assert_not_called()
 
 
+@pytest.mark.parametrize(("session_id", "pane"), [("old", "%1"), ("second", "%2")])
+def test_multiple_sessions_route_to_their_nested_pane(setup_session, session_id, pane):
+    directory, incus = setup_session
+    record(directory, "first.json")
+    record(directory, "second.json", pid=52, procStart=456, sessionId="second")
+    tree = (
+        "42 30 123 S 10 10 34816\n30 10 88 S 10 10 34816\n"
+        "10 1 22 S 10 10 34816\n52 20 456 S 20 20 34817\n"
+        "20 1 33 S 20 20 34817\n"
+    )
+    incus.exec.side_effect = [tree, "%1 10 1\n%2 20 1\n", "────\n> \n────", "", "", ""]
+    text = "hello\nmaailma ä"
+    assert agent_input.send(Mock(), incus, "box", session_id, text).code == "delivered"
+    assert incus.exec_with_input.call_args.args[2].encode("utf-8") == text.encode("utf-8")
+    commands = [call.args[1][-1] for call in incus.exec.call_args_list]
+    assert "tmux paste-buffer -pr -b " in commands[3]
+    assert commands[3].endswith(f" -t {pane}")
+    assert commands[4] == f"tmux send-keys -t {pane} Enter"
+    assert commands[5].startswith("tmux delete-buffer -b jailbee-")
+
+
+def test_dialog_refusal_precedes_pane_capture(setup_session):
+    directory, incus = setup_session
+    record(directory, "dialog.json", status="waiting", waitingFor="permission")
+    incus.exec.return_value = "42 10 123 S 10 10 34816\n10 1 22 S 10 10 34816"
+    assert agent_input.send(Mock(), incus, "box", "old", "text").code == "waiting_at_dialog"
+    assert incus.exec.call_count == 1
+    incus.exec_with_input.assert_not_called()
+
+
 def test_equal_age_conflicting_session_records_refuse(setup_session):
     directory, incus = setup_session
     record(directory, "old.json")
