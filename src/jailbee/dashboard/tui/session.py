@@ -587,6 +587,7 @@ class DashboardSession:
         self._queue_frame = 0
         self._following: int | None = None  # the entry whose output screen follows it live
         self._modal_entry: int | None = None  # the critical entry whose modal is open
+        self._handed_off = False
         # Grant edits made here, shown until the gathered snapshot catches up (see _patch_grant).
         self._grant_patches: dict[str, _GrantPatch] = {}
         self._grant_pending: dict[str, float] = {}
@@ -1024,7 +1025,7 @@ class DashboardSession:
             return False
         self.queue.set_question(entry_id, prompt)
         self.queue_changed()
-        show = on_top and self.question_in_foreground(entry_id)
+        show = not self._handed_off and on_top and self.question_in_foreground(entry_id)
         if not show:
             self.set_notice(f"'{entry.command}' awaiting answer · {queue_key}: queue")
         return show
@@ -1086,6 +1087,18 @@ class DashboardSession:
     def _entry_question(self, entry_id: int, asking: bool) -> None:
         self.queue.set_awaiting(entry_id, asking)
         self.queue_changed()
+
+    @property
+    def handed_off(self) -> bool:
+        return self._handed_off
+
+    def begin_hand_off(self) -> None:
+        """Defer all questions while the terminal is handed away."""
+        self._handed_off = True
+
+    def end_hand_off(self, attention_before: frozenset[tuple[str, str | int]]) -> None:
+        self._handed_off = False
+        self.after_hand_off(attention_before)
 
     def after_hand_off(self, attention_before: frozenset[tuple[str, str | int]]) -> None:
         """Back from a tmux hand-off: show the queue if something new waits on the user.

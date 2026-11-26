@@ -55,13 +55,13 @@ from jailbee.dashboard.tui.session import (
 )
 from jailbee.dashboard.tui.terminal import terminal_title_scope, title_sequence
 from jailbee.dashboard.tui.widgets import DashboardFrame, DetailsPanel, FleetTable
+from jailbee.prompt_channel import Prompt
 from jailbee.remote_ssh.repo_scope import RemoteRepoScope
 
 if TYPE_CHECKING:
     from textual.driver import Driver
 
     from jailbee.incus import Incus
-    from jailbee.prompt_channel import Prompt
 
 TICK_SECONDS = 0.25
 
@@ -235,6 +235,7 @@ class DashboardApp(App[int], inherit_bindings=False):
         """Run ``fn`` on the real terminal with the dashboard suspended."""
         client = self.session.client
         attention_before = self.session.queue.attention_items()
+        self.session.begin_hand_off()
         # Nothing of this dashboard is on screen while `fn` runs: let the
         # shared service stop gathering on its behalf.
         client.set_active(False)
@@ -248,8 +249,7 @@ class DashboardApp(App[int], inherit_bindings=False):
             # The snapshot is as old as the command was long.
             client.set_active(True)
             client.refresh()
-            if not self.modal_open:  # an open question is its own modal
-                self.session.after_hand_off(attention_before)
+            self.session.end_hand_off(attention_before)
             # `fn` may have set its own OSC 2 title: rewrite ours on the next frame.
             self._last_title = None
             self._painted = None
@@ -372,11 +372,13 @@ class DashboardApp(App[int], inherit_bindings=False):
         if self._prompts_closed or threading.get_ident() == self._ui_thread:
             return None
         try:
-            return self.call_from_thread(self._ask, prompt, entry_id)
+            return self.call_from_thread(self._ask, prompt, entry_id, self.session.handed_off)
         except (Exception, asyncio.CancelledError):
             return None  # the dashboard is closing: cancel the question
 
-    async def _ask(self, prompt: Prompt, entry_id: int | None = None) -> Any:
+    async def _ask(
+        self, prompt: Prompt, entry_id: int | None = None, handed_off: bool = False
+    ) -> Any:
         if self._prompts_closed or entry_id in self._disconnected_entries:
             if entry_id is not None:
                 self._disconnected_entries.discard(entry_id)
@@ -389,9 +391,12 @@ class DashboardApp(App[int], inherit_bindings=False):
         else:
             self._entry_answers[entry.id] = answer
             if self.session.question_arrived(
-                entry.id, prompt, on_top=self.screen is self._critical_screen, queue_key="Q"
+                entry.id, prompt, on_top=not handed_off and self.screen is self._critical_screen, queue_key="Q"
             ):
                 self.show_question(entry.id)
+            if handed_off and not self.session.handed_off and self.session.overlay is None:
+                self.session.open_queue()
+                self.refresh_frame()
         try:
             return await answer
         finally:
@@ -618,13 +623,25 @@ class DashboardApp(App[int], inherit_bindings=False):
 
     def _after(self, outcome: Outcome) -> None:
         if outcome == "quit":
-            self.quit_requested = True
-            self.exit(0)
+            count = sum(entry.pending_question is not None for entry in self.session.queue)
+            if count:
+                noun = "command is" if count == 1 else "commands are"
+                prompt = Prompt(
+                    0, "confirm", f"{count} {noun} waiting for an answer. Quitting aborts them. Quit?"
+                )
+                self.push_screen(modal_for(prompt), self._confirm_quit)
+            else:
+                self._confirm_quit(True)
             return
         if outcome == "toggle-mouse":
             self.toggle_mouse()
             return
         self.refresh_frame()
+
+    def _confirm_quit(self, confirmed: bool | None) -> None:
+        if confirmed:
+            self.quit_requested = True
+            self.exit(0)
 
     def toggle_mouse(self) -> None:
         """`M`: mouse reporting on or off for this session."""
