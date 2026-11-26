@@ -193,7 +193,8 @@ def test_critical_question_still_opens_after_another_live_output_was_closed(mock
     asyncio.run(scenario())
 
 
-def test_dead_child_clears_pending_question(mocker, tmp_path, caplog):
+@pytest.mark.parametrize("while_mounting", [False, True])
+def test_dead_child_clears_pending_question(mocker, tmp_path, caplog, while_mounting):
     import threading
 
     from jailbee.prompt_channel import CommandEnd
@@ -231,13 +232,37 @@ def test_dead_child_clears_pending_question(mocker, tmp_path, caplog):
     app.action_spawn = spawn
 
     async def scenario():
+        mounting = asyncio.Event()
+        release_mount = asyncio.Event()
+        disconnected = Event()
+        mount = pm.TextModal.on_mount
+        disconnect = app._disconnect_entry
+
+        async def held_mount(modal):
+            mounting.set()
+            await release_mount.wait()
+            mount(modal)
+
+        def child_disconnected(entry_id):
+            disconnected.set()
+            disconnect(entry_id)
+
+        if while_mounting:
+            mocker.patch.object(pm.TextModal, "on_mount", held_mount)
+            mocker.patch.object(app, "_disconnect_entry", side_effect=child_disconnected)
         async with app.run_test() as pilot:
             try:
                 app.session.run_dashboard_command("alpha-a", "container", ["start", "alpha-a"])
                 async with asyncio.timeout(5):
-                    while not any(e.pending_question for e in app.session.queue):
-                        await pilot.pause(0.01)
+                    if while_mounting:
+                        await mounting.wait()
+                    else:
+                        while not any(e.pending_question for e in app.session.queue):
+                            await pilot.pause(0.01)
                 close_child.set()
+                if while_mounting:
+                    assert await asyncio.to_thread(disconnected.wait, 5)
+                    release_mount.set()
                 async with asyncio.timeout(5):
                     while not any(e.finished for e in app.session.queue):
                         await pilot.pause(0.01)
@@ -246,6 +271,7 @@ def test_dead_child_clears_pending_question(mocker, tmp_path, caplog):
                 assert entry.pending_question is None
             finally:
                 close_child.set()
+                release_mount.set()
                 app.exit()
 
     asyncio.run(scenario())
