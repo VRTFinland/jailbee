@@ -391,7 +391,10 @@ class DashboardApp(App[int], inherit_bindings=False):
         else:
             self._entry_answers[entry.id] = answer
             if self.session.question_arrived(
-                entry.id, prompt, on_top=not handed_off and self.screen is self._critical_screen, queue_key="Q"
+                entry.id,
+                prompt,
+                on_top=not handed_off and self.screen is self._critical_screen,
+                queue_key="Q",
             ):
                 self.show_question(entry.id)
             if handed_off and not self.session.handed_off and self.session.overlay is None:
@@ -627,7 +630,9 @@ class DashboardApp(App[int], inherit_bindings=False):
             if count:
                 noun = "command is" if count == 1 else "commands are"
                 prompt = Prompt(
-                    0, "confirm", f"{count} {noun} waiting for an answer. Quitting aborts them. Quit?"
+                    0,
+                    "confirm",
+                    f"{count} {noun} waiting for an answer. Quitting aborts them. Quit?",
                 )
                 self.push_screen(modal_for(prompt), self._confirm_quit)
             else:

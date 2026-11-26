@@ -64,7 +64,9 @@ def test_question_during_handoff_is_deferred(mocker, tmp_path):
     session._modal_entry = entry_id
     before = session.queue.attention_items()
     session.begin_hand_off()
-    assert not session.question_arrived(entry_id, Prompt(1, "text", "Name?"), on_top=True, queue_key="Q")
+    assert not session.question_arrived(
+        entry_id, Prompt(1, "text", "Name?"), on_top=True, queue_key="Q"
+    )
     session.end_hand_off(before)
     assert session.queue.get(entry_id).pending_question is not None
     assert session.overlay is not None
