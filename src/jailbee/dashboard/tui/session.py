@@ -717,7 +717,13 @@ class DashboardSession:
                     "jailbee " + " ".join(item.argv),
                     item.target,
                     state=(
-                        "running" if not item.finished else "done" if item.status == 0 else "failed"
+                        "interrupted"
+                        if item.state == "interrupted"
+                        else "running"
+                        if not item.finished
+                        else "done"
+                        if item.status == 0
+                        else "failed"
                     ),
                     status=item.status,
                     output=item.output,
