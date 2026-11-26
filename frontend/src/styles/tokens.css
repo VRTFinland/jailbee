@@ -52,6 +52,7 @@
     --md-context-opacity: 0.5;
 
     /* Icon sizes: Material Symbols use a 24px optical size at the medium step. */
+    --md-icon-extra-small: 0.75rem;
     --md-icon-small: 1rem;
     --md-icon-medium: 1.5rem;
     --md-icon-large: 2rem;

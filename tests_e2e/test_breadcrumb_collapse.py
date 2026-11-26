@@ -122,7 +122,7 @@ def test_wide_phone_and_resize_restore_the_subagent_path(breadcrumb_page: Page) 
 
 
 @pytest.mark.parametrize("width", [360, 1280])
-@pytest.mark.parametrize("font_size", [16, 24])
+@pytest.mark.parametrize("font_size", [16, 28])
 @pytest.mark.parametrize("subagent", [False, True])
 def test_long_session_title_keeps_root_repo_and_container(
     breadcrumb_page: Page, width: int, font_size: int, subagent: bool

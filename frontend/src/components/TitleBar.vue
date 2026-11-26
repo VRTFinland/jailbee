@@ -41,7 +41,7 @@ onBeforeUnmount(() => {
     <header v-if="settings.showTitleBar" ref="bar" class="title-bar">
         <nav aria-label="Breadcrumb" class="breadcrumbs">
             <template v-for="(crumb, index) in crumbs" :key="index">
-                <router-link :to="crumb.to" :title="crumb.label" :aria-label="crumb.label" ><span>{{ crumb.label }}</span></router-link><span class="separator" aria-hidden="true"><Icon name="forward" size="small" /></span>
+                <router-link :to="crumb.to" :title="crumb.label" :aria-label="crumb.label" ><span>{{ crumb.label }}</span></router-link><span class="separator" aria-hidden="true"><Icon name="forward" size="extra-small" /></span>
             </template>
             <h1 :title="session ? `${title}\nAgent: ${session.agent}\nModels: ${session.models.join(', ')}\nSession ID: ${session.id}` : title" :aria-label="title" aria-current="page">{{ title }}</h1>
         </nav>
@@ -63,6 +63,6 @@ h1 { flex: 0 1 auto; max-width: 24ch; font-size: var(--md-type-body-medium-size)
 /* At enlarged reader type sizes, separators must not consume the label budgets. */
 @container (max-width: 22rem) {
     .separator { padding-inline: 0; }
-    .breadcrumbs a, h1 { min-width: 2ch; }
+    .breadcrumbs a, h1 { min-width: max(1.5ch, 1rem); }
 }
 </style>

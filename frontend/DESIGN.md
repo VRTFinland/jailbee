@@ -33,7 +33,7 @@ All live in `src/components/ui/`.
 | An on/off setting | `Switch` | `v-model` boolean, `label` required. Not for a one-off action: use a `Button`. |
 | A container, phase or agent state | `StatusChip` | Never map wire values by hand: `containerStatus`, `agentStatus`, `sessionStatus` and `rowStatuses` in `components/ui/status.ts` turn wire values into chips. Use `listStatuses(row)` for list policy: phase first, otherwise stopped only (no Running/Frozen chip), then agent and emphasized recent-idle age. Use the mapper's label casing everywhere. `emphasis` owns strong weight. An unknown value becomes a neutral chip with its raw text. |
 | A row of a list (container, repo, setting) | `ListRow` | `title`/`secondary` props or slots, a default body slot, a `trailing` slot for controls. `to` makes the whole row a route link; controls in the body and trailing slots stay their own targets. `linkLabel` preserves status and supporting context in that link's accessible name when needed. Height follows `--md-target-row`. `context` gives supporting ancestors reduced prominence, or a dashed hairline in e-ink. `wrap` keeps long names readable and trailing chips above the body without view overrides of primitive internals. |
-| A glyph | `Icon` | `name` from `material-symbols/paths.ts`, `size` small/medium/large. Takes `currentColor`. Without `label` it is decorative (`aria-hidden`). |
+| A glyph | `Icon` | `name` from `material-symbols/paths.ts`, `size` extra-small/small/medium/large; extra-small is for breadcrumb separators. Takes `currentColor`. Without `label` it is decorative (`aria-hidden`). |
 | A modal question or form, or a side drawer | `Dialog` | `title` required, `description` optional, `placement="drawer"` for a side panel. Body in the default slot; buttons in the `#actions` slot, whose `close` slot prop closes it. A trigger in `#trigger`, or drive `v-model:open`. `placement="popover"` anchors a paginated preferences form below its trigger (it remains a focus-trapped dialog, not an action menu); `hideHeader` keeps its accessible title without a visible header. `preserveScroll` lets a live document keep following beneath an overlay. `closeLabel` names the dismissal icon; `positioned` lets measured pagination run after placement. |
 | A row in a preferences popover | `MenuRow` | `action` for a button, `to` for a route link, `as="label"` for an embedded switch; `selected` exposes pressed state and a tonal selection, `sectionStart` separates groups. Uses the same padded `--md-target-row` geometry as Menu, without menu-role keyboard semantics. |
 | A list of actions behind a button | `Menu` | `label`, `items` (`MenuItem`: `value`, `label`, optional `icon`, `disabled`, `variant: "danger"`), `select` event with the value. The trigger goes in `#trigger`. |
@@ -77,7 +77,7 @@ a component. The names are Material 3 roles under the `md` prefix.
 | Phase colours | `--md-phase-*`, `--md-on-phase-*` (booting, autostart, job, failed: a colour, a `-container`, and `--md-on-phase-…-container` on it) | The terminal dashboard's phase hues. Reach them through `StatusChip`. |
 | Fonts | `--md-font-body`, `--md-font-mono` | Inter, and the platform monospace stack. |
 | Type scale | `--md-type-*` (`title`/`body`/`label` × `large`/`medium`/`small`, each `-size`, `-line-height`, `-weight`) | Every font size. In rem, so the body-size setting scales them. |
-| Icon sizes | `--md-icon-*` (`small`, `medium`, `large`) | Via `Icon`'s `size`. |
+| Icon sizes | `--md-icon-*` (`extra-small`, `small`, `medium`, `large`) | Via `Icon`'s `size`. |
 | Shape | `--md-shape-*` (`none`, `extra-small` 4px, `small` 8px, `medium` 12px, `large` 16px, `extra-large` 28px, `full`) | Every border radius. |
 | Spacing | `--md-space-*` (`4`, `8`, `12`, `16`, `24`, `32`) | Every margin, padding, gap and inset. See the naming rule below. |
 | Hit targets | `--md-target-min`, `--md-target-row` | `min` 44px: the smallest any control may be. `row` 48px with a fine pointer, 56px with a coarse one. |
@@ -129,8 +129,8 @@ alone use the shared level-2 elevation in light/dark. Under
   never the body or header.
 - Keep every breadcrumb level: root, repo, known container, session, subagent.
   Use the session summary's optional `container`, not a guessed route/name.
-  Labels ellipsize with a three-character minimum (two in a narrow bar, where
-  separator padding also contracts); the root stays visible.
+  Labels ellipsize with a three-character minimum (at least 1rem in a narrow
+  bar, where separator padding also contracts); the root stays visible.
   The current title is a short, body-sized final crumb; tooltip and accessible
   name retain the complete prompt (the tooltip also retains session metadata).
 - Menu, Select and preferences use extra-small corners, level-2 elevation and
