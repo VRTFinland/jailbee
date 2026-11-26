@@ -44,9 +44,11 @@ def is_critical(argv: Sequence[str]) -> bool:
     return words == ["git", "push"] and "--merge" in argv
 
 
-def should_show_question(*, critical_foreground: bool) -> bool:
+def should_show_question(
+    *, critical_foreground: bool, since_dispatch: bool = False, since_answer: bool = False
+) -> bool:
     """Whether the user is with the action asking a prompt-channel question."""
-    return critical_foreground
+    return critical_foreground or since_dispatch or since_answer
 
 
 @dataclass(frozen=True)

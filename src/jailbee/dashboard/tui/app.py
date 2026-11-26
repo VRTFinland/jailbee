@@ -320,6 +320,8 @@ class DashboardApp(App[int], inherit_bindings=False):
         background: bool = False,
         on_close: Callable[[], None] | None = None,
     ) -> None:
+        if not background:
+            self.session.user_interacted()
         screen = OutputScreen(title, text, failed=failed, background=background)
         if live:  # only a live screen is ever rewritten; a plain one stacked on top leaves it be
             self._output_screen = screen
@@ -393,7 +395,12 @@ class DashboardApp(App[int], inherit_bindings=False):
             if self.session.question_arrived(
                 entry.id,
                 prompt,
-                on_top=not handed_off and self.screen is self._critical_screen,
+                on_top=not handed_off
+                and (
+                    self.screen is self._critical_screen
+                    if entry.foreground
+                    else not self.modal_open
+                ),
                 queue_key="Q",
             ):
                 self.show_question(entry.id)
@@ -426,6 +433,8 @@ class DashboardApp(App[int], inherit_bindings=False):
         def resolve(value: Any) -> None:
             self._shown_questions.discard(entry_id)
             if value is not LATER:
+                if not answer.done():
+                    self.session.question_answered(entry_id)
                 self._resolve_answer(answer, value)
 
         modal = modal_for(entry.pending_question, entry=entry)
@@ -476,6 +485,11 @@ class DashboardApp(App[int], inherit_bindings=False):
         # Keys and pastes are routed here, one at a time, never through the focus chain:
         # Textual would pick a key's widget on arrival, before the keys ahead of it in
         # the same read had opened or closed anything.
+        if (
+            isinstance(event, (events.Key, events.Paste, events.MouseDown))
+            and not event.is_forwarded
+        ):
+            self.session.user_interacted()
         if self.modal_open and isinstance(event, (events.Key, events.Paste)):
             # A question or output screen has the keyboard: Textual's own routing.
             await super().on_event(event)
@@ -667,6 +681,7 @@ class DashboardApp(App[int], inherit_bindings=False):
         self.refresh_frame()
 
     def on_click(self, event: events.Click) -> None:
+        self.session.user_interacted()
         if not self.mouse_on or self.modal_open:
             return
         box = self.frame.native_box
