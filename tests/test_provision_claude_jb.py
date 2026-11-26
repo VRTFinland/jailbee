@@ -535,18 +535,22 @@ def test_help_after_double_dash_is_not_ours(script, env):
 def test_settings_added_to_proxy_launch(script, argv_env, tmp_path):
     settings = tmp_path / "settings.json"
     settings.touch()
-    script.write_text(script.read_text().replace(
-        "/etc/claude-code/managed-settings.d/50-jailbee.json", str(settings)))
-    assert _argv(_run(script, argv_env, "-p", "hi")) == [
-        "--settings", str(settings), "-p", "hi"
-    ]
+    script.write_text(
+        script.read_text().replace(
+            "/etc/claude-code/managed-settings.d/50-jailbee.json", str(settings)
+        )
+    )
+    assert _argv(_run(script, argv_env, "-p", "hi")) == ["--settings", str(settings), "-p", "hi"]
 
 
-@pytest.mark.parametrize("args, expected", [
-    (["--settings", "mine"], ["--settings", "mine"]),
-    (["--settings=mine"], ["--settings=mine"]),
-    (["--", "--settings=prompt"], ["--settings", "FILE", "--", "--settings=prompt"]),
-])
+@pytest.mark.parametrize(
+    "args, expected",
+    [
+        (["--settings", "mine"], ["--settings", "mine"]),
+        (["--settings=mine"], ["--settings=mine"]),
+        (["--", "--settings=prompt"], ["--settings", "FILE", "--", "--settings=prompt"]),
+    ],
+)
 def test_proxy_respects_settings_options(script, argv_env, tmp_path, args, expected):
     settings = tmp_path / "settings.json"
     settings.touch()

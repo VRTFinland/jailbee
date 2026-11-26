@@ -1024,7 +1024,10 @@ def _claude_cfg(tmp_path, command=None):
     "command,expected",
     [
         ("claude", f"exec claude-jb {SETTINGS}"),
-        ("claude --dangerously-skip-permissions", f"exec claude-jb {SETTINGS} --dangerously-skip-permissions"),
+        (
+            "claude --dangerously-skip-permissions",
+            f"exec claude-jb {SETTINGS} --dangerously-skip-permissions",
+        ),
         ("/home/dev/.local/bin/claude --resume", f"exec claude-jb {SETTINGS} --resume"),
         ("env FOO=1 claude", "exec env FOO=1 claude"),
         ("claude-wrapper", "exec claude-wrapper"),
@@ -1087,7 +1090,9 @@ def test_prompted_step_for_primary_agent_keeps_flags(tmp_path):
         tmp_path, claude={"enabled": True, "autostart": True, "command": "claude --model x"}
     )
     [step] = agent_autostart_steps(cfg, initial_prompt=True)
-    assert step.run == prompted_run(f"claude {SETTINGS} --model x", cfg.agents["claude"].prompt_args)
+    assert step.run == prompted_run(
+        f"claude {SETTINGS} --model x", cfg.agents["claude"].prompt_args
+    )
     assert "--model x" in step.run
     assert step.env[PROMPT_ENV] == CONSUMED_PATH
 
@@ -1144,7 +1149,9 @@ def test_prompt_with_claude_jb(tmp_path):
 
     cfg = _with_litellm(_claude_cfg(tmp_path, "claude --model x"))
     [step] = agent_autostart_steps(cfg, initial_prompt=True)
-    assert step.run == prompted_run(f"claude-jb {SETTINGS} --model x", cfg.agents["claude"].prompt_args)
+    assert step.run == prompted_run(
+        f"claude-jb {SETTINGS} --model x", cfg.agents["claude"].prompt_args
+    )
 
 
 def test_prompted_step_run_never_contains_prompt_text(tmp_path):
@@ -1266,7 +1273,9 @@ def test_runner_prompts_claude_when_primary_is_codex(tmp_path):
         cfg, initial_prompt=True, runner=Runner(agent="claude", model="opus")
     )
     assert [s.name for s in steps] == ["claude"]
-    assert steps[0].run == prompted_run(f"claude {SETTINGS} --model opus", cfg.agents["claude"].prompt_args)
+    assert steps[0].run == prompted_run(
+        f"claude {SETTINGS} --model opus", cfg.agents["claude"].prompt_args
+    )
 
 
 def test_runner_with_autostarting_codex_primary_keeps_codex_unprompted(tmp_path):
@@ -1288,7 +1297,9 @@ def test_runner_with_autostarting_codex_primary_keeps_codex_unprompted(tmp_path)
     assert [s.name for s in steps] == ["codex", "claude"]
     assert steps[0].run == "exec codex" and PROMPT_ENV not in steps[0].env
     assert PROMPT_ENV in steps[1].env
-    assert steps[1].run == prompted_run(f"claude {SETTINGS} --model opus", cfg.agents["claude"].prompt_args)
+    assert steps[1].run == prompted_run(
+        f"claude {SETTINGS} --model opus", cfg.agents["claude"].prompt_args
+    )
 
 
 def test_native_runner_overrides_litellm_autostart(tmp_path):
@@ -1327,7 +1338,9 @@ def test_no_runner_unchanged(tmp_path, prompt):
     cfg = _claude_cfg(tmp_path, "claude --model x")
     [step] = agent_autostart_steps(cfg, initial_prompt=prompt)
     if prompt:
-        assert step.run == prompted_run(f"claude {SETTINGS} --model x", cfg.agents["claude"].prompt_args)
+        assert step.run == prompted_run(
+            f"claude {SETTINGS} --model x", cfg.agents["claude"].prompt_args
+        )
     else:
         assert step.run == f"exec claude {SETTINGS} --model x"
 

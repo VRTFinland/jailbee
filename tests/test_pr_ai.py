@@ -25,14 +25,29 @@ def test_claude_headless_preset_supplies_settings(make_cfg, tmp_path):
         "/etc/claude-code/managed-settings.d/50-jailbee.json", str(settings)
     )
     proc = subprocess.run(
-        ["bash", "-c", command], capture_output=True, check=True,
-        env={**os.environ, "PATH": f"{tmp_path}:{os.environ['PATH']}",
-             "JAILBEE_PR_MODEL": "sonnet", "JAILBEE_PR_SESSION": "session-id",
-             "JAILBEE_PR_PROMPT": "quoted ' prompt $text"},
+        ["bash", "-c", command],
+        capture_output=True,
+        check=True,
+        env={
+            **os.environ,
+            "PATH": f"{tmp_path}:{os.environ['PATH']}",
+            "JAILBEE_PR_MODEL": "sonnet",
+            "JAILBEE_PR_SESSION": "session-id",
+            "JAILBEE_PR_PROMPT": "quoted ' prompt $text",
+        },
     )
     assert proc.stdout.decode().split("\0")[:-1] == [
-        "--settings", str(settings), "--model", "sonnet", "--session-id", "session-id",
-        "-p", "quoted ' prompt $text", "--output-format", "json", "--dangerously-skip-permissions",
+        "--settings",
+        str(settings),
+        "--model",
+        "sonnet",
+        "--session-id",
+        "session-id",
+        "-p",
+        "quoted ' prompt $text",
+        "--output-format",
+        "json",
+        "--dangerously-skip-permissions",
     ]
     assert proc.stderr == b""
 

@@ -125,10 +125,7 @@ def test_replay_argv_removes_session_and_prompt_args(
 
 def test_resume_run_quotes_directory_and_adds_resume_args() -> None:
     entry = ResumeEntry(VALID_ID, "/home/dev/my repo", ("claude", "--model", "opus"), None)
-    assert (
-        resume_run(entry)
-        .endswith(f" --model opus --resume {VALID_ID}")
-    )
+    assert resume_run(entry).endswith(f" --model opus --resume {VALID_ID}")
     assert "--settings" in resume_run(entry)
     assert resume_run(entry).startswith("cd '/home/dev/my repo' && exec claude ")
 

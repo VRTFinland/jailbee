@@ -1,10 +1,9 @@
 import json
 import shlex
 import subprocess
-
-import pytest
 from pathlib import Path
 
+import pytest
 import typer
 import yaml
 
@@ -37,7 +36,10 @@ def test_launch_settings_missing_file_keeps_argv(tmp_path):
     assert proc.stdout.splitlines() == ["--model", "opus"]
 
 
-@pytest.mark.parametrize("command", ["claude --settings custom.json", "claude --settings=custom.json", "codex", "env X=1 claude"])
+@pytest.mark.parametrize(
+    "command",
+    ["claude --settings custom.json", "claude --settings=custom.json", "codex", "env X=1 claude"],
+)
 def test_launch_settings_preserve_explicit_settings_and_other_binaries(command):
     assert claude_plugin.with_settings(command) == command
 
@@ -63,7 +65,10 @@ def test_autostart_delivers_settings_after_runner_rewrite(make_cfg, tmp_path, ru
 def test_disabled_and_non_claude_autostart_do_not_get_settings(make_cfg, tmp_path):
     from jailbee.autostart import agent_autostart_steps
 
-    cfg = make_cfg(tmp_path, agents={"claude": {"enabled": False}, "codex": {"enabled": True, "autostart": True}})
+    cfg = make_cfg(
+        tmp_path,
+        agents={"claude": {"enabled": False}, "codex": {"enabled": True, "autostart": True}},
+    )
     [step] = agent_autostart_steps(cfg)
     assert step.run == "exec codex"
 

@@ -182,12 +182,16 @@ def test_shell_adds_settings(snippet: str, home: Path, tmp_path: Path) -> None:
     settings.touch()
     record = tmp_path / "argv"
     binary = home / ".local/bin/claude"
-    binary.write_text("#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$RECORD\"\n")
+    binary.write_text('#!/bin/sh\nprintf \'%s\\n\' "$@" > "$RECORD"\n')
     binary.chmod(0o755)
     code = snippet.replace("/etc/claude-code/managed-settings.d/50-jailbee.json", str(settings))
-    result = subprocess.run(["bash", "-c", code + "\nclaude -p hello"],
+    result = subprocess.run(
+        ["bash", "-c", code + "\nclaude -p hello"],
         env={"HOME": str(home), "PATH": f"{binary.parent}:/usr/bin:/bin", "RECORD": str(record)},
-        capture_output=True, text=True, check=True)
+        capture_output=True,
+        text=True,
+        check=True,
+    )
     assert result.stdout == ""
     assert record.read_text().splitlines() == ["--settings", str(settings), "-p", "hello"]
 
@@ -196,31 +200,44 @@ def test_interactive_remote_settings_notice(snippet: str, home: Path) -> None:
     remote = home / ".claude/remote-settings.json"
     remote.parent.mkdir()
     remote.write_text('{"channelsEnabled": false}')
-    proc = subprocess.run(["bash", "--noprofile", "--norc", "-ic", snippet],
+    proc = subprocess.run(
+        ["bash", "--noprofile", "--norc", "-ic", snippet],
         env={"HOME": str(home), "PATH": os.environ["PATH"]},
-        capture_output=True, text=True, check=True)
+        capture_output=True,
+        text=True,
+        check=True,
+    )
     assert proc.stdout == ""
     assert "remote managed settings" in proc.stderr
     assert "jb doctor" in proc.stderr
 
 
-@pytest.mark.parametrize("args,expected", [
-    (["--settings", "mine"], ["--settings", "mine"]),
-    (["--settings=mine"], ["--settings=mine"]),
-    (["--", "--settings=prompt"], ["--settings", "FILE", "--", "--settings=prompt"]),
-])
+@pytest.mark.parametrize(
+    "args,expected",
+    [
+        (["--settings", "mine"], ["--settings", "mine"]),
+        (["--settings=mine"], ["--settings=mine"]),
+        (["--", "--settings=prompt"], ["--settings", "FILE", "--", "--settings=prompt"]),
+    ],
+)
 def test_shell_respects_settings_options(snippet, home, tmp_path, args, expected):
     settings = tmp_path / "settings.json"
     settings.touch()
     record = tmp_path / "argv"
     binary = home / ".local/bin/claude"
-    binary.write_text("#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$RECORD\"\n")
+    binary.write_text('#!/bin/sh\nprintf \'%s\\n\' "$@" > "$RECORD"\n')
     binary.chmod(0o755)
     code = snippet.replace("/etc/claude-code/managed-settings.d/50-jailbee.json", str(settings))
-    subprocess.run(["bash", "-c", code + '\nclaude "$@"', "bash", *args],
+    subprocess.run(
+        ["bash", "-c", code + '\nclaude "$@"', "bash", *args],
         env={"HOME": str(home), "PATH": f"{binary.parent}:/usr/bin:/bin", "RECORD": str(record)},
-        capture_output=True, text=True, check=True)
-    assert record.read_text().splitlines() == [str(settings) if x == "FILE" else x for x in expected]
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert record.read_text().splitlines() == [
+        str(settings) if x == "FILE" else x for x in expected
+    ]
 
 
 @pytest.mark.parametrize("content", ["", "  \n", " { \n } ", "not json"])
@@ -228,11 +245,21 @@ def test_empty_or_invalid_remote_settings_are_silent(snippet, home, content):
     remote = home / ".claude/remote-settings.json"
     remote.parent.mkdir()
     remote.write_text(content)
-    proc = subprocess.run(["bash", "--noprofile", "--norc", "-ic", snippet],
-        env={"HOME": str(home), "PATH": os.environ["PATH"]}, capture_output=True, text=True, check=True)
+    proc = subprocess.run(
+        ["bash", "--noprofile", "--norc", "-ic", snippet],
+        env={"HOME": str(home), "PATH": os.environ["PATH"]},
+        capture_output=True,
+        text=True,
+        check=True,
+    )
     assert "JailBee:" not in proc.stderr
 
 
 def test_posix_shell_can_source_snippet(snippet, home):
-    subprocess.run(["dash", "-c", snippet], env={"HOME": str(home), "PATH": os.environ["PATH"]},
-        capture_output=True, text=True, check=True)
+    subprocess.run(
+        ["dash", "-c", snippet],
+        env={"HOME": str(home), "PATH": os.environ["PATH"]},
+        capture_output=True,
+        text=True,
+        check=True,
+    )
