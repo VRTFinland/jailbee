@@ -512,7 +512,9 @@ class DashboardApp(App[int], inherit_bindings=False):
                 self._resolve_answer(answer, value)
 
         modal = (
-            ReadOnlyQuestion(entry.pending_question, entry, shared.reason or "answer in a local dashboard")
+            ReadOnlyQuestion(
+                entry.pending_question, entry, shared.reason or "answer in a local dashboard"
+            )
             if readonly and shared is not None
             else modal_for(entry.pending_question, entry=entry)
         )

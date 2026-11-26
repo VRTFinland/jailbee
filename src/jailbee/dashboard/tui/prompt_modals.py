@@ -147,7 +147,11 @@ class PromptModal(ModalScreen[Any]):
 class ReadOnlyQuestion(ModalScreen[None]):
     """A shared question that this dashboard cannot answer or abort."""
 
-    DEFAULT_CSS = _CSS + "\nReadOnlyQuestion { align: center middle; }\nReadOnlyQuestion > .dialog { width: 72; max-width: 95%; height: auto; border: round ansi_blue; background: ansi_default; padding: 1; }"
+    DEFAULT_CSS = (
+        _CSS + "\nReadOnlyQuestion { align: center middle; }\n"
+        "ReadOnlyQuestion > .dialog { width: 72; max-width: 95%; height: auto; "
+        "border: round ansi_blue; background: ansi_default; padding: 1; }"
+    )
     BINDINGS: ClassVar[list[BindingType]] = [Binding("escape", "close", "Close", priority=True)]
 
     def __init__(self, prompt: Prompt, entry: QueueEntry, reason: str) -> None:
