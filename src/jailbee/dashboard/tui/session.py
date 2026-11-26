@@ -993,6 +993,8 @@ class DashboardSession:
     def _settle_entries(self, ids: Sequence[int], outcome: ActionOutcome) -> None:
         """Finish the entries of the runs that ran; drop those that never started."""
         for i, entry_id in enumerate(ids):
+            self._action_interactions.pop(entry_id, None)
+            self._answer_interactions.pop(entry_id, None)
             result = outcome.results[i] if i < len(outcome.results) else None
             output = outcome.outputs[i] if i < len(outcome.outputs) else ""
             if result is None or result.refused is not None:

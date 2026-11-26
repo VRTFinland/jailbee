@@ -1,6 +1,7 @@
 """Quit behavior for commands waiting for dashboard answers."""
 
 import asyncio
+from threading import Event
 
 from jailbee.dashboard import runner as drunner
 from jailbee.dashboard.model import RepoGroup
@@ -12,8 +13,10 @@ from tests.dashboard_pilot import make_app
 
 def test_quit_confirms_and_cancels_pending_command(mocker, tmp_path):
     answers = []
+    release = Event()
 
     def run(argv, *, on_prompt, **kwargs):
+        assert release.wait(5)
         answers.append(on_prompt(Prompt(1, "text", "Name?")))
         return drunner.RunResult(status=0)
 
@@ -24,6 +27,8 @@ def test_quit_confirms_and_cancels_pending_command(mocker, tmp_path):
     async def scenario():
         async with app.run_test() as pilot:
             app.session.run_dashboard_command("alpha-a", "container", ["start", "alpha-a"])
+            await pilot.press("down")
+            release.set()
             async with asyncio.timeout(5):
                 while not any(e.pending_question for e in app.session.queue):
                     await pilot.pause(0.01)
