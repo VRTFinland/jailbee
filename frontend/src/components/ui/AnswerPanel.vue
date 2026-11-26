@@ -35,6 +35,7 @@ const preview = computed(() => buildAnswerMessage(props.set, answers.value))
             </template>
         </header>
         <div v-if="height !== 'bar'" class="panel-content">
+            <slot name="sets" />
             <nav class="steps" aria-label="Answer steps">
                 <button v-for="(item, index) in set.questions" :key="item.number" type="button" :aria-label="`Question ${item.number}`" :aria-current="step === index ? 'step' : undefined" @click="step = index"><span class="dot" aria-hidden="true" /></button>
                 <button type="button" aria-label="Summary" :aria-current="step === set.questions.length ? 'step' : undefined" @click="step = set.questions.length"><span class="dot" aria-hidden="true" /></button>
@@ -69,6 +70,7 @@ const preview = computed(() => buildAnswerMessage(props.set, answers.value))
                 <Button v-if="question" variant="tonal" aria-label="Next step" @click="step++">Next</Button>
                 <Button v-else variant="primary" aria-label="Send answers" :disabled="!available || busy || answers.some(answer => !answer.value.trim())" @click="emit('send', preview)">Send</Button>
             </footer>
+            <slot name="draft-actions" />
         </div>
     </aside>
 </template>
