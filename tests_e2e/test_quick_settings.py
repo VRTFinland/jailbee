@@ -331,7 +331,9 @@ def test_escape_after_font_stepper_disables_closes_menu(logged_in: Page) -> None
     page.evaluate("document.activeElement.blur()")
     page.keyboard.press("Escape")
     expect(panel).to_have_count(0)
-    expect(page.get_by_role("button", name="Quick settings", exact=True, include_hidden=True)).to_be_focused()
+    expect(
+        page.get_by_role("button", name="Quick settings", exact=True, include_hidden=True)
+    ).to_be_focused()
 
 
 def test_escape_on_trigger_closes_open_menu(logged_in: Page) -> None:
@@ -353,7 +355,9 @@ def test_escape_on_closed_select_closes_menu_and_restores_focus(
     panel.get_by_role("combobox", name="Agent context").focus()
     page.keyboard.press("Escape")
     expect(panel).to_have_count(0)
-    expect(page.get_by_role("button", name="Quick settings", exact=True, include_hidden=True)).to_be_focused()
+    expect(
+        page.get_by_role("button", name="Quick settings", exact=True, include_hidden=True)
+    ).to_be_focused()
 
 
 def test_menu_follow_opt_out_keeps_live_entries_from_scrolling(

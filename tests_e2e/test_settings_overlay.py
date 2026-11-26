@@ -12,7 +12,9 @@ from tests_e2e.test_reading_position import assert_at_transcript_end
 from tests_e2e.test_session_reading import open_transcript, record, wait_for_scroll_settled
 
 
-def test_settings_scrim_covers_floating_trigger_even_if_trigger_is_later_in_dom(logged_in: Page) -> None:
+def test_settings_scrim_covers_floating_trigger_even_if_trigger_is_later_in_dom(
+    logged_in: Page,
+) -> None:
     page = logged_in
     page.evaluate("localStorage.setItem('jailbee.showTitleBar', '0')")
     page.reload()
@@ -25,7 +27,9 @@ def test_settings_scrim_covers_floating_trigger_even_if_trigger_is_later_in_dom(
     }""")
     assert trigger.evaluate("""el => {
         const trigger = el.getBoundingClientRect();
-        const top = document.elementFromPoint(trigger.x + trigger.width / 2, trigger.y + trigger.height / 2);
+        const x = trigger.x + trigger.width / 2;
+        const y = trigger.y + trigger.height / 2;
+        const top = document.elementFromPoint(x, y);
         return !el.contains(top);
     }""")
 
@@ -53,7 +57,9 @@ def test_title_bar_toggle_restores_focus_to_visible_menu(logged_in: Page) -> Non
     page.get_by_role("switch", name="Show title bar").uncheck()
     page.get_by_role("button", name="Close settings").click()
     expect(page.get_by_role("dialog", name="Settings", exact=True)).to_have_count(0)
-    expect(page.get_by_role("button", name="Quick settings", exact=True, include_hidden=True)).to_be_focused()
+    expect(
+        page.get_by_role("button", name="Quick settings", exact=True, include_hidden=True)
+    ).to_be_focused()
     expect(page.locator(".title-bar")).to_have_count(0)
 
 
@@ -103,7 +109,9 @@ def test_settings_preserves_reader_and_live_updates(
     expect(dialog).to_have_count(0)
     assert page.url == url
     assert page.evaluate("window.scrollY") == position
-    expect(page.get_by_role("button", name="Quick settings", exact=True, include_hidden=True)).to_be_focused()
+    expect(
+        page.get_by_role("button", name="Quick settings", exact=True, include_hidden=True)
+    ).to_be_focused()
     open_settings_overlay(page)
     page.keyboard.press("Escape")
     expect(dialog).to_have_count(0)
