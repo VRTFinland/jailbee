@@ -153,7 +153,7 @@ describe("design tokens", () => {
 
     it("keeps e-ink black on white", () => {
         const eink = RULES.filter((r) => r.selectors.includes('[data-theme="eink"]')).flatMap((r) => r.decls)
-        const OPACITIES = /^--md-(state|disabled)-/
+        const OPACITIES = /^--md-(state|disabled|context)-/
         for (const [name] of eink) {
             if (!name.startsWith("--md-") || OPACITIES.test(name) || name === "--md-scrim") continue
             expect(["#000000", "#ffffff"], name).toContain(resolve("eink", name).toLowerCase())
@@ -164,6 +164,7 @@ describe("design tokens", () => {
         expect(resolve("eink", "--md-state-pressed-opacity")).toBe("0")
         expect(resolve("eink", "--md-disabled-content-opacity")).toBe("1")
         expect(resolve("eink", "--md-disabled-container-opacity")).toBe("0")
+        expect(resolve("eink", "--md-context-opacity")).toBe("1")
         expect(resolve("eink", "--bg")).toBe("#ffffff")
         expect(resolve("eink", "--text")).toBe("#000000")
     })

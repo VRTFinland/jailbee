@@ -52,6 +52,17 @@ describe("RepoList", () => {
         expect(row.get("a").attributes("href")).toBe("/containers/alpha-1")
     })
 
+    it("preserves the absence of a separate Running or Frozen state label without a phase", async () => {
+        const wrapper = mountList()
+        for (const state of ["Running", "Frozen"]) {
+            await wrapper.setProps({view: {...view, repos: [{prefix: "alpha", containers: [
+                {...view.repos[0].containers[0], state, phase: null, agent: null},
+            ]}]}})
+            expect(wrapper.find(".phase").exists()).toBe(false)
+            expect(wrapper.get(".cell").text()).toBe("ST▶")
+        }
+    })
+
     it("switches persisted filters, dims context, hides empty repos and follows live membership", async () => {
         const wrapper = mountList()
         const parent = {...view.repos[0].containers[0], agent: null, state: "Stopped"}

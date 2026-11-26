@@ -72,20 +72,21 @@ describe("GalleryView", () => {
                 "running", "frozen", "stopped", "booting", "autostart", "job", "failed",
                 "waiting", "busy", "idle", "shell", "error", "error", "unknown",
                 "running", "booting", "failed", // the list rows' trailing chips
-                "running", "busy", "job", "waiting", // the linked rows', from the status mapping
+                "running", "busy", "booting", "job", "waiting", // linked and wrapping rows
             ])
             expect(panel.text()).toContain("API error: overloaded")
             const rows = panel.findAll(".list-row")
-            expect(rows.map((r) => r.attributes("aria-current") ?? null)).toEqual(["true", null, null, null, null, null])
+            expect(rows.map((r) => r.attributes("aria-current") ?? null)).toEqual(["true", null, null, null, null, null, null])
             expect(rows[0].find(".status-chip").exists()).toBe(true)
             expect(rows[3].find('[role="switch"]').exists()).toBe(true)
             // The linked rows (to the gallery itself: sample names are no real containers).
-            expect(rows.slice(4).map((r) => r.get("a.list-row-link").attributes("href")))
+            expect(rows.filter(r => r.find("a.list-row-link").exists()).map((r) => r.get("a.list-row-link").attributes("href")))
                 .toEqual(["/ui?row=dev-ork", "/ui?row=dev-ork-1"])
             expect(rows[4].get(".list-row-body").text()).toContain("Orchestrator · 2 children")
             expect(rows[4].findAll(".list-row-body dt").map((dt) => dt.text())).toEqual(["Sync", "Diff"])
-            expect(rows[5].get("a.list-row-link").attributes("aria-current")).toBe("true")
-            expect(rows[5].get(".list-row-body a").text()).toBe("dev-ork")
+            expect(rows[5].text()).toContain("A long container name that wraps instead of truncating")
+            expect(rows[6].get("a.list-row-link").attributes("aria-current")).toBe("true")
+            expect(rows[6].get(".list-row-body a").text()).toBe("dev-ork")
         }
         // The row's sample switch works, each panel its own.
         const follow = wrapper.findAll('[role="switch"][aria-label="Follow live"]')

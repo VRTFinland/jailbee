@@ -205,6 +205,10 @@ function typeStyle(token: string): Record<string, string> {
                                     <IconButton icon="menu" label="Actions for dev-ork" />
                                 </template>
                             </ListRow>
+                            <ListRow wrap title="A long container name that wraps instead of truncating" secondary="Wrapped title and chips above metadata">
+                                <template #trailing><StatusChip status="booting" /></template>
+                                <p class="row-line">Orchestrator · 2 children</p>
+                            </ListRow>
                             <ListRow title="dev-ork-1" secondary="child · codex" selected
                                 :to="{name: 'gallery', query: {row: 'dev-ork-1'}}">
                                 <p class="row-line">Child of <router-link

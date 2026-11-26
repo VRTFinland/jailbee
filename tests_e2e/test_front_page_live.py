@@ -50,6 +50,25 @@ def test_front_page_actions_and_rows_match_gallery_primitives(
     assert row_look == reference_row.evaluate("el => { const s = getComputedStyle(el); return [s.borderRadius, s.backgroundColor, s.borderColor] }")
 
 
+def test_row_header_stays_above_cells_and_long_names_remain_readable(
+    server: E2EServer, logged_in: Page
+) -> None:
+    name = "a-very-long-container-name-" * 6
+    server.push(snapshot_of(repo_group("work", container(f"work-{name}", "work", state="Stopped"))))
+    row = logged_in.get_by_role("listitem")
+    for width in (1280, 390):
+        logged_in.set_viewport_size({"width": width, "height": 844})
+        link = row.get_by_role("link", name=name, exact=True)
+        expect(link).to_be_visible()
+        title = row.locator(".list-row-title")
+        assert title.evaluate("el => el.scrollWidth <= el.clientWidth")
+        assert title.evaluate("el => getComputedStyle(el).whiteSpace") != "nowrap"
+        chip, cells = row.locator(".phase").bounding_box(), row.locator("dl").bounding_box()
+        assert chip and cells
+        assert chip["y"] + chip["height"] <= cells["y"]
+        assert logged_in.evaluate("document.documentElement.scrollWidth <= innerWidth")
+
+
 def test_container_opens_from_row_metadata_not_only_its_name(
     server: E2EServer, logged_in: Page
 ) -> None:
