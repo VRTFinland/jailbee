@@ -24,6 +24,7 @@ from textual.message import Message
 
 from jailbee.config.models_remote import RemotePolicy
 from jailbee.dashboard import runner as drunner
+from jailbee.dashboard import service_actions
 from jailbee.dashboard.commands import Transport
 from jailbee.dashboard.hit import Hit
 from jailbee.dashboard.questions import AnswerRegistry
@@ -210,10 +211,7 @@ class DashboardApp(App[int], inherit_bindings=False):
         self.quit_requested = False
         self.mouse_on = startup.mouse
         self._last_click: Hit | None = None
-        # Test seams: the runner (swap in a fake) and whether actions run on a
-        # worker thread (False runs them inline, for runners that never ask).
-        self.action_runner: Callable[..., drunner.RunResult] = drunner.run_action
-        self.action_spawn: drunner.Spawner | None = None
+        # The fake state client runs inline when this is false.
         self.threaded_actions = True
         self._ui_thread = threading.get_ident()
         self._pending_prompts: set[asyncio.Future[Any]] = set()
@@ -275,7 +273,6 @@ class DashboardApp(App[int], inherit_bindings=False):
     ) -> None:
         """Run the actions on a worker thread; ``done`` and ``progress`` run on the app thread."""
         session = self.session
-        extra: dict[str, Any] = {"spawn": self.action_spawn} if self.action_spawn else {}
 
         relay = (
             None
@@ -285,19 +282,13 @@ class DashboardApp(App[int], inherit_bindings=False):
 
         def work() -> None:
             try:
-                outcome = drunner.run_actions(
+                outcome = service_actions.run_actions(
+                    session.client,
                     runs,
-                    run=self.action_runner,
+                    relay,
+                    groups=session.groups,
                     transport=session.transport,
-                    policy=session.ssh_policy,
-                    on_prompt=self._ask_from_worker,
-                    on_entry_prompt=lambda entry_id, prompt: self._ask_from_worker(
-                        prompt, entry_id
-                    ),
-                    on_entry_disconnect=self._disconnect_entry,
-                    progress=relay,
-                    client=self.remote_client,
-                    **extra,
+                    queue=session.queue,
                 )
             except Exception as exc:
                 # A crashed worker must still settle its entries, or they stay running forever.

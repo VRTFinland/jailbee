@@ -16,6 +16,7 @@ import re
 import subprocess
 import sys
 import time
+import uuid
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime
@@ -375,7 +376,7 @@ def open_state_client(cwd_root: Path | None) -> StateClient:
     """A started `StateClient` for this dashboard (the tests' seam)."""
     from jailbee.state_service.client import StateClient
 
-    client = StateClient(cwd_root)
+    client = StateClient(cwd_root, dashboard_id=uuid.uuid4().hex)
     client.start()
     return client
 

@@ -129,6 +129,11 @@ class StateClient:
         self._first = threading.Event()
         self._thread = threading.Thread(target=self._run, name="jailbee-state-client", daemon=True)
 
+    @property
+    def dashboard_id(self) -> str | None:
+        """Identity advertised to the state service for hosted actions."""
+        return self._dashboard_id
+
     # ---- the dashboard's side ------------------------------------------------
 
     def start(self) -> None:
