@@ -26,11 +26,23 @@ def test_busy_repo_does_not_evict_another_repos_finished_history(runtime_dir, tm
     now = datetime.now(UTC)
     for entry_id in range(1, 104):
         root = str(tmp_path / ("quiet" if entry_id == 1 else "busy"))
-        save(engine, ActionEntry(
-            entry_id, ["ls"], root, "t", False, "local", "none", root,
-            "quiet" if entry_id == 1 else "busy", finished=True, state="done",
-            finished_at=now - timedelta(seconds=104 - entry_id),
-        ))
+        save(
+            engine,
+            ActionEntry(
+                entry_id,
+                ["ls"],
+                root,
+                "t",
+                False,
+                "local",
+                "none",
+                root,
+                "quiet" if entry_id == 1 else "busy",
+                finished=True,
+                state="done",
+                finished_at=now - timedelta(seconds=104 - entry_id),
+            ),
+        )
     paths.ensure_runtime_dir()
     running = Running(FakeGatherer(), paths.socket_path(), engine=engine)
     client = StateClient(None, dashboard_id="local", version="v1", spawn=lambda: None)
@@ -63,11 +75,21 @@ def test_batch_remnant_is_interrupted_before_and_after_reconnect(runtime_dir, tm
     later = StateClient(None, dashboard_id="later", version="v1", spawn=lambda: None)
     try:
         client.wait_first_snapshot(3)
-        client.run_action_batch(RunActionBatch([
-            RunAction(i, ["ls"], str(tmp_path), "t", False, "local", "none", str(tmp_path), "repo")
-            for i in (1, 2)
-        ]))
-        _until(lambda: client.action_entries().get(2) is not None and client.action_entries()[2].finished)
+        client.run_action_batch(
+            RunActionBatch(
+                [
+                    RunAction(
+                        i, ["ls"], str(tmp_path), "t", False, "local", "none", str(tmp_path), "repo"
+                    )
+                    for i in (1, 2)
+                ]
+            )
+        )
+        _until(
+            lambda: (
+                client.action_entries().get(2) is not None and client.action_entries()[2].finished
+            )
+        )
         assert client.action_entries()[2].state == "interrupted"
         later.start()
         later.wait_first_snapshot(3)
@@ -78,7 +100,9 @@ def test_batch_remnant_is_interrupted_before_and_after_reconnect(runtime_dir, tm
 
 
 @pytest.mark.parametrize("allowed", [False, True])
-def test_remote_dismiss_requires_current_command_policy(runtime_dir, tmp_path, monkeypatch, allowed):
+def test_remote_dismiss_requires_current_command_policy(
+    runtime_dir, tmp_path, monkeypatch, allowed
+):
     from jailbee import global_config
     from jailbee.config.models_remote import RemoteCommandPolicy
     from jailbee.remote_ssh import repo_scope
@@ -86,7 +110,9 @@ def test_remote_dismiss_requires_current_command_policy(runtime_dir, tmp_path, m
     config = global_config.GlobalConfig()
     config.remote.ssh.commands = RemoteCommandPolicy(mode="disabled")
     monkeypatch.setattr(global_config, "load_global_config", lambda path: (config, []))
-    monkeypatch.setattr(repo_scope, "registered_repos", lambda **kw: [repo_scope.RepoChoice("repo", tmp_path)])
+    monkeypatch.setattr(
+        repo_scope, "registered_repos", lambda **kw: [repo_scope.RepoChoice("repo", tmp_path)]
+    )
 
     class Child:
         stdout = None
@@ -101,16 +127,26 @@ def test_remote_dismiss_requires_current_command_policy(runtime_dir, tmp_path, m
             pass
 
     paths.ensure_runtime_dir()
-    Running(FakeGatherer(), paths.socket_path(), action_spawn=lambda *a, **kw: Child(kw["prompt_sock"]))
+    Running(
+        FakeGatherer(), paths.socket_path(), action_spawn=lambda *a, **kw: Child(kw["prompt_sock"])
+    )
     local = StateClient(None, dashboard_id="local", version="v1", spawn=lambda: None)
-    remote = StateClient(None, dashboard_id="remote", transport="ssh", version="v1", spawn=lambda: None)
+    remote = StateClient(
+        None, dashboard_id="remote", transport="ssh", version="v1", spawn=lambda: None
+    )
     local.start()
     remote.start()
     try:
         local.wait_first_snapshot(3)
         remote.wait_first_snapshot(3)
-        local.run_action(RunAction(1, ["ls"], str(tmp_path), "t", False, "local", "none", str(tmp_path), "repo"))
-        _until(lambda: remote.action_entries().get(1) is not None and remote.action_entries()[1].finished)
+        local.run_action(
+            RunAction(1, ["ls"], str(tmp_path), "t", False, "local", "none", str(tmp_path), "repo")
+        )
+        _until(
+            lambda: (
+                remote.action_entries().get(1) is not None and remote.action_entries()[1].finished
+            )
+        )
         if allowed:
             config.remote.ssh.commands = RemoteCommandPolicy(mode="full")
         remote.dismiss_action(1)
@@ -128,7 +164,9 @@ def test_remote_dismiss_requires_current_command_policy(runtime_dir, tmp_path, m
 
 
 @pytest.mark.parametrize("invalidate", ["refresh", "ttl"])
-def test_remote_output_burst_reuses_scope_until_invalidation(runtime_dir, tmp_path, monkeypatch, invalidate):
+def test_remote_output_burst_reuses_scope_until_invalidation(
+    runtime_dir, tmp_path, monkeypatch, invalidate
+):
     from jailbee import global_config
     from jailbee.remote_ssh import repo_scope
 
@@ -166,23 +204,29 @@ def test_remote_output_burst_reuses_scope_until_invalidation(runtime_dir, tmp_pa
     paths.ensure_runtime_dir()
     clock = [0.0]
     Running(
-        FakeGatherer(), paths.socket_path(), action_spawn=lambda *a, **kw: Child(kw["prompt_sock"]),
+        FakeGatherer(),
+        paths.socket_path(),
+        action_spawn=lambda *a, **kw: Child(kw["prompt_sock"]),
         clock=lambda: clock[0],
     )
     local = StateClient(None, dashboard_id="local", version="v1", spawn=lambda: None)
-    remote = StateClient(None, dashboard_id="remote", transport="ssh", version="v1", spawn=lambda: None)
+    remote = StateClient(
+        None, dashboard_id="remote", transport="ssh", version="v1", spawn=lambda: None
+    )
     local.start()
     remote.start()
     try:
         local.wait_first_snapshot(3)
         remote.wait_first_snapshot(3)
-        local.run_action(RunAction(1, ["ls"], str(tmp_path), "t", False, "local", "none", str(tmp_path), "repo"))
+        local.run_action(
+            RunAction(1, ["ls"], str(tmp_path), "t", False, "local", "none", str(tmp_path), "repo")
+        )
         _until(lambda: 1 in remote.action_entries() and bool(children))
         before = len(loads), len(queries)
         for index in range(10):
             text = f"chunk {index}\n"
             os.write(children[0].write_fd, text.encode())
-            _until(lambda: text in remote.action_entries()[1].output)
+            _until(lambda text=text: text in remote.action_entries()[1].output)
         assert (len(loads), len(queries)) == before
 
         config.remote.ssh.excluded_repos = ["repo"]
