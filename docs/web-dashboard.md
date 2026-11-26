@@ -151,7 +151,8 @@ when a matching ordinary user entry arrives in the live transcript. The field
 and send button stay disabled while that confirmation is pending. No separate
 acknowledgement or queue is used. Confirmation is bounded: commands such as
 `/compact` may not produce an ordinary user entry, so an unconfirmed paste does
-not leave messaging locked indefinitely. Reloading the transcript or reconnecting
+not leave messaging locked indefinitely: after 30 seconds it reports
+**Pasted; transcript confirmation unavailable** and unlocks. Reloading the transcript or reconnecting
 also resets that wait. The composer also works in the e-ink display profile,
 above its page controls.
 
@@ -187,7 +188,10 @@ the panel or reloading preserves them when browser storage is available. They do
 not sync between devices, and blocked storage falls back to an in-memory draft.
 A newer assistant reply leaves the older draft attached to its source with a
 notice; send it deliberately or discard it. Questions in the new reply get their
-own set. Discard removes the saved draft. Older questions without a retained
+own set. Select a question set to return to its own answers; selecting a set
+waiting in the e-ink new-message buffer reveals its source explicitly. Discard
+removes the saved draft, and sent or discarded sets stay dismissed after reload.
+Older questions without a retained
 draft can always be answered by number in **Message agent**.
 
 Malformed question blocks do not open a panel. The free-text composer remains
