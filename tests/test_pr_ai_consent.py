@@ -183,6 +183,44 @@ def test_cli_agent_run_requires_consent(tmp_path, mocker, submodule, mode, answe
         assert create.call_args.kwargs["body"] == "Body"
 
 
+@pytest.mark.parametrize("submodule", [False, True], ids=["repo", "submodule"])
+def test_ai_enables_description_update_with_default_off_config(tmp_path, mocker, submodule):
+    if submodule:
+        from tests.test_cli_submodule_pr import _created, _happy, _setup
+
+        _cfg, _, _ = _setup(
+            mocker, tmp_path, state_record=pr_flow.PrRecord(123, "feat/foo", True, False)
+        )
+        _happy(mocker)
+        mocker.patch("jailbee.pr.view_existing_pr", return_value=_created(already=True))
+        args = ["submodule", "pr", "push", "feat-foo", "lib/a", "--yes", "--ai"]
+    else:
+        from tests.test_cli_pr import _update_setup
+
+        _cfg, _ = _update_setup(mocker, tmp_path)
+        args = ["pr", "push", "feat-foo", "--no-submodules", "--yes", "--ai"]
+    from jailbee.config import PrConfig
+    from tests.conftest import mock_pr_agent
+
+    mock_pr_agent(_cfg, True)
+    _cfg.pr.ai_description = PrConfig().ai_description
+    _cfg.pr.ai_branch = PrConfig().ai_branch
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
+    confirm = mocker.patch("jailbee.prompting._confirm")
+    generate = mocker.patch(
+        "jailbee.pr_ai.generate_pr_text", return_value=PrText("Updated title", "Updated body", "unused")
+    )
+    edit = mocker.patch("jailbee.pr.edit_pr")
+
+    result = CliRunner().invoke(app, args)
+
+    assert result.exit_code == 0, result.output
+    generate.assert_called_once()
+    confirm.assert_not_called()
+    assert edit.call_args.kwargs["title"] == "Updated title"
+    assert edit.call_args.kwargs["body"] == "Updated body"
+
+
 @pytest.mark.parametrize("submodule", [False, True])
 def test_conflicting_ai_flags_fail_before_publication(mocker, submodule):
     load = mocker.patch("jailbee.cli._load_or_exit")
