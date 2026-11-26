@@ -718,6 +718,8 @@ class DashboardSession:
             return
         entries = []
         for item in action_entries().values():
+            if self.scope is not None and not self.scope.allows(item.prefix):
+                continue
             entries.append(
                 QueueEntry(
                     item.entry_id,
