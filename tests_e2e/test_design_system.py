@@ -336,10 +336,15 @@ def test_primitives_draw_material_states_from_tokens(logged_in: Page) -> None:
 def test_context_rows_and_emphasized_chips_are_primitive_variants(logged_in: Page) -> None:
     page = logged_in
     _open_gallery(page)
-    for theme, opacity, border in (("Light", "0.5", "solid"), ("Dark", "0.5", "solid"),
-                                    ("E-ink", "1", "dashed")):
+    for theme, opacity, border in (
+        ("Light", "0.5", "solid"),
+        ("Dark", "0.5", "solid"),
+        ("E-ink", "1", "dashed"),
+    ):
         panel = page.get_by_role("region", name=f"{theme} theme, normal profile", exact=True)
-        row = panel.get_by_role("listitem").filter(has_text="A long container name that wraps instead of truncating")
+        row = panel.get_by_role("listitem").filter(
+            has_text="A long container name that wraps instead of truncating"
+        )
         expect(row).to_have_css("opacity", opacity)
         expect(row).to_have_css("border-top-style", border)
         if theme == "E-ink":

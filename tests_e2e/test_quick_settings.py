@@ -19,15 +19,19 @@ def test_floating_trigger_has_opaque_surface_and_panel_tracks_its_target_size(
     logged_in: Page, theme: str
 ) -> None:
     page = logged_in
-    page.evaluate("""theme => {
+    page.evaluate(
+        """theme => {
         localStorage.setItem('jailbee.showTitleBar', '0');
         localStorage.setItem('jailbee.theme', theme);
-    }""", theme)
+    }""",
+        theme,
+    )
     page.reload()
     trigger = page.get_by_role("button", name="Quick settings", exact=True)
     expect(trigger).to_be_visible()
     assert trigger.evaluate("el => getComputedStyle(el).backgroundColor") not in {
-        "transparent", "rgba(0, 0, 0, 0)"
+        "transparent",
+        "rgba(0, 0, 0, 0)",
     }
     if theme == "eink":
         expect(trigger).to_have_css("background-color", "rgb(255, 255, 255)")
