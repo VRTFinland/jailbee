@@ -72,6 +72,15 @@ def test_say_interactively_selects_session_and_asks_for_text(cli_seams, monkeypa
     assert delivered.call_args.args[3:] == ("def", "chosen text")
 
 
+def test_say_without_live_sessions_exits_four(cli_seams):
+    delivered, sessions = cli_seams
+    sessions.clear()
+    result = CliRunner().invoke(cli.app, ["agent", "say", "box", "hello"])
+    assert result.exit_code == 4
+    assert "no live session" in result.output.lower()
+    delivered.assert_not_called()
+
+
 def test_say_missing_text_noninteractive(cli_seams):
     delivered, _ = cli_seams
     result = CliRunner().invoke(cli.app, ["agent", "say", "box", "--session", "abc"])
