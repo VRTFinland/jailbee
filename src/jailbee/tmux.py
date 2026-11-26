@@ -53,7 +53,7 @@ class TmuxStepError(RuntimeError):
         self.exit_code = exit_code
 
 
-def _runuser(tmux_cmd: str) -> list[str]:
+def runuser(tmux_cmd: str) -> list[str]:
     """Wrap a shell command to run as the container user.
 
     Uses ``bash -lc`` (login shell) so the user's PATH additions from
@@ -88,7 +88,7 @@ def ensure_session(incus: Incus, container: str, start_dir: str | None = None) -
         # dislikes the reset cannot turn a live session into a missing one.
         incus.exec(
             container,
-            _runuser(
+            runuser(
                 f"tmux has-session -t {SESSION_NAME} && "
                 f"(tmux set-option -gu remain-on-exit || true)"
             ),
@@ -97,12 +97,12 @@ def ensure_session(incus: Incus, container: str, start_dir: str | None = None) -
     except IncusError:
         pass  # session missing — create it
 
-    incus.exec(container, _runuser(f"mkdir -p {SENTINEL_DIR}"))
+    incus.exec(container, runuser(f"mkdir -p {SENTINEL_DIR}"))
     new_session = f"tmux new-session -d -s {SESSION_NAME} -x 200 -y 50"
     if start_dir is not None:
         new_session += f" -c {shlex.quote(start_dir)}"
     try:
-        incus.exec(container, _runuser(new_session))
+        incus.exec(container, runuser(new_session))
     except IncusError as new_err:
         # Concurrent-creation race: a background `jailbee new` autostart can create
         # the session between our has-session check above and this new-session
@@ -110,7 +110,7 @@ def ensure_session(incus: Incus, container: str, start_dir: str | None = None) -
         # now exists; otherwise the creation genuinely failed and the
         # original error must surface.
         try:
-            incus.exec(container, _runuser(f"tmux has-session -t {SESSION_NAME}"))
+            incus.exec(container, runuser(f"tmux has-session -t {SESSION_NAME}"))
         except IncusError:
             raise new_err from None
         return
@@ -143,7 +143,7 @@ def enable_terminal_features(incus: Incus, container: str) -> None:
     try:
         incus.exec(
             container,
-            _runuser(
+            runuser(
                 f"tmux show-options -gqv {_TERMINAL_MARKER} | grep -q . || "
                 f"{{ {_TERMINAL_FEATURES}; }}"
             ),
@@ -166,7 +166,7 @@ def kill_window(incus: Incus, container: str, window: str, *, checked: bool = Fa
         target = shlex.quote(f"{SESSION_NAME}:={window}")
         incus.exec(
             container,
-            _runuser(
+            runuser(
                 f"if tmux list-windows -t {SESSION_NAME} -F '#{{window_name}}' 2>/dev/null "
                 f"| grep -Fxq -- {shlex.quote(window)}; then tmux kill-window -t {target}; fi"
             ),
@@ -175,7 +175,7 @@ def kill_window(incus: Incus, container: str, window: str, *, checked: bool = Fa
     try:
         incus.exec(
             container,
-            _runuser(f"tmux kill-window -t {SESSION_NAME}:={window}"),
+            runuser(f"tmux kill-window -t {SESSION_NAME}:={window}"),
         )
     except IncusError:
         pass  # window didn't exist — fine
@@ -192,7 +192,7 @@ def select_window(incus: Incus, container: str, window: str) -> bool:
     try:
         incus.exec(
             container,
-            _runuser(f"tmux select-window -t {SESSION_NAME}:={window}"),
+            runuser(f"tmux select-window -t {SESSION_NAME}:={window}"),
         )
     except IncusError:
         return False
@@ -235,7 +235,7 @@ def landing_window(incus: Incus, container: str) -> str | None:
         f"tmux display-message -p -t {SESSION_NAME} '#{{window_id}}'; fi"
     )
     try:
-        out = incus.exec(container, _runuser(script))
+        out = incus.exec(container, runuser(script))
     except IncusError:
         return None
     window = out.strip() if isinstance(out, str) else ""
@@ -291,7 +291,7 @@ def set_server_environment(incus: Incus, container: str, env: dict[str, str | No
         else:
             commands.append(f"tmux set-environment -g {key} {shlex.quote(value)}")
     try:
-        incus.exec(container, _runuser("; ".join(commands)))
+        incus.exec(container, runuser("; ".join(commands)))
     except IncusError:
         pass
 
@@ -336,7 +336,7 @@ def _new_window(incus: Incus, container: str, window: str, shell_cmd: str, env_f
     set_remain = (
         f"tmux set-option -w -t {SESSION_NAME}:={window} remain-on-exit {STEP_REMAIN_ON_EXIT}"
     )
-    incus.exec(container, _runuser(f"{new_window} && ({set_remain} || true)"))
+    incus.exec(container, runuser(f"{new_window} && ({set_remain} || true)"))
 
 
 def open_window(
@@ -350,7 +350,7 @@ def open_window(
     base = _sanitize_window_name(base)
     listing = incus.exec(
         container,
-        _runuser(f"tmux list-windows -t {SESSION_NAME} -F '#{{window_name}}' 2>/dev/null || true"),
+        runuser(f"tmux list-windows -t {SESSION_NAME} -F '#{{window_name}}' 2>/dev/null || true"),
     )
     taken = set(listing.split())
     window = base
@@ -407,7 +407,7 @@ def run_step(
         try:
             incus.exec(
                 container,
-                _runuser(f"timeout {BACKGROUND_PROBE_SEC} tmux wait-for {shlex.quote(probe_sig)}"),
+                runuser(f"timeout {BACKGROUND_PROBE_SEC} tmux wait-for {shlex.quote(probe_sig)}"),
             )
         except IncusError:
             return  # timeout — still alive after probe
@@ -431,7 +431,7 @@ def run_step(
     try:
         incus.exec(
             container,
-            _runuser(f"timeout {timeout} tmux wait-for {shlex.quote(sig)}"),
+            runuser(f"timeout {timeout} tmux wait-for {shlex.quote(sig)}"),
         )
     except IncusError:
         interrupt_window(incus, container, window)
@@ -443,9 +443,9 @@ def run_step(
 
     exit_text = incus.exec(
         container,
-        _runuser(f"cat {shlex.quote(sentinel)} 2>/dev/null || true"),
+        runuser(f"cat {shlex.quote(sentinel)} 2>/dev/null || true"),
     ).strip()
-    incus.exec(container, _runuser(f"rm -f {shlex.quote(sentinel)}"))
+    incus.exec(container, runuser(f"rm -f {shlex.quote(sentinel)}"))
 
     if not exit_text:
         raise TmuxStepError(
@@ -512,7 +512,7 @@ def launch_step(
         try:
             incus.exec(
                 container,
-                _runuser(f"timeout {BACKGROUND_PROBE_SEC} tmux wait-for {shlex.quote(probe_sig)}"),
+                runuser(f"timeout {BACKGROUND_PROBE_SEC} tmux wait-for {shlex.quote(probe_sig)}"),
             )
         except IncusError:
             return StepHandle(name=name, window=window, sentinel="", background=True, deadline=0.0)
@@ -554,7 +554,7 @@ def poll_steps(incus: Incus, container: str, handles: Sequence[StepHandle]) -> d
     script = (
         f'for f in {quoted}; do if [ -f "$f" ]; then echo "$f $(cat "$f")"; rm -f "$f"; fi; done'
     )
-    out = incus.exec(container, _runuser(script))
+    out = incus.exec(container, runuser(script))
 
     by_sentinel = {h.sentinel: h for h in pending}
     done: dict[str, int] = {}
@@ -589,7 +589,7 @@ def interrupt_window(incus: Incus, container: str, window: str) -> None:
     try:
         incus.exec(
             container,
-            _runuser(f"tmux send-keys -t {SESSION_NAME}:={window} C-c"),
+            runuser(f"tmux send-keys -t {SESSION_NAME}:={window} C-c"),
         )
     except IncusError:
         pass

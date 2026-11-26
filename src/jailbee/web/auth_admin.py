@@ -40,6 +40,9 @@ Failed logins by an `UNLIMITED_METHODS` method are counted apart (see
 sharing this budget would let a flood of them prune the PIN and TOTP guesses
 the log is there to show."""
 
+AGENT_MESSAGES_KEEP = 1000
+"""Messages have their own budget and cannot evict security events."""
+
 UNLIMITED_FAILURES_KEEP = 100
 """How many failed logins by an `UNLIMITED_METHODS` method are kept, on their own budget."""
 
@@ -337,10 +340,13 @@ def record_event(
             col(WebAuthEvent.event) == "login_failed",
             col(WebAuthEvent.method).in_(UNLIMITED_METHODS),
         )
-        if event == "login_failed" and method in UNLIMITED_METHODS:
+        agent_message = col(WebAuthEvent.event) == "agent_message"
+        if event == "agent_message":
+            same_class, budget = agent_message, AGENT_MESSAGES_KEEP
+        elif event == "login_failed" and method in UNLIMITED_METHODS:
             same_class, budget = unlimited_failure, UNLIMITED_FAILURES_KEEP
         else:
-            same_class, budget = not_(unlimited_failure), AUDIT_KEEP
+            same_class, budget = and_(not_(unlimited_failure), not_(agent_message)), AUDIT_KEEP
         keep = (
             select(WebAuthEvent.id)
             .where(same_class)

@@ -106,7 +106,9 @@ class OriginGuard:
             return
         host = _header(scope, b"host")
         allowed = self._policy.allows(host)
-        if allowed and kind == "websocket":
+        if allowed and (
+            kind == "websocket" or scope.get("method") not in ("GET", "HEAD", "OPTIONS")
+        ):
             origin = _header(scope, b"origin")
             allowed = origin is None or origin_matches(origin, host)
         if allowed:
