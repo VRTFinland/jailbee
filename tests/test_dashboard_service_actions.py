@@ -274,7 +274,9 @@ def test_real_service_replays_accepted_action_and_continues_batch(runtime_dir, t
     thread.start()
     track_server(server, thread)
     _until(paths.socket_path().exists)
-    client = StateClient(None, dashboard_id="origin", version="v1", spawn=lambda: None, backoff=(0.05,))
+    client = StateClient(
+        None, dashboard_id="origin", version="v1", spawn=lambda: None, backoff=(0.05,)
+    )
     client.start()
 
     class DisconnectAfterAcceptance:
@@ -308,8 +310,12 @@ def test_real_service_replays_accepted_action_and_continues_batch(runtime_dir, t
         client.wait_first_snapshot(3)
         with ThreadPoolExecutor() as pool:
             future = pool.submit(
-                run_actions, DisconnectAfterAcceptance(),
-                [ActionRun(["ls"], tmp_path)] * 2, Progress(), groups=[], transport="none"
+                run_actions,
+                DisconnectAfterAcceptance(),
+                [ActionRun(["ls"], tmp_path)] * 2,
+                Progress(),
+                groups=[],
+                transport="none",
             )
             outcome = future.result(timeout=8)
         assert [result.status for result in outcome.results] == [0, 0]
