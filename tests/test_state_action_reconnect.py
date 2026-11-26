@@ -27,8 +27,12 @@ def test_reconnect_replaces_entries_dismissed_while_offline(runtime_dir, tmp_pat
             pass
 
     paths.ensure_runtime_dir()
-    server = StateServer(FakeGatherer(), version="v1", action_spawn=lambda *a, **kw: Child(kw["prompt_sock"]))
-    thread = threading.Thread(target=lambda: asyncio.run(server.serve(paths.socket_path())), daemon=True)
+    server = StateServer(
+        FakeGatherer(), version="v1", action_spawn=lambda *a, **kw: Child(kw["prompt_sock"])
+    )
+    thread = threading.Thread(
+        target=lambda: asyncio.run(server.serve(paths.socket_path())), daemon=True
+    )
     thread.start()
     track_server(server, thread)
     _until(paths.socket_path().exists)
@@ -40,16 +44,35 @@ def test_reconnect_replaces_entries_dismissed_while_offline(runtime_dir, tmp_pat
             return None
         return original(path)
 
-    first = StateClient(None, dashboard_id="one", version="v1", spawn=lambda: None, backoff=(0.05,), connect_timeout=0.1)
+    first = StateClient(
+        None,
+        dashboard_id="one",
+        version="v1",
+        spawn=lambda: None,
+        backoff=(0.05,),
+        connect_timeout=0.1,
+    )
     first.start()
-    second = StateClient(None, dashboard_id="two", version="v1", spawn=lambda: None, backoff=(0.05,))
+    second = StateClient(
+        None, dashboard_id="two", version="v1", spawn=lambda: None, backoff=(0.05,)
+    )
     second.start()
     try:
         first.wait_first_snapshot(3)
         second.wait_first_snapshot(3)
-        first.run_action(RunAction(55, ["ls"], str(tmp_path), "x", False, "one", "none", str(tmp_path), "r"))
-        _until(lambda: first.action_entries().get(55) is not None and first.action_entries()[55].finished)
-        _until(lambda: second.action_entries().get(55) is not None and second.action_entries()[55].finished)
+        first.run_action(
+            RunAction(55, ["ls"], str(tmp_path), "x", False, "one", "none", str(tmp_path), "r")
+        )
+        _until(
+            lambda: (
+                first.action_entries().get(55) is not None and first.action_entries()[55].finished
+            )
+        )
+        _until(
+            lambda: (
+                second.action_entries().get(55) is not None and second.action_entries()[55].finished
+            )
+        )
         monkeypatch.setattr(client_module, "_try_connect", connect)
         first._thread.name = "offline-client"
         first._sock.shutdown(2)
@@ -68,12 +91,18 @@ def test_action_event_history_is_bounded(runtime_dir, tmp_path):
     from tests.test_state_client import Spawner
 
     spawner = Spawner()
-    client = StateClient(None, dashboard_id="dashboard", version="v1", spawn=spawner, backoff=(0.05,))
+    client = StateClient(
+        None, dashboard_id="dashboard", version="v1", spawn=spawner, backoff=(0.05,)
+    )
     client.start()
     try:
         client.wait_first_snapshot(3)
         for entry_id in range(400):
-            client.run_action(RunAction(entry_id, ["ls"], str(tmp_path), "x", False, "wrong", "none", str(tmp_path), "r"))
+            client.run_action(
+                RunAction(
+                    entry_id, ["ls"], str(tmp_path), "x", False, "wrong", "none", str(tmp_path), "r"
+                )
+            )
         _until(lambda: client.action_rejection(399) is not None)
         events = client.drain_action_events()
         assert len(events) <= 256

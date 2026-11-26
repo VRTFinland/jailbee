@@ -33,8 +33,8 @@ from jailbee.state_service.protocol import (
     ActionFinish,
     ActionOutput,
     ActionRejected,
-    ActionSyncStart,
     ActionSyncEnd,
+    ActionSyncStart,
     Active,
     DismissAction,
     GatherError,
@@ -324,7 +324,11 @@ class StateClient:
 
             with self._lock:
                 self._action_events.append(message)
-                entries = self._replay_entries if self._replay_entries is not None else self._action_entries
+                entries = (
+                    self._replay_entries
+                    if self._replay_entries is not None
+                    else self._action_entries
+                )
                 if isinstance(message, ActionRejected):
                     self._action_rejections.pop(message.entry_id, None)
                     self._action_rejections[message.entry_id] = message.reason
@@ -332,10 +336,7 @@ class StateClient:
                         del self._action_rejections[next(iter(self._action_rejections))]
                 elif isinstance(message, ActionEntry):
                     entries[message.entry_id] = message
-                elif (
-                    not isinstance(message, ActionRejected)
-                    and message.entry_id in entries
-                ):
+                elif not isinstance(message, ActionRejected) and message.entry_id in entries:
                     entry = entries[message.entry_id]
                     if isinstance(message, ActionOutput):
                         output = entry.output + message.chunk
