@@ -15,23 +15,30 @@ before editing `## Unreleased`.
   tmux bracketed paste, including multi-line text and messages sent mid-turn.
   A message sent while the agent is busy queues as the next turn. A paste joins
   any real text already typed in the terminal, while Claude replaces its ghost
-  suggestion. Sending to an open terminal dialog succeeds with a warning to
-  check it there.
-  Chat is on by default for web and SSH, with `remote.web.agent_chat: false`
+  suggestion. Only a nonempty `waitingFor` signal in Claude's own session record
+  blocks sending on agent state; no screen parsing or busy/draft checks are used.
+  A reported terminal dialog returns `waiting_at_dialog`: "The agent is waiting
+  at a dialog in the terminal; answer it there first." No paste or Enter is sent
+  and the CLI exits nonzero. Chat is on by default for web and SSH, with `remote.web.agent_chat: false`
   and `remote.ssh.agent_chat: false` as separate opt-outs. Web chat follows
-  repository visibility and records sends in the device audit log. Enter sends,
-  Shift+Enter adds a line, and delivery status has a reserved row; disabling web
-  chat hides its send controls. The composer starts collapsed on mobile and
+  repository visibility and records sends in the device audit log. Composer Enter
+  sends and Shift+Enter adds a line; phone users have an **Insert newline** button
+  and a keyboard Enter hint of Send. In answer-panel free text, Enter advances to
+  the next step and then summary; only summary Send submits answers. A fresh send
+  result takes precedence over an availability reason for five seconds. Disabling
+  web chat hides its send controls. The composer starts collapsed on mobile and
   expanded on desktop, remembers explicit visibility choices on the device, and
   hides while the answer panel is open without losing its draft or send status.
-  The compact answer panel uses directional expand controls, a non-destructive
-  Hide and the shared status row. The reader opens at the latest messages (the
-  last page on e-ink), except when a message anchor is specified.
-  Numbered questions in the latest reply open a non-modal answer panel with
-  recommended choices, a final message preview, and per-message drafts that
-  survive reloads; newer replies keep edited drafts available to send or discard,
-  while untouched question sets follow the newest reply. In-flight sends remain
-  authoritative across reconnects and transcript reloads.
+  The compact answer panel uses directional expand controls, a distinct minimize
+  icon, and the shared status row. **Discard answers** requires inline confirmation
+  (**Keep answers** / **Confirm discard answers**). The reader opens at the latest
+  messages (the last page on e-ink), except when a message anchor is specified;
+  reading positions are not remembered. Numbered questions in the latest reply
+  open a non-modal answer panel with recommended choices, a final message preview,
+  and per-message drafts that survive reloads; newer replies keep edited drafts
+  available to send or discard, while untouched question sets follow the newest
+  reply. In-flight sends remain authoritative across reconnects and transcript
+  reloads.
   Claude containers also default to unattended mode for both `claude` and
   `claude-jb`: bypass permissions without the acceptance dialog, no
   AskUserQuestion or EnterPlanMode tools, automatic rejection of remaining
@@ -102,16 +109,16 @@ before editing `## Unreleased`.
   The transcript reader uses tonal prompts and tool disclosures, syntax colours
   from the same accessible theme palette (black in e-ink), shared jump
   dialogs and buttons, vector page controls with full-size upward hit areas behind
-  compact chrome, and preserves page steps, guide lines and reading positions. Settings, quick preferences and prompt
-  navigation share the same dialog and control primitives, with history,
-  reading position and measured menu paging preserved, edge-to-edge title bars
+  compact chrome, and preserves page steps and guide lines. Settings, quick preferences and prompt
+  navigation share the same dialog and control primitives, with history and
+  measured menu paging preserved, edge-to-edge title bars
   with complete, ellipsized navigation paths, padded menu surfaces with e-ink-safe
   elevation, 16px drawer corners and reduced-motion-aware sheet entry, and centred
   arrow controls for list pagination
   ([#167](https://github.com/VRTFinland/jailbee/issues/167)).
 - Web dashboard reader improvements: compact breadcrumb title bars and session details,
   an in-context settings overlay, configurable e-ink page controls and page step,
-  prompt navigation, remembered reading position, and an optional title bar.
+  prompt navigation, and an optional title bar.
 
 - `agents.models` and `agents.model_policy` describe user-defined model aliases
   and selection rules, with field-level repo overrides. In any container,

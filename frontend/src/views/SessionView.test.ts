@@ -107,7 +107,8 @@ describe("SessionView", () => {
         const view: TranscriptView = {...transcript, chat: {available: false, code: "permission_denied", message: "Agent chat is disabled"}, entries: [{kind: "assistant", id: "question", timestamp: null, model: "m", html: "<p>Deploy: Choose.</p>", text: question}]}
         const {wrapper} = await mountSession(vi.fn(async () => jsonResponse(200, view)))
         expect(wrapper.text()).toContain("Deploy: Choose.")
-        expect(wrapper.text()).not.toContain("Agent chat disabled")
+        expect(wrapper.findComponent({name: "AgentComposer"}).exists()).toBe(false)
+        expect(wrapper.text()).not.toContain("Agent chat is disabled")
         expect(queryByRole(wrapper.element, "textbox", {name: "Message agent"})).toBeNull()
         expect(wrapper.find('[aria-label="Answer questions"]').exists()).toBe(false)
     })

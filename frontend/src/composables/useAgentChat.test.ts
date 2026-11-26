@@ -2,16 +2,15 @@ import {describe, expect, it, vi} from "vitest"
 import {useAgentChat} from "./useAgentChat"
 
 describe("agent chat", () => {
-    it("accepts dialog delivery and preserves its warning without waiting for an echo", async () => {
-        const warning = "The text went to an open terminal dialog; check it there."
-        const chat = useAgentChat(() => true, async () => ({code: "delivered_with_warning", message: warning}))
+    it("keeps the draft and reports refusal when a terminal dialog opens", async () => {
+        const message = "The agent is waiting at a dialog in the terminal; answer it there first."
+        const chat = useAgentChat(() => true, async () => ({code: "waiting_at_dialog", message}))
         chat.draft.value = "hello"
-        expect(await chat.send("hello")).toBe(true)
-        expect(chat.draft.value).toBe("")
+        expect(await chat.send("hello")).toBe(false)
+        expect(chat.draft.value).toBe("hello")
         expect(chat.awaiting.value).toBe(false)
-        expect(chat.status.value).toBe(warning)
-        chat.observe([{kind: "user", id: "1", html: "", text: "hello", meta: false, label: "", expandable: false, timestamp: null}])
-        expect(chat.status.value).toBe(warning)
+        expect(chat.error.value).toBe(message)
+        expect(chat.status.value).toBe("")
     })
     it("confirms Claude's real pasted user-turn text with expanded tabs", async () => {
         const chat = useAgentChat(() => true, async () => ({code: "delivered", message: ""}))

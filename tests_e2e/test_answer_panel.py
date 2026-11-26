@@ -105,6 +105,34 @@ def open_questions(
     return server, transcript, incus
 
 
+@pytest.mark.parametrize("profile", ["normal", "eink"])
+def test_free_text_enter_advances_to_summary_without_sending(
+    page: Page,
+    make_server: Callable[..., E2EServer],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    profile: str,
+) -> None:
+    page.set_viewport_size({"width": 390, "height": 800})
+    _, _, incus = open_questions(page, make_server, tmp_path, monkeypatch, profile=profile)
+    panel = page.get_by_role("complementary", name="Answer questions")
+    panel.get_by_role("button", name="Expand answers", exact=True).click()
+    panel.get_by_role("button", name="Question 1", exact=True).click()
+    field = panel.get_by_role("textbox", name="Answer", exact=True)
+    field.fill("Owner team")
+    field.press("Shift+Enter")
+    expect(field).to_have_value("Owner team\n")
+    field.press("Enter")
+    expect(panel.get_by_role("heading", name="Summary", exact=True)).to_be_visible()
+    expect(panel.locator("pre")).to_contain_text("Q1: Owner team")
+    assert incus.exec_with_input.call_count == 0
+    panel.get_by_role("button", name="Send answers", exact=True).click()
+    expect(page.locator(".agent-composer").get_by_role("status")).to_have_text(
+        "Waiting for transcript"
+    )
+    assert incus.exec_with_input.call_args.args[2] == "Q12: a\nQ1: Owner team "
+
+
 def test_real_message_records_form_one_set_without_newer_message_notice(
     page: Page,
     make_server: Callable[..., E2EServer],
@@ -369,7 +397,11 @@ def test_panel_refusal_keeps_answers_and_latest_message_controls_scope(
     panel.get_by_role("button", name="Expand answers", exact=True).click()
     panel.get_by_role("button", name="Summary", exact=True).click()
     expect(panel.locator("pre")).to_contain_text("Q1: Keep this answer")
-    panel.get_by_role("button", name="Discard answer").click()
+    panel.get_by_role("button", name="Discard answers", exact=True).click()
+    expect(panel).to_be_visible()
+    panel.get_by_role("button", name="Keep answers", exact=True).click()
+    panel.get_by_role("button", name="Discard answers", exact=True).click()
+    panel.get_by_role("button", name="Confirm discard answers", exact=True).click()
     expect(panel).to_have_count(0)
     page.reload()
     expect(page.get_by_role("textbox", name="Message agent")).to_be_visible()
@@ -458,7 +490,11 @@ def test_drafts_restore_switch_newer_sets_and_send_old_source(
     panel.get_by_role("button", name="Expand answers", exact=True).click()
     expect(panel.get_by_text("Q20 · New owner", exact=False)).to_be_visible()
     expect(panel.get_by_role("combobox", name="Question set")).to_have_count(0)
-    panel.get_by_role("button", name="Discard answer").click()
+    panel.get_by_role("button", name="Discard answers", exact=True).click()
+    expect(panel).to_be_visible()
+    panel.get_by_role("button", name="Keep answers", exact=True).click()
+    panel.get_by_role("button", name="Discard answers", exact=True).click()
+    panel.get_by_role("button", name="Confirm discard answers", exact=True).click()
     expect(panel).to_have_count(0)
     page.reload()
     expect(page.get_by_role("textbox", name="Message agent")).to_be_enabled()

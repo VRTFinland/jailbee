@@ -2,14 +2,12 @@ import {flushPromises, mount} from "@vue/test-utils"
 import {afterEach, describe, expect, it, vi} from "vitest"
 import {createMemoryHistory} from "vue-router"
 import {setToken} from "../api"
-import {writePosition} from "../readingPosition"
 import {createAppRouter} from "../router"
 import {updateSettings} from "../settings"
 import {withDashboardMode} from "../test-http"
 import SessionView from "./SessionView.vue"
 
 const originalScrollIntoView = Object.getOwnPropertyDescriptor(Element.prototype, "scrollIntoView")
-const key = ["alpha", "claude", "s-1"]
 const transcript = {offset: 0, session_id: "s-1", agent: "claude", title: "Test", models: [], entries: [
     {kind: "user", id: "u1", html: "one", meta: false},
     {kind: "assistant", id: "a1", html: "two"},
@@ -45,7 +43,7 @@ describe("initial session position", () => {
             if (this.classList.contains("transcript")) return {top: -300, bottom: 2100} as DOMRect
             return {top: 0, bottom: 100} as DOMRect
         })
-        writePosition(localStorage, key, {entryId: "u1", atEnd: false})
+        localStorage.setItem('jailbee.readingPositions', JSON.stringify([{key: '["alpha","claude","s-1"]', position: {entryId: 'u1', atEnd: false}}]))
         const to = vi.spyOn(window, "scrollTo").mockImplementation(() => {})
         const {wrapper} = await open()
         expect(to).toHaveBeenLastCalledWith(0, 1600)

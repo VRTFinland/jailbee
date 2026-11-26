@@ -378,7 +378,7 @@ class RemoteUnlocks:
     network: bool = False
     mounts: bool = False
     orchestration: bool = False
-    agent_chat: bool = True
+    agent_chat: bool = False
     # Whether `remote.ssh.waypipe` is on: only worded into the GUI refusal.
     waypipe_available: bool = False
     # The transport named in refusals (`remote.<transport>.network is on`).
@@ -405,7 +405,7 @@ class RemoteUnlocks:
         exists.
         """
         if config is None:
-            return cls()
+            return cls(agent_chat=True, transport=transport)
         waypipe_on = transport == "ssh" and isinstance(config, RemoteSSHConfig) and config.waypipe
         if waypipe is None:
             from jailbee.remote_ssh.session import waypipe_session

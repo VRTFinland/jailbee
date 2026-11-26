@@ -669,7 +669,13 @@ def test_agent_say_requires_agent_chat_even_with_full_command_policy(restricted:
             unlocks=RemoteUnlocks(agent_chat=False),
         )
     assert (
-        policy_allows(("agent", "say", "box", "hi"), FULL, restrict_host=restricted) == "agent say"
+        policy_allows(
+            ("agent", "say", "box", "hi"),
+            FULL,
+            restrict_host=restricted,
+            unlocks=RemoteUnlocks.of(None),
+        )
+        == "agent say"
     )
     assert (
         policy_allows(
@@ -1167,7 +1173,7 @@ def test_remote_unlocks_default_unlocks_nothing() -> None:
     from jailbee.remote_ssh.router import RemoteUnlocks
 
     assert RemoteUnlocks().commands() == frozenset()
-    assert RemoteUnlocks.of(None) == RemoteUnlocks()
+    assert RemoteUnlocks.of(None) == RemoteUnlocks(agent_chat=True)
 
 
 def test_remote_unlocks_gui_unlocks_the_app_launchers_only() -> None:
@@ -1935,3 +1941,13 @@ def test_resolve_aliases_share_one_classification():
 def test_outbox_resolve_is_fail_closed_under_repo_exclusions(argv):
     with pytest.raises(RouteError, match="unavailable when SSH repository exclusions"):
         policy_allows(argv, FULL, scope=RemoteRepoScope(frozenset({"secret"})))
+
+
+def test_default_unlocks_deny_chat_but_missing_policy_enables_it():
+    from jailbee.remote_ssh.router import NO_UNLOCKS, RemoteUnlocks
+
+    assert not RemoteUnlocks().agent_chat
+    assert not NO_UNLOCKS.agent_chat
+    assert RemoteUnlocks.of(None).agent_chat
+    web = RemoteUnlocks.of(None, transport="web")
+    assert web.agent_chat and web.transport == "web"

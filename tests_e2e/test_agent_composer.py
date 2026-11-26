@@ -85,6 +85,12 @@ def test_composer_delivery_and_refusal(
     field.fill("first")
     field.press("Shift+Enter")
     expect(field).to_have_value("first\n")
+    field.fill("firstsecond")
+    field.evaluate("el => el.setSelectionRange(5, 5)")
+    page.get_by_role("button", name="Insert newline", exact=True).click()
+    expect(field).to_have_value("first\nsecond")
+    expect(field).to_be_focused()
+    assert field.get_attribute("enterkeyhint") == "send"
     field.fill(message)
     composer_box = page.locator(".agent-composer").bounding_box()
     field.press("Enter")
@@ -102,7 +108,9 @@ def test_composer_delivery_and_refusal(
     collapsed_box = page.locator(".agent-composer").bounding_box()
     assert collapsed_box is not None
     page.get_by_role("button", name="Message agent", exact=True).click()
-    # An open terminal dialog receives the send, but cannot echo a user turn.
+    # A dialog opening after availability was checked refuses without any terminal write.
+    writes = incus.exec_with_input.call_count
+    calls = len(incus.exec.call_args_list)
     (live / "session.json").write_text(
         json.dumps(
             {
@@ -117,9 +125,14 @@ def test_composer_delivery_and_refusal(
     field.fill("dialog response")
     field.press("Enter")
     expect(page.get_by_role("status")).to_have_text(
-        "The text went to an open terminal dialog; check it there."
+        "The agent is waiting at a dialog in the terminal; answer it there first."
     )
-    expect(field).to_have_value("")
+    expect(field).to_have_value("dialog response")
+    assert incus.exec_with_input.call_count == writes
+    assert not any(
+        "paste-buffer" in str(call) or "send-keys" in str(call)
+        for call in incus.exec.call_args_list[calls:]
+    )
     expect(field).to_be_enabled()
     page.get_by_role("button", name="Hide composer").click()
     assert page.locator(".agent-composer").bounding_box() == collapsed_box

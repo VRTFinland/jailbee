@@ -26,7 +26,7 @@ def _web() -> RemotePolicy:
 def test_default_web_policy_refuses_every_command() -> None:
     policy = _web()
     unlocks = RemoteUnlocks.of(policy, transport="web")
-    assert unlocks == RemoteUnlocks(transport="web")
+    assert unlocks == RemoteUnlocks(agent_chat=True, transport="web")
     assert (
         allowed_command_paths(policy.commands, restrict_host=policy.restrict_host, unlocks=unlocks)
         == frozenset()

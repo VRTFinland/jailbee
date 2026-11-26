@@ -666,7 +666,6 @@ watch(
                 </article>
                 <AnswerPanel v-if="!chatDisabled && answerSet && answerSource" :key="answerSource.id" ref="panelEl" class="answer-panel-layout"
                     :set="answerSet" :answers="answerSource.answers" :available="transcript.chat?.available ?? false" :busy="sending || awaiting"
-                    :reason="transcript.chat?.message || 'Messaging is unavailable.'" :error="sendError" :status="sendStatus"
                     @update:answers="answerSets.updateAnswers" @send="sendAnswers" @show="showQuestion" @height="panelHeightMode = $event" @discard="answerSets.dismiss(answerSource.id)">
                     <template #sets>
                         <p v-if="newerAnswerMessage" role="status" class="ui-notice">A newer message arrived. These answers still belong to their original questions.</p>

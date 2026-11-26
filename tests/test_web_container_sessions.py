@@ -373,9 +373,12 @@ def test_web_chat_delivers_and_audits_exact_message(home, tmp_path, monkeypatch,
             response = client.post(
                 f"/api/repos/alpha/sessions/claude/{SESSION_A}/messages", json={"text": text}
             )
-            expected = "delivered_with_warning" if refusal == "waiting_at_dialog" else refusal
-            assert response.json()["code"] == (expected or "delivered")
-            if refusal and refusal != "waiting_at_dialog":
+            assert response.json()["code"] == (refusal or "delivered")
+            if refusal == "waiting_at_dialog":
+                assert response.json()["message"] == (
+                    "The agent is waiting at a dialog in the terminal; answer it there first."
+                )
+            if refusal:
                 incus.exec_with_input.assert_not_called()
             else:
                 assert incus.exec_with_input.call_args.args[2] == "hello\nworld"

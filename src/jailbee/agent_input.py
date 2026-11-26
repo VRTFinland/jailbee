@@ -99,28 +99,36 @@ def live_sessions(cfg: Config, incus: Incus, container: str) -> list[AgentSessio
 
 def _resolve(
     cfg: Config, incus: Incus, container: str, session_id: str
-) -> tuple[Outcome, str | None, bool]:
+) -> tuple[Outcome, str | None]:
     try:
         if not _running(incus, container):
-            return Outcome("container_not_running", "Container not running"), None, False
+            return Outcome("container_not_running", "Container not running"), None
         tree = _processes(incus, container)
         matches = [s for s in _sessions(cfg, container, tree) if s.session_id == session_id]
         if len(matches) != 1:
-            return Outcome("no_live_session", "No live session"), None, False
+            return Outcome("no_live_session", "No live session"), None
         session = matches[0]
         if session.agent != "claude":
-            return Outcome("unsupported_agent", "Unsupported agent"), None, False
+            return Outcome("unsupported_agent", "Unsupported agent"), None
+        if session.waiting_for:
+            return (
+                Outcome(
+                    "waiting_at_dialog",
+                    "The agent is waiting at a dialog in the terminal; answer it there first.",
+                ),
+                None,
+            )
         process = tree[session.pid]
         if (
             process.state in {"T", "t", "Z", "X"}
             or process.tty <= 0
             or process.group != process.foreground
         ):
-            return Outcome("no_pane", "Agent is not in the foreground"), None, False
+            return Outcome("no_pane", "Agent is not in the foreground"), None
         try:
             panes = incus.exec(container, runuser("tmux list-panes -a -F '#{pane_id} #{pane_pid}'"))
         except IncusError:
-            return Outcome("no_pane", "No pane"), None, False
+            return Outcome("no_pane", "No pane"), None
         ancestors = set()
         pid = session.pid
         while pid in tree and pid not in ancestors:
@@ -134,11 +142,11 @@ def _resolve(
                 if int(parts[1]) in ancestors and pane_process and pane_process.tty == process.tty:
                     found.append(parts[0])
         if len(set(found)) != 1:
-            return Outcome("no_pane", "No pane"), None, False
+            return Outcome("no_pane", "No pane"), None
         pane = found[0]
-        return Outcome("available", "Chat available"), pane, bool(session.waiting_for)
+        return Outcome("available", "Chat available"), pane
     except IncusError as exc:
-        return Outcome("delivery_error", f"Delivery failed: {exc}"), None, False
+        return Outcome("delivery_error", f"Delivery failed: {exc}"), None
 
 
 def availability(cfg: Config, incus: Incus, container: str, session_id: str) -> Outcome:
@@ -158,7 +166,7 @@ def send(cfg: Config, incus: Incus, container: str, session_id: str, text: str) 
     text = sanitize_text(text)
     if not text.strip():
         return Outcome("invalid_message", "Message must not be blank")
-    outcome, pane, _ = _resolve(cfg, incus, container, session_id)
+    outcome, pane = _resolve(cfg, incus, container, session_id)
     for _ in range(4):
         if pane is None:
             return outcome
@@ -168,15 +176,11 @@ def send(cfg: Config, incus: Incus, container: str, session_id: str, text: str) 
         directory.mkdir(mode=0o700, exist_ok=True)
         with (directory / f"{digest}.lock").open("a") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
-            outcome, current, dialog_open = _resolve(cfg, incus, container, session_id)
+            outcome, current = _resolve(cfg, incus, container, session_id)
             if current == pane:
-                result = _paste(incus, container, pane, text)
-                if dialog_open and result.code == "delivered":
-                    return Outcome(
-                        "delivered_with_warning",
-                        "The text went to an open terminal dialog; check it there.",
-                    )
-                return result
+                return _paste(incus, container, pane, text)
+            if current is None:
+                return outcome
             pane = current
     return Outcome("delivery_error", "Agent pane changed during delivery")
 
