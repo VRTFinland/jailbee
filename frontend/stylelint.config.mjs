@@ -1,11 +1,4 @@
 export default {
-    // tokens.css is not ignored: an override below exempts its token
-    // declarations only. Migration-only exceptions below are exact paths, never
-    // component globs. Remove each with its migration (tickets 08-13); ticket 14
-    // removes the list.
-    ignoreFiles: [
-        "src/styles/highlight.css",
-    ],
     plugins: ["./stylelint/design-tokens.mjs"],
     overrides: [
         {files: ["**/*.vue"], customSyntax: "postcss-html"},

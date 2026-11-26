@@ -165,8 +165,6 @@ describe("design tokens", () => {
         expect(resolve("eink", "--md-disabled-content-opacity")).toBe("1")
         expect(resolve("eink", "--md-disabled-container-opacity")).toBe("0")
         expect(resolve("eink", "--md-context-opacity")).toBe("1")
-        expect(resolve("eink", "--bg")).toBe("#ffffff")
-        expect(resolve("eink", "--text")).toBe("#000000")
     })
 
     it.each(["light", "dark"] as const)("gives %s the Material 3 state layers", (theme) => {
@@ -181,43 +179,14 @@ describe("design tokens", () => {
         expect(resolve("dark", "--md-primary")).toBe("#a7c8ff")
     })
 
-    // Each old name and the md token it now stands for (ticket 14 removes them).
-    const ALIASES: Record<string, string> = {
-        "--bg": "--md-surface",
-        "--text": "--md-on-surface",
-        "--muted": "--md-on-surface-variant",
-        "--border": "--md-outline-variant",
-        "--border-strong": "--md-outline",
-        "--accent": "--md-primary",
-        "--accent-text": "--md-on-primary",
-        "--danger": "--md-error",
-        "--notice-bg": "--md-primary-container",
-        "--phase-booting": "--md-phase-booting",
-        "--phase-autostart": "--md-phase-autostart",
-        "--phase-job": "--md-phase-job",
-        "--phase-failed": "--md-phase-failed",
-        "--font-body": "--md-font-body",
-        "--font-mono": "--md-font-mono",
-        "--space-1": "--md-space-4",
-        "--space-2": "--md-space-8",
-        "--space-3": "--md-space-16",
-        "--space-4": "--md-space-24",
-        "--radius": "--md-shape-small",
-    }
-
-    it.each(Object.entries(ALIASES))("keeps the old name %s as an alias of %s in every theme", (name, target) => {
-        for (const theme of THEMES) expect(declared(theme).get(name), `${name} in ${theme}`).toBe(`var(${target})`)
-    })
-
-    it("keeps --surface a card surface: the lowest container in light, one tone above the page in dark", () => {
-        expect(declared("light").get("--surface")).toBe("var(--md-surface-container-lowest)")
-        expect(declared("eink").get("--surface")).toBe("var(--md-surface-container-lowest)")
-        expect(declared("dark").get("--surface")).toBe("var(--md-surface-container-low)")
-    })
-
-    it("keeps the old spacing values", () => {
-        expect(["--space-1", "--space-2", "--space-3", "--space-4"].map((n) => resolve("light", n)))
-            .toEqual(["0.25rem", "0.5rem", "1rem", "1.5rem"])
+    it("rejects legacy token declarations and references anywhere in the app", () => {
+        const files = (readdirSync("src", {recursive: true}) as string[])
+            .filter((f) => /\.(vue|css|ts)$/.test(f) && !f.endsWith(".test.ts"))
+        const legacy = /--(?:bg|surface|text|muted|border(?:-strong)?|accent(?:-text)?|danger|notice-bg|phase-(?:booting|autostart|job|failed)|font-(?:body|mono)|space-[1-4]|radius)(?![\w-])/g
+        const found = files.flatMap((file) =>
+            [...readFileSync(`src/${file}`, "utf8").matchAll(legacy)].map(([name]) => `${file}: ${name}`),
+        )
+        expect(found).toEqual([])
     })
 
     it("has the Material 3 shape scale", () => {
