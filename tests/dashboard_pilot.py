@@ -11,8 +11,9 @@ from __future__ import annotations
 import asyncio
 import itertools
 import subprocess
+import threading
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -38,7 +39,13 @@ from jailbee.dashboard.tui.frame import DashboardView
 from jailbee.dashboard.tui.overlay import NativeState
 from jailbee.db.view_prefs import ViewState
 from jailbee.global_config import DashboardConfig, GlobalConfig
-from jailbee.state_service.protocol import Snapshot
+from jailbee.state_service.protocol import (
+    ActionEntry,
+    ActionFinish,
+    ActionOutput,
+    RunAction,
+    Snapshot,
+)
 from tests.conftest import memory_engine
 
 _MAX_PADDING = 5  # trailing Ctrl-Cs before a run that will not quit fails
@@ -102,6 +109,99 @@ class FakeStateClient:
         self.events: list[tuple[Any, ...]] = []
         self.closed = False
         self.seq = 1  # a test bumps it to serve a "new" snapshot
+        self.dashboard_id = "pilot-dashboard"
+        self.action_requests: list[RunAction] = []
+        self._action_entries: dict[int, ActionEntry] = {}
+        self._action_events: list[Any] = []
+        self.action_runner = subprocess_runner
+        self.action_spawn = None
+        self.app: tapp.DashboardApp | None = None
+
+    def run_action(self, request):  # type: ignore[no-untyped-def]
+        """Simulate the action-host boundary, including the temporary requester prompt seam."""
+        self.action_requests.append(request)
+        entry = ActionEntry(
+            request.entry_id,
+            request.argv,
+            request.cwd,
+            request.target,
+            request.critical,
+            request.origin,
+            request.transport,
+            request.repo_root,
+            request.prefix,
+        )
+        self._action_entries[entry.entry_id] = entry
+        self._action_events.append(entry)
+        app = self.app
+
+        def output(chunk):  # type: ignore[no-untyped-def]
+            current = self._action_entries[entry.entry_id]
+            self._action_entries[entry.entry_id] = replace(current, output=current.output + chunk)
+            self._action_events.append(ActionOutput(entry.entry_id, chunk))
+
+        def prompt(question):  # type: ignore[no-untyped-def]
+            if app is None:
+                return None
+            owned = app.session.queue.get(entry.entry_id) is not None
+            if owned:
+                app._on_app_thread(lambda: app.session._entry_asking(entry.entry_id, True))
+            try:
+                return app._ask_from_worker(question, entry.entry_id if owned else None)
+            finally:
+                if owned:
+                    app._on_app_thread(lambda: app.session._entry_asking(entry.entry_id, False))
+
+        def run():  # type: ignore[no-untyped-def]
+            extra = {} if self.action_spawn is None else {"spawn": self.action_spawn}
+            try:
+                result = self.action_runner(
+                    request.argv,
+                    cwd=Path(request.cwd),
+                    transport=request.transport,
+                    policy=app.session.ssh_policy if app else None,
+                    client=app.remote_client if app else None,
+                    on_prompt=prompt,
+                    on_output=output,
+                    on_disconnect=(lambda: app._disconnect_entry(entry.entry_id)) if app else None,
+                    **extra,
+                )
+            except Exception as exc:
+                result = RunResult(error=str(exc))
+            if result.error:
+                output(f"\n{result.error}\n")
+            current = self._action_entries[entry.entry_id]
+            self._action_entries[entry.entry_id] = replace(
+                current,
+                finished=True,
+                status=result.status,
+                refused=result.refused,
+                error=result.error,
+                cancelled=result.cancelled,
+                declined=result.declined,
+            )
+            self._action_events.append(
+                ActionFinish(
+                    entry.entry_id,
+                    result.status,
+                    result.refused,
+                    result.error,
+                    result.cancelled,
+                    result.declined,
+                )
+            )
+
+        if app is not None and app.threaded_actions:
+            threading.Thread(target=run, daemon=True).start()
+        else:
+            run()
+
+    def action_entries(self):  # type: ignore[no-untyped-def]
+        return self._action_entries.copy()
+
+    def drain_action_events(self):  # type: ignore[no-untyped-def]
+        events, self._action_events = self._action_events, []
+        return events
 
     def wait_first_snapshot(self, timeout):  # type: ignore[no-untyped-def]
         self.events.append(("wait",))
@@ -498,7 +598,8 @@ def make_app(  # type: ignore[no-untyped-def]
     # asserts on `["jailbee", *argv]` as it always did; real runner behaviour
     # (prompts, threads) is covered by tests/test_dashboard_tui_runner.py.
     app.threaded_actions = False
-    app.action_runner = subprocess_runner
+    client.app = app
+    client.action_runner = subprocess_runner
     # The output screens an action asked for: (title, text, failed).
     app.outputs = []  # type: ignore[attr-defined]
     show = app.show_output
