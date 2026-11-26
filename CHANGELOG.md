@@ -24,7 +24,9 @@ before editing `## Unreleased`.
   chat hides its send controls. The composer starts collapsed on mobile and
   expanded on desktop, remembers explicit visibility choices on the device, and
   hides while the answer panel is open without losing its draft or send status.
-  The answer panel uses directional expand controls and a non-destructive Hide.
+  The compact answer panel uses directional expand controls, a non-destructive
+  Hide and the shared status row. The reader opens at the latest messages (the
+  last page on e-ink), except when a message anchor is specified.
   Numbered questions in the latest reply open a non-modal answer panel with
   recommended choices, a final message preview, and per-message drafts that
   survive reloads; newer replies keep edited drafts available to send or discard,

@@ -83,6 +83,7 @@ async function mountSession(fetchMock: ReturnType<typeof vi.fn<typeof fetch>>, d
 }
 
 beforeEach(() => {
+    localStorage.setItem("jailbee.composerExpanded", "1")
     document.body.innerHTML = ""
     removeItem("jailbee.readingPositions")
 })
@@ -101,6 +102,36 @@ afterEach(() => {
 })
 
 describe("SessionView", () => {
+    it("hides disabled chat controls and status while retaining questions", async () => {
+        const question = "❓ **Q1** - **Deploy**: Choose.\na) Canary\n➡️ a: Safe"
+        const view: TranscriptView = {...transcript, chat: {available: false, code: "permission_denied", message: "Agent chat is disabled"}, entries: [{kind: "assistant", id: "question", timestamp: null, model: "m", html: "<p>Deploy: Choose.</p>", text: question}]}
+        const {wrapper} = await mountSession(vi.fn(async () => jsonResponse(200, view)))
+        expect(wrapper.text()).toContain("Deploy: Choose.")
+        expect(wrapper.text()).not.toContain("Agent chat disabled")
+        expect(queryByRole(wrapper.element, "textbox", {name: "Message agent"})).toBeNull()
+        expect(wrapper.find('[aria-label="Answer questions"]').exists()).toBe(false)
+    })
+
+    it("hides the composer while answers are open and restores its draft when hidden", async () => {
+        localStorage.setItem("jailbee.composerExpanded", "1")
+        const view: TranscriptView = {...transcript, chat: {available: true, code: "available", message: ""}, entries: [{kind: "assistant", id: "question", timestamp: null, model: "m", html: "<p>Choose.</p>", text: "❓ **Q1** - **Deploy**: Choose.\na) Canary\n➡️ a: Safe"}]}
+        const {wrapper} = await mountSession(vi.fn(async () => jsonResponse(200, view)))
+        await wrapper.get('textarea').setValue('draft')
+        await wrapper.get('[aria-label="Expand answers"]').trigger('click')
+        expect(queryByRole(wrapper.element, 'textbox', {name: 'Message agent'})).toBeNull()
+        await wrapper.get('[aria-label="Hide"]').trigger('click')
+        expect((wrapper.get('textarea').element as HTMLTextAreaElement).value).toBe('draft')
+        localStorage.removeItem("jailbee.composerExpanded")
+    })
+
+    it("keeps disabled input and answer panel for transient unavailability", async () => {
+        const view: TranscriptView = {...transcript, chat: {available: false, code: "busy", message: "Agent busy"}, entries: [{kind: "assistant", id: "question", timestamp: null, model: "m", html: "<p>Choose.</p>", text: "❓ **Q1** - **Deploy**: Choose.\na) Canary\n➡️ a: Safe"}]}
+        const {wrapper} = await mountSession(vi.fn(async () => jsonResponse(200, view)))
+        expect(wrapper.get('textarea').attributes("disabled")).toBeDefined()
+        expect(wrapper.find('[aria-label="Answer questions"]').exists()).toBe(true)
+        expect(wrapper.text()).toContain("Agent busy")
+    })
+
     it.each(["reconnect", "context reload"])("dismisses delivered answers even after %s during the POST", async reset => {
         localStorage.clear()
         const dashboard = new Dashboard(() => ({start() {}, stop() {}, send() {}}))

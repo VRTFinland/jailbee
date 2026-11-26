@@ -1,8 +1,45 @@
 import {mount} from "@vue/test-utils"
-import {describe, expect, it} from "vitest"
+import {beforeEach, describe, expect, it} from "vitest"
+
+beforeEach(() => localStorage.setItem("jailbee.composerExpanded", "1"))
 import AgentComposer from "./AgentComposer.vue"
 
 describe("agent composer", () => {
+    it("collapses on mobile, persists a choice and preserves the draft", async () => {
+        localStorage.removeItem("jailbee.composerExpanded")
+        const oldWidth = window.innerWidth
+        Object.defineProperty(window, "innerWidth", {configurable: true, value: 390})
+        const w = mount(AgentComposer, {attachTo: document.body, props: {available: true, draft: "draft"}})
+        expect(w.find("textarea").exists()).toBe(false)
+        await w.get('[aria-label="Message agent"]').trigger("click")
+        expect(document.activeElement).toBe(w.get("textarea").element)
+        await w.get('[aria-label="Hide composer"]').trigger("click")
+        expect(w.find("textarea").exists()).toBe(false)
+        await w.get('[aria-label="Message agent"]').trigger("click")
+        expect((w.get("textarea").element as HTMLTextAreaElement).value).toBe("draft")
+        expect(localStorage.getItem("jailbee.composerExpanded")).toBe("1")
+        w.unmount()
+        Object.defineProperty(window, "innerWidth", {configurable: true, value: oldWidth})
+        localStorage.removeItem("jailbee.composerExpanded")
+    })
+    it("sends on Enter but not Shift+Enter or IME composition", async () => {
+        const w = mount(AgentComposer, {props: {available: true, draft: "hello"}})
+        const field = w.get("textarea")
+        await field.trigger("keydown", {key: "Enter", shiftKey: true})
+        await field.trigger("keydown", {key: "Enter", isComposing: true})
+        expect(w.emitted("send")).toBeUndefined()
+        await field.trigger("keydown", {key: "Enter"})
+        expect(w.emitted("send")?.[0]).toEqual(["hello"])
+    })
+    it("reserves one polite status row across changes", async () => {
+        const w = mount(AgentComposer, {props: {available: true}})
+        const row = w.get('[aria-live="polite"]')
+        expect(row.text()).toBe("")
+        await w.setProps({status: "Delivered"})
+        expect(row.text()).toBe("Delivered")
+        await w.setProps({error: "Failed", status: ""})
+        expect(row.text()).toBe("Failed")
+    })
     it("emits the intact message and exposes sending state", async () => {
         const w = mount(AgentComposer, {props: {available: true}})
         await w.get("textarea").setValue("first\nsecond")

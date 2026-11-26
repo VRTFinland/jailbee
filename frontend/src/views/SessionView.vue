@@ -30,8 +30,6 @@ import type {
     TranscriptView,
 } from "../protocol"
 import {settings} from "../settings"
-import {readPosition, writePosition} from "../readingPosition"
-import {readItem, writeItem} from "../storage"
 
 // The sticky header's bottom edge: below an app banner, not just its height.
 const readableTop = ref(0)
@@ -105,6 +103,7 @@ const chat = useAgentChat(
     }),
 )
 const {draft, sending, awaiting, error: sendError, status: sendStatus, send: sendMessage} = chat
+const chatDisabled = computed(() => agentId.value === null && transcript.value?.chat?.code === "permission_denied")
 const thinking = computed(() => settings.showThinking)
 const parentTitle = ref("Parent session")
 const sessionContainer = ref<string | null>(null)
@@ -179,6 +178,8 @@ async function sendAnswers(text: string) {
     if (id && await sendMessage(text) && sourceSession === answerSessionKey.value) answerSets.dismiss(id)
 }
 const panelEl = ref<InstanceType<typeof AnswerPanel> | null>(null)
+const panelHeightMode = ref<"bar" | "half" | "full">("bar")
+watch(answerSource, () => { panelHeightMode.value = "bar" })
 let highlighted: HTMLElement[] = []
 function clearQuestionHighlight() {
     highlighted.forEach(el => el.classList.remove("question-highlight"))
@@ -246,27 +247,10 @@ function measureVisibility() {
     answerAhead.value = rect.top >= readableBottom()
 }
 
-const positionStore = {getItem: readItem, setItem: writeItem}
-const positionKey = [prefix.value, agent.value, sessionId.value, ...(agentId.value === null ? [] : [agentId.value])]
-let positionTimer: ReturnType<typeof setTimeout> | undefined
 let positionReady = false
-
-function savePosition() {
-    if (!positionReady || !transcriptEl.value) return
-    measureVisibility()
-    const entries = Array.from(transcriptEl.value.querySelectorAll<HTMLElement>("[id^='entry-']"))
-    const first = entries[0]
-    const entry = entries.reverse().find(el => el.getBoundingClientRect().top <= readableTop.value + 1) ?? first
-    writePosition(positionStore, positionKey, {entryId: entry ? entry.id.slice(6) : null, atEnd: atTranscriptEnd.value})
-}
-function schedulePosition() {
-    if (positionTimer !== undefined) return
-    positionTimer = setTimeout(() => { positionTimer = undefined; savePosition() }, 250)
-}
 
 function onScroll() {
     measureVisibility()
-    if (positionReady) schedulePosition()
     if (!programmaticScroll) {
         if (atTranscriptEnd.value) following.value = true
         else if (window.scrollY < lastScrollY) following.value = false
@@ -319,6 +303,11 @@ watch(answerSet, () => {
         measureVisibility()
     })
 })
+watch(panelHeightMode, () => void nextTick(() => {
+    if (composerEl.value?.$el) layoutObserver?.observe(composerEl.value.$el as Element)
+    measureComposer()
+    pager.measure()
+}))
 watch(shown, () => void nextTick(measureVisibility))
 watch([eink, () => settings.pageControls], () => void nextTick(() => {
     const nav = document.querySelector(".page-nav")
@@ -332,7 +321,6 @@ watch(() => settings.showTitleBar, () => void nextTick(measureVisibility))
 let layoutObserver: ResizeObserver | null = null
 onMounted(() => {
     window.addEventListener("scroll", onScroll, {passive: true})
-    window.addEventListener("pagehide", savePosition)
     window.addEventListener("wheel", markScrollIntent, {passive: true})
     window.addEventListener("touchmove", markScrollIntent, {passive: true})
     window.addEventListener("pointerdown", markScrollIntent, {passive: true})
@@ -350,9 +338,6 @@ onMounted(() => {
     }
 })
 onBeforeUnmount(() => {
-    if (positionTimer !== undefined) clearTimeout(positionTimer)
-    savePosition()
-    window.removeEventListener("pagehide", savePosition)
     window.removeEventListener("scroll", onScroll)
     window.removeEventListener("wheel", markScrollIntent)
     window.removeEventListener("touchmove", markScrollIntent)
@@ -548,18 +533,12 @@ async function load() {
         pager.measure()
         measureVisibility()
         if (!positionReady) {
-            const remembered = readPosition(positionStore, positionKey)
             const hash = route.hash ? route.hash.slice(1) : null
-            const targetId = hash ?? remembered?.entryId ?? null
-            const target = targetId ? document.getElementById(hash ? targetId : entryDomId(targetId)) : null
-            if (hash) {
-                if (target) scrollProgrammatically(() => eink.value ? pager.goToElement(target) : target.scrollIntoView({block: "start"}))
-            } else if (remembered?.atEnd && autoFollow.value) {
+            const target = hash ? document.getElementById(hash) : null
+            if (target) {
+                scrollProgrammatically(() => eink.value ? pager.goToElement(target) : target.scrollIntoView({block: "start"}))
+            } else {
                 scrollToEnd()
-            } else if (remembered) {
-                if (target) scrollProgrammatically(() => eink.value ? pager.goToElement(target) : target.scrollIntoView({block: "start"}))
-                else if (remembered.entryId === null) scrollToEnd()
-                else window.scrollTo(0, 0)
             }
             positionReady = true
         }
@@ -588,7 +567,7 @@ onMounted(() => {
 watch(() => dashboard?.state.connected, (connected, previous) => {
     if (connected !== previous) chat.reset()
 })
-watch([prefix, agent, sessionId, agentId], () => { chat.reset({sessionChanged: true}); void load() })
+watch([prefix, agent, sessionId, agentId], () => { positionReady = false; chat.reset({sessionChanged: true}); void load() })
 // Changing Agent context re-reads the transcript and resubscribes with the new mode.
 watch(
     () => settings.agentContext,
@@ -602,7 +581,7 @@ watch(
 </script>
 
 <template>
-    <div :class="{'has-answer-panel': !!answerSet}" :style="{'--session-readable-top': `${readableTop}px`, '--composer-height': `${composerHeight}px`, '--composer-nav-height': `${navHeight}px`, '--answer-panel-bottom': `${panelBottom}px`, '--answer-panel-height': `${panelHeight}px`}">
+    <div :class="{'has-answer-panel': !!answerSet && !chatDisabled}" :style="{'--session-readable-top': `${readableTop}px`, '--composer-height': `${composerHeight}px`, '--composer-nav-height': `${navHeight}px`, '--answer-panel-bottom': `${panelBottom}px`, '--answer-panel-height': `${panelHeight}px`}">
         <TitleBar @readable-top="readableTop = $event" :title="title" :crumbs="crumbs" context="session" :session="transcript ? {agent: transcript.agent, models: transcript.models, id: transcript.session_id} : null" />
         <div class="page">
             <p v-if="dashboard && !dashboard.state.connected" class="notice ui-notice">Connecting…</p>
@@ -685,21 +664,18 @@ watch(
                         </TranscriptEntry>
                     </template>
                 </article>
-                <AnswerPanel v-if="answerSet && answerSource" :key="answerSource.id" ref="panelEl" class="answer-panel-layout"
+                <AnswerPanel v-if="!chatDisabled && answerSet && answerSource" :key="answerSource.id" ref="panelEl" class="answer-panel-layout"
                     :set="answerSet" :answers="answerSource.answers" :available="transcript.chat?.available ?? false" :busy="sending || awaiting"
                     :reason="transcript.chat?.message || 'Messaging is unavailable.'" :error="sendError" :status="sendStatus"
-                    @update:answers="answerSets.updateAnswers" @send="sendAnswers" @show="showQuestion">
+                    @update:answers="answerSets.updateAnswers" @send="sendAnswers" @show="showQuestion" @height="panelHeightMode = $event" @discard="answerSets.dismiss(answerSource.id)">
                     <template #sets>
                         <p v-if="newerAnswerMessage" role="status" class="ui-notice">A newer message arrived. These answers still belong to their original questions.</p>
                         <Select v-if="answerSetOptions.length > 1" label="Question set" native :model-value="answerSource.id" :options="answerSetOptions" :disabled="sending || awaiting" @update:model-value="selectAnswerSet" />
                     </template>
-                    <template #draft-actions>
-                        <Button variant="text" :disabled="sending || awaiting" @click="answerSets.dismiss(answerSource.id)">Discard answers</Button>
-                    </template>
                 </AnswerPanel>
-                <AgentComposer v-if="agentId === null" v-model:draft="draft" ref="composerEl" class="agent-composer"
+                <AgentComposer v-if="agentId === null && !chatDisabled" v-model:draft="draft" ref="composerEl" class="agent-composer"
                     :class="{'beside-nav': eink && settings.pageControls !== 'bar'}"
-                    :available="transcript.chat?.available ?? false"
+                    :available="transcript.chat?.available ?? false" :panel-open="!!answerSet && panelHeightMode !== 'bar'"
                     :reason="transcript.chat?.message || 'Messaging is unavailable.'"
                     :sending="sending" :awaiting="awaiting" :error="sendError" :status="sendStatus" @send="sendMessage" />
                 <Button

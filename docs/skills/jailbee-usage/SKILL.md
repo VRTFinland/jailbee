@@ -1032,7 +1032,10 @@ composition does not send. Opting out hides send controls. The composer starts
 collapsed on mobile and expanded on desktop; explicit visibility choices are
 remembered on the device. Hiding preserves its draft and send status remains
 visible. The composer hides while the answer panel is open; its **Hide** control
-preserves answers, distinct from discarding them.
+preserves answers, distinct from discarding them. Its compact title row contains
+the question, step pills and controls; answer status shares the composer row.
+The reader opens at the bottom (last page on e-ink), unless a message anchor is
+specified, and preserves the usual follow behaviour afterwards.
 For disabled reasons, delivery status and auditing,
 see [web messaging](references/commands.md#web-dashboard).
 

@@ -469,12 +469,19 @@ a bounded wait and resets on reconnect/reload, without cancelling in-flight send
 The latest assistant reply's numbered questions open a non-modal answer panel:
 mobile bottom sheet, desktop side column, with no animation on e-ink. The caret
 points in the direction of movement; **Hide** preserves answers and is distinct
-from discarding a draft. It offers recommendations, per-answer notes and a summary-only Send with the exact outgoing
+from discarding a draft. The compact title row holds the question, step pills,
+**Show in conversation** and **Hide**; truncated question text can be shown in
+full on demand. The footer puts **Discard answer** left and **Next** or **Send**
+right. Answer send status and warnings share the composer's status row. It offers
+recommendations, per-answer notes and a summary-only Send with the exact outgoing
 message. Edited answers persist in this browser per session and source message;
 a newer reply keeps the edited draft with a notice and offers its own questions
 as a new set. Untouched sets follow the newest questions. Send or discard the
 older draft explicitly. Storage history is bounded; blocked storage degrades to
 an in-memory draft. Older questions remain answerable by number in free text.
+The reader opens at the transcript bottom (the last e-ink page) on navigation or
+reload, unless a message anchor is specified. Thereafter it follows new messages
+at the bottom without pulling the reader away when scrolled up.
 
 Session lists are titled by the first typed prompt, ignoring agent wrappers and
 injected context (including task notifications, `!`-mode input/output and prompt

@@ -195,8 +195,12 @@ Previous/Next page controls in the e-ink profile rather than swipe scrolling.
 
 The panel shows one question at a time. Recommended choices are preselected and
 badged; choose another full-width option or add a note. A question without options
-has a text field. Use Back, Next or the step dots to move between questions;
-**Show in conversation** finds and highlights the question in the transcript.
+has a text field. The compact title row contains the question number, title, body,
+step dots and controls. Truncated text can be shown in full on demand. Use Back,
+Next or the step dots to move between questions; the **Show in conversation**
+icon finds and highlights the question in the transcript. The footer places
+**Discard answer** on the left and **Next** or **Send** on the right. Answer
+send status and warnings use the same reserved row as the composer.
 The last step lists every answer, marking nonempty answers to questions with a
 recommendation as recommendation or changed. Select a summary
 row to edit it. Only this summary offers Send, beside a preview of the exact
@@ -612,6 +616,11 @@ you tap it, revealing them and moving to the first new answer or the end. **Foll
 the transcript's end, using the pager's last content page rather than continuous
 scrolling. It is off by default and remembered on this device. The front page refreshes every
 minute, or immediately when you tap **Refresh**.
+
+Opening, navigating to or reloading a session transcript starts at the bottom;
+e-ink starts on the last page. An explicit message anchor takes precedence.
+After opening, the usual follow behaviour applies: new messages stay in view at
+the end without pulling the reader down when they have scrolled up.
 
 Session transcripts keep their title in a compact sticky breadcrumb bar while you
 read. The title tooltip and the menu's Session section show the agent, all models
