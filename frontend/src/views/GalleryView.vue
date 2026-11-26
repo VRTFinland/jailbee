@@ -197,6 +197,7 @@ function typeStyle(token: string): Record<string, string> {
                                 </template>
                             </ListRow>
                             <ListRow title="dev-ork" secondary="orchestrator · 3 min"
+                                link-label="dev-ork running working orchestrator 3 min"
                                 :to="{name: 'gallery', query: {row: 'dev-ork'}}">
                                 <p class="row-line">Orchestrator · 2 children</p>
                                 <dl class="row-cells">

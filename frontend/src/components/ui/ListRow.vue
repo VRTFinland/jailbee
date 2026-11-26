@@ -17,6 +17,8 @@ defineProps<{
     secondary?: string
     selected?: boolean
     to?: RouteLocationRaw
+    /** Preserve supporting context in the route's accessible name. */
+    linkLabel?: string
     /** Wrap long titles and trailing chips before the full-width body. */
     wrap?: boolean
     /** Supporting ancestor retained for orientation, not a primary result. */
@@ -29,7 +31,7 @@ defineProps<{
         :aria-current="selected && to === undefined ? 'true' : undefined">
         <span class="list-row-title">
             <router-link v-if="to !== undefined" :to="to" class="list-row-link"
-                :aria-current="selected ? 'true' : undefined"><slot name="title">{{ title }}</slot></router-link>
+                :aria-label="linkLabel" :aria-current="selected ? 'true' : undefined"><slot name="title">{{ title }}</slot></router-link>
             <slot v-else name="title">{{ title }}</slot>
         </span>
         <span v-if="secondary || $slots.secondary" class="list-row-secondary"><slot name="secondary">{{

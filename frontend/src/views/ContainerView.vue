@@ -11,7 +11,7 @@ import StatusChip from "../components/ui/StatusChip.vue"
 import {sessionStatus} from "../components/ui/status"
 import {useDashboard} from "../dashboard"
 import {usePager} from "../composables/usePager"
-import type {ContainerSessionHistory, ContainerSessionList} from "../protocol"
+import type {ContainerSessionHistory, ContainerSessionList, ContainerSession} from "../protocol"
 
 const readableTop = ref(0)
 const pager = usePager(() => readableTop.value)
@@ -55,6 +55,12 @@ const dateFormat = new Intl.DateTimeFormat(undefined, {dateStyle: "medium", time
 
 function when(iso: string): string {
     return dateFormat.format(new Date(iso))
+}
+
+function sessionLinkLabel(session: ContainerSession): string {
+    return [session.title || "Untitled session", sessionStatus(session)?.label, session.agent,
+        session.last_activity ? when(session.last_activity) : null, session.models.join(", ")]
+        .filter(Boolean).join(" ")
 }
 
 watch(name, async (selected, _previous, onCleanup) => {
@@ -137,10 +143,8 @@ watch([name, historyPage, historyQuery], async ([selected, page, query], previou
             <h2>Children ({{ children.length }})</h2>
             <p v-if="!children.length" class="muted">No children.</p>
             <ul v-else>
-                <ListRow v-for="child in children" :key="child.name" wrap
-                    :title="child.cells[0] || child.name"
-                    :to="{name: 'container', params: {name: child.name}}">
-                    · {{ child.child?.state }}<template v-if="child.child?.runner"> · {{ child.child.runner }}</template>
+                <ListRow v-for="child in children" :key="child.name" wrap>
+                    <template #title><router-link :to="{name: 'container', params: {name: child.name}}">{{ child.cells[0] || child.name }}</router-link> · {{ child.child?.state }}<template v-if="child.child?.runner"> · {{ child.child.runner }}</template></template>
                 </ListRow>
             </ul>
         </section>
@@ -153,7 +157,7 @@ watch([name, historyPage, historyQuery], async ([selected, page, query], previou
         <p v-if="live !== null && history?.total === 0 && historyQuery" class="muted" role="status">No matches.</p>
         <ul v-if="live !== null && sessions.length" class="sessions">
             <ListRow v-for="s in sessions" :key="`${s.agent}/${s.session_id}`"
-                class="session" :data-live="s.live" wrap
+                class="session" :data-live="s.live" :link-label="sessionLinkLabel(s)" wrap
                 :to="{name: 'session', params: {prefix: live.repo, agent: s.agent, sessionId: s.session_id}}">
                 <template #title><span class="title">{{ s.title || "Untitled session" }}</span></template>
                 <template #trailing v-if="sessionStatus(s)">

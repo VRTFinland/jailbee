@@ -69,6 +69,7 @@ def test_container_rows_search_and_paging_match_the_gallery(
     expect(row).to_be_visible()
     chip = row.get_by_text("live", exact=True)
     expect(row.locator("svg path")).to_have_count(1)
+    expect(row.get_by_role("link")).to_have_accessible_name(re.compile(r"Fix the login bug in the auth module live claude .+claude-opus-5-5"))
     search = page.get_by_role("searchbox", name="Search earlier sessions")
     expect(search).to_be_visible()
     previous = page.get_by_role("button", name="Previous earlier sessions")

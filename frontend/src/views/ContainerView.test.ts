@@ -70,6 +70,8 @@ describe("ContainerView", () => {
         const {wrapper} = await mountContainer(serve())
         const rows = wrapper.findAll("li.session")
         expect(rows[0].text()).toContain("live")
+        expect(rows[0].get("a").attributes("aria-label")).toContain("Fix the login bug live claude")
+        expect(rows[0].get("a").attributes("aria-label")).toContain("claude-opus-4")
         expect(rows[0].find("svg path").exists()).toBe(true)
         expect(rows[1].text()).not.toContain("live")
         expect(wrapper.get('input[type="search"]').attributes("aria-labelledby")).toBeDefined()
