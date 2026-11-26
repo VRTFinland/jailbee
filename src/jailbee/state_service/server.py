@@ -52,7 +52,7 @@ from jailbee.state_service.protocol import (
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
 
-    from jailbee.dashboard.runner import Spawner
+    from jailbee.dashboard.runner import ActionCancellation, Spawner
     from jailbee.incus import Incus
     from jailbee.state_service.gatherer import Gatherer
     from jailbee.state_service.service_probe import ServiceProbe
@@ -117,6 +117,7 @@ class StateServer:
 
             self._actions = {entry.entry_id: entry for entry in load(engine)}
         self._action_tasks: set[asyncio.Task[None]] = set()
+        self._action_cancellations: dict[int, ActionCancellation] = {}
         self._persist_pending: dict[int, ActionEntry | None] = {}
         self._persist_task: asyncio.Task[None] | None = None
         self._persistence_closed = False
@@ -145,6 +146,12 @@ class StateServer:
             await self._schedule()
         finally:
             server.close()
+            for cancellation in self._action_cancellations.values():
+                cancellation.cancel()
+            for entry_id in list(self._questions):
+                self._resolve_question(entry_id, None, None)
+            if self._action_tasks:
+                await asyncio.wait(self._action_tasks, timeout=5)
             for client in list(self._clients):
                 self._drop(client)
             # `wait_closed` blocks on open connections (3.12+), so close them all.
@@ -163,7 +170,12 @@ class StateServer:
 
     async def _schedule(self) -> None:
         while not self._stopping:
-            if not self._clients and self._clock() - self._idle_since >= self._idle_timeout:
+            if (
+                not self._clients
+                and not self._action_tasks
+                and not self._questions
+                and self._clock() - self._idle_since >= self._idle_timeout
+            ):
                 log.info("no clients for %.0fs; exiting", self._idle_timeout)
                 return
             refresh, self._refresh = self._refresh, False
@@ -281,7 +293,7 @@ class StateServer:
                 writer.close()
 
     def _start_action(self, client: _Client, request: RunAction) -> None:
-        from jailbee.dashboard.runner import popen_spawn, run_action
+        from jailbee.dashboard.runner import ActionCancellation, popen_spawn, run_action
 
         if not client.dashboard_id or request.origin != client.dashboard_id:
             self._send_action(
@@ -315,9 +327,12 @@ class StateServer:
         loop = asyncio.get_running_loop()
 
         def send_output(chunk: str) -> None:
-            loop.call_soon_threadsafe(self._action_output, request.entry_id, chunk)
+            with contextlib.suppress(RuntimeError):
+                loop.call_soon_threadsafe(self._action_output, request.entry_id, chunk)
 
         disconnected = threading.Event()
+        cancellation = ActionCancellation()
+        self._action_cancellations[request.entry_id] = cancellation
 
         def ask(prompt: Prompt) -> Any:
             future = asyncio.run_coroutine_threadsafe(
@@ -341,6 +356,7 @@ class StateServer:
                     spawn=self._action_spawn or popen_spawn,
                     on_output=send_output,
                     address_flags=request.address_flags,
+                    cancellation=cancellation,
                     environment=request.environment,
                 )
                 finish = ActionFinish(
@@ -353,7 +369,8 @@ class StateServer:
                 )
             except Exception as exc:
                 finish = ActionFinish(request.entry_id, error=str(exc))
-            loop.call_soon_threadsafe(self._action_finish, finish)
+            with contextlib.suppress(RuntimeError):
+                loop.call_soon_threadsafe(self._action_finish, finish, cancellation.cancelled)
 
         async def wait_for_action() -> None:
             done = loop.create_future()
@@ -362,14 +379,23 @@ class StateServer:
                 try:
                     run()
                 finally:
-                    loop.call_soon_threadsafe(done.set_result, None)
+                    with contextlib.suppress(RuntimeError):
+                        loop.call_soon_threadsafe(done.set_result, None)
 
             threading.Thread(target=work, name="jailbee-action", daemon=True).start()
             await done
 
         task = asyncio.create_task(wait_for_action())
         self._action_tasks.add(task)
-        task.add_done_callback(self._action_tasks.discard)
+
+        def action_done(done: asyncio.Task[None]) -> None:
+            self._action_tasks.discard(done)
+            self._action_cancellations.pop(request.entry_id, None)
+            if not self._clients and not self._action_tasks and not self._questions:
+                self._idle_since = self._clock()
+            self._wake.set()
+
+        task.add_done_callback(action_done)
 
     async def _ask_question(
         self, entry_id: int, prompt: Prompt, disconnected: threading.Event
@@ -464,15 +490,19 @@ class StateServer:
         self._broadcast_action(ActionOutput(entry_id, chunk))
         self._action_changed(entry)
 
-    def _action_finish(self, finish: ActionFinish) -> None:
+    def _action_finish(self, finish: ActionFinish, interrupted: bool = False) -> None:
         entry = replace(
             self._actions[finish.entry_id],
             finished_at=datetime.now(UTC),
             finished=True,
-            state="done"
-            if finish.status == 0
-            and not (finish.error or finish.refused or finish.cancelled or finish.declined)
-            else "failed",
+            state=(
+                "interrupted"
+                if interrupted
+                else "done"
+                if finish.status == 0
+                and not (finish.error or finish.refused or finish.cancelled or finish.declined)
+                else "failed"
+            ),
             status=finish.status,
             refused=finish.refused,
             error=finish.error,
