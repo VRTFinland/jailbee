@@ -51,7 +51,9 @@ def script(tmp_path: Path) -> Path:
     text = importlib.resources.files("jailbee.provision").joinpath("install.sh").read_text()
     assert _MARKER in text
     start = text.index(_MARKER) + len(_MARKER)
-    body = text[start : text.index("\nEOF\n", start)]
+    body = text[start : text.index("\nEOF\n", start)].replace(
+        "/etc/claude-code/managed-settings.d/50-jailbee.json", str(tmp_path / "settings.json")
+    )
     path = tmp_path / "claude-jb"
     path.write_text(body + "\n")
     path.chmod(0o755)
@@ -528,3 +530,34 @@ def test_help_works_without_a_proxy_config(script, env, tmp_path):
 def test_help_after_double_dash_is_not_ours(script, env):
     r = _run(script, env, "--", "--help")
     assert "--context" not in r.stdout
+
+
+def test_settings_added_to_proxy_launch(script, argv_env, tmp_path):
+    settings = tmp_path / "settings.json"
+    settings.touch()
+    script.write_text(script.read_text().replace(
+        "/etc/claude-code/managed-settings.d/50-jailbee.json", str(settings)))
+    assert _argv(_run(script, argv_env, "-p", "hi")) == [
+        "--settings", str(settings), "-p", "hi"
+    ]
+
+
+@pytest.mark.parametrize("args, expected", [
+    (["--settings", "mine"], ["--settings", "mine"]),
+    (["--settings=mine"], ["--settings=mine"]),
+    (["--", "--settings=prompt"], ["--settings", "FILE", "--", "--settings=prompt"]),
+])
+def test_proxy_respects_settings_options(script, argv_env, tmp_path, args, expected):
+    settings = tmp_path / "settings.json"
+    settings.touch()
+    assert _argv(_run(script, argv_env, *args)) == [
+        str(settings) if x == "FILE" else x for x in expected
+    ]
+
+
+def test_proxy_help_adds_settings(script, argv_env, tmp_path):
+    settings = tmp_path / "settings.json"
+    settings.touch()
+    result = _run(script, argv_env, "--help")
+    assert result.returncode == 0
+    assert json.loads(result.stdout.splitlines()[-1]) == ["--settings", str(settings), "--help"]

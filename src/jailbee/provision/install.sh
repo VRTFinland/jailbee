@@ -305,6 +305,26 @@ if [ ! -x "$HOME/.local/bin/claude" ]; then
     done
     unset _jb_claude_store _jb_claude_v
 fi
+case $- in
+    *i*)
+        if [ -r "$HOME/.claude/remote-settings.json" ] &&
+            jq -e 'type == "object" and length > 0' "$HOME/.claude/remote-settings.json" >/dev/null 2>&1; then
+            printf '%s\n' 'JailBee: remote managed settings are active; JailBee passes settings on the command line, not for IDE extensions or managed-only settings; see jb doctor.' >&2
+        fi ;;
+esac
+claude() (
+    for _jb_arg in "$@"; do
+        case "$_jb_arg" in
+            --) break ;;
+            --settings|--settings=*) command claude "$@"; return $? ;;
+        esac
+    done
+    if [ -f /etc/claude-code/managed-settings.d/50-jailbee.json ]; then
+        command claude --settings /etc/claude-code/managed-settings.d/50-jailbee.json "$@"
+    else
+        command claude "$@"
+    fi
+)
 EOF
 chmod 0644 /etc/profile.d/jailbee-claude.sh
 
@@ -354,6 +374,19 @@ while [ $# -gt 0 ]; do
     esac
 done
 
+add_settings() {
+    local arg
+    for arg in "${args[@]}"; do
+        case "$arg" in
+            --) break ;;
+            --settings|--settings=*) return ;;
+        esac
+    done
+    if [ -f /etc/claude-code/managed-settings.d/50-jailbee.json ]; then
+        args=(--settings /etc/claude-code/managed-settings.d/50-jailbee.json "${args[@]}")
+    fi
+}
+
 # claude-jb's own options first, then Claude's help. Needs no proxy, key or
 # profile: the profile list is a courtesy, shown only when the config reads.
 if [ "$want_help" -eq 1 ]; then
@@ -377,6 +410,7 @@ HELP
             | "  \(.key)\(if .key == $c.default_profile then " (default)" else "" end): window \(.value.context_window), up to \(.value.max_context_window // .value.context_window)"' "$config"
     fi
     printf '\n--- claude --help ---\n'
+    add_settings
     exec claude "${args[@]}"
 fi
 
@@ -492,6 +526,7 @@ fi
         fi
     fi
 ) || true
+add_settings
 exec claude "${args[@]}"
 EOF
 chmod 0755 /usr/local/bin/claude-jb
