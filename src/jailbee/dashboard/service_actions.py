@@ -80,7 +80,9 @@ def run_actions(
         )
         prefix = group.prefix if group is not None else ""
         queued = queue.get(entry_id) if queue is not None else None
-        target = queued.target if queued is not None else _target(item.argv, group) if group else root
+        target = (
+            queued.target if queued is not None else _target(item.argv, group) if group else root
+        )
         request = RunAction(
             entry_id=entry_id,
             argv=list(item.argv),
@@ -124,7 +126,7 @@ def run_actions(
                 continue
             text = snapshot.output
             if text.startswith(last_output):
-                chunk = text[len(last_output):]
+                chunk = text[len(last_output) :]
             else:
                 chunk = text
             if chunk:
