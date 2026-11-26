@@ -296,7 +296,9 @@ def test_global_lifecycle_runs_without_a_repo_and_uses_prompt_channel(mocker, in
             await pilot.pause()
             await _apply(pilot, app, Pick(index))
             await _until(
-                pilot, lambda: isinstance(app.screen, pm.ConfirmModal), "immediate host confirmation"
+                pilot,
+                lambda: isinstance(app.screen, pm.ConfirmModal),
+                "immediate host confirmation",
             )
             (entry,) = app.session.queue
             assert entry.pending_question is not None
