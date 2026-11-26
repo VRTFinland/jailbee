@@ -449,6 +449,11 @@ before editing `## Unreleased`.
 
 ### Changed
 
+- PR AI text and branch-name generation are opt-in: `pr.ai_description` and
+  `pr.ai_branch` now default to `false`. `--ai` enables both for one run;
+  explicitly enabled config retains the interactive offer (default No).
+  Explicit `--title` or `--body`, or a pending outbox description for the PR,
+  skips the agent run and its question, including in submodule PR flows.
 - Successful broker destruction of a child marks read only the unread,
   broker-generated `idle` notices snapshotted for that child before destruction.
   Other messages, children and orchestrators are unaffected

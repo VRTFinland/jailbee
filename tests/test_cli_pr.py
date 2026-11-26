@@ -1515,7 +1515,7 @@ def test_create_pr_both_explicit_skips_generation(mocker, tmp_path):
     assert kwargs["body"] == "B"
 
 
-def test_create_pr_only_title_explicit_generates_body(mocker, tmp_path):
+def test_create_pr_only_title_explicit_skips_generation(mocker, tmp_path):
     from jailbee.pr_ai import PrText
 
     cfg_mock, _ = _setup(mocker, tmp_path)
@@ -1533,13 +1533,12 @@ def test_create_pr_only_title_explicit_generates_body(mocker, tmp_path):
     result = CliRunner().invoke(app, ["pr", "push", "feat-foo", "--ai", "--title", "T"])
 
     assert result.exit_code == 0, result.output
-    gen.assert_called_once()
-    assert gen.call_args.kwargs["fixed_title"] == "T"
-    assert gen.call_args.kwargs["fixed_body"] is None
-    assert create.call_args.kwargs["body"] == "AI body"
+    gen.assert_not_called()
+    assert create.call_args.kwargs["title"] == "T"
+    assert create.call_args.kwargs["body"] != "AI body"
 
 
-def test_create_pr_only_body_explicit_generates_title(mocker, tmp_path):
+def test_create_pr_only_body_explicit_skips_generation(mocker, tmp_path):
     from jailbee.pr_ai import PrText
 
     cfg_mock, _ = _setup(mocker, tmp_path)
@@ -1557,10 +1556,8 @@ def test_create_pr_only_body_explicit_generates_title(mocker, tmp_path):
     result = CliRunner().invoke(app, ["pr", "push", "feat-foo", "--ai", "--body", "B"])
 
     assert result.exit_code == 0, result.output
-    gen.assert_called_once()
-    assert gen.call_args.kwargs["fixed_body"] == "B"
-    assert gen.call_args.kwargs["fixed_title"] is None
-    assert create.call_args.kwargs["title"] == "AI title"
+    gen.assert_not_called()
+    assert create.call_args.kwargs["title"] != "AI title"
     assert create.call_args.kwargs["body"] == "B"
 
 
@@ -2047,10 +2044,12 @@ def test_branch_ai_only_desc_off(mocker, tmp_path):
     )
     mocker.patch("jailbee.git.commit_subject", return_value="feat: from commit")
     mocker.patch("jailbee.git.local_branch_exists", return_value=False)
-    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     create = mocker.patch("jailbee.pr.create_pr", return_value=_pr_created())
 
-    result = CliRunner().invoke(app, ["pr", "push", "feat-foo", "--ai"])
+    mocker.patch("jailbee.prompting._confirm", return_value=True)
+    mocker.patch("jailbee.pr_flow.confirm_pr_branch_name", side_effect=lambda p, s: p)
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo"])
 
     assert result.exit_code == 0, result.output
     gen.assert_called_once()  # single call yields the branch name
@@ -2083,7 +2082,10 @@ def test_desc_ai_only_branch_off(mocker, tmp_path):
     mocker.patch("jailbee.git.local_branch_exists", return_value=False)
     create = mocker.patch("jailbee.pr.create_pr", return_value=_pr_created())
 
-    result = CliRunner().invoke(app, ["pr", "push", "feat-foo", "--ai"])
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting._confirm", return_value=True)
+    mocker.patch("jailbee.pr_flow.confirm_pr_branch_name", side_effect=lambda p, s: p)
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo"])
 
     assert result.exit_code == 0, result.output
     gen.assert_called_once()

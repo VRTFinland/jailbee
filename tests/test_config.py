@@ -3063,15 +3063,15 @@ def test_boot_config_rejects_unknown_keys():
         BootConfig.model_validate({"background": True, "restart": True})
 
 
-def test_pr_ai_flags_default_true_and_round_trip():
+def test_pr_ai_flags_default_false_and_round_trip():
     from jailbee.config import PrConfig
 
-    assert PrConfig().ai_description is True
-    assert PrConfig().ai_branch is True
-    assert PrConfig(ai_description=False).ai_description is False
-    cfg = PrConfig(ai_branch=False)
-    assert cfg.ai_branch is False
-    assert cfg.model_dump()["ai_branch"] is False
+    assert PrConfig().ai_description is False
+    assert PrConfig().ai_branch is False
+    assert PrConfig(ai_description=True).ai_description is True
+    cfg = PrConfig(ai_branch=True)
+    assert cfg.ai_branch is True
+    assert cfg.model_dump()["ai_branch"] is True
 
 
 # ---------- host_devices (declarative host-device passthrough)

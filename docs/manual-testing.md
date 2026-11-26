@@ -1678,7 +1678,7 @@ gh pr view <N> --json isDraft        # true
 jailbee new feat/aismoke
 jailbee shell feat-aismoke
 cd ~/SampleApp && echo ai > ai.txt && git add . && git commit -m "wip" && exit
-jailbee pr push feat-aismoke
+jailbee pr push feat-aismoke --ai
 # expect: spinner "Generating PR title/description with Claude in 'feat-aismoke'…"
 #         then a Claude-written title/body on the PR (not the placeholder).
 gh pr view <N>                      # title/body reflect the diff, not "wip"
@@ -1695,7 +1695,8 @@ jailbee shell feat-noaismoke
 cd ~/SampleApp && echo x > x.txt && git add . && git commit -m "wip no-ai" && exit
 jailbee pr push feat-noaismoke --no-ai  # uses commit subject + placeholder
 jailbee destroy feat-noaismoke --force
-# Opt out permanently: set pr.ai_description: false in config.
+# AI is off by default: keep pr.ai_description and pr.ai_branch false.
+# Explicit true opts in to an interactive offer (default No).
 
 # Another agent writes the text: enable codex (or any agent with a `headless`
 # command), pin it in global.yaml, and watch which agent the spinner names.

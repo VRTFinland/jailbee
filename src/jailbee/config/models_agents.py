@@ -789,19 +789,21 @@ class PrConfig(BaseModel):
         ),
     )
     ai_description: bool = Field(
-        default=True,
+        default=False,
         description=(
-            "When true (default), `jailbee pr` asks the in-container agent to generate "
-            "the PR title and body from the branch's commits and diff, falling back to a "
-            "placeholder on failure."
+            "When true, `jailbee pr` offers to generate the PR title and body with the "
+            "in-container agent (confirmation defaults to No), falling back to a "
+            "placeholder on failure. Defaults to false; `--ai` enables generation for "
+            "one run. Explicit title/body or a staged description skip generation."
         ),
     )
     ai_branch: bool = Field(
-        default=True,
+        default=False,
         description=(
-            "When true (default), `jailbee pr` asks the in-container agent to propose a "
-            "convention-following PR head branch name when opening a new PR. Has no "
-            "effect when `ai_description` is false."
+            "When true, `jailbee pr` offers an agent-proposed PR head branch name when "
+            "opening a new PR (confirmation defaults to No). Independent of "
+            "`ai_description`. Defaults to false; `--ai` enables it for one run. "
+            "Explicit title/body or a staged description skip the agent run."
         ),
     )
     prompt: str | None = Field(
