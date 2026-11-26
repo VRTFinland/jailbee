@@ -631,7 +631,8 @@ class Incus:
         elif timeout is not None:
             args += ["--timeout", str(timeout)]
         self._run_retrying_on_busy(
-            args, budget=min(timeout, 120) if timeout is not None and not force else 120,
+            args,
+            budget=min(timeout, 120) if timeout is not None and not force else 120,
             stopped_ok=True,
         )
 

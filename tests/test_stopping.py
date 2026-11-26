@@ -75,10 +75,16 @@ def test_stuck_shutdown_without_fallback_raises_an_actionable_error(mocker):
     assert mocker.call("foo", force=True) not in incus.stop.call_args_list
 
 
-@pytest.mark.parametrize("failure", [
-    IncusError('Instance is busy running a "stop" operation'),
-    IncusError('Instance is still busy after waiting up to 120s: Instance is busy running a "stop" operation'),
-])
+@pytest.mark.parametrize(
+    "failure",
+    [
+        IncusError('Instance is busy running a "stop" operation'),
+        IncusError(
+            "Instance is still busy after waiting up to 120s: "
+            'Instance is busy running a "stop" operation'
+        ),
+    ],
+)
 def test_busy_shutdown_is_diagnosed_and_names_the_force_escape_hatch(mocker, failure):
     incus = mocker.MagicMock()
     incus.stop.side_effect = failure

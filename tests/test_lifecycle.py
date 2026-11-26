@@ -6083,7 +6083,9 @@ def test_boot_container_stops_then_detaches_then_starts_then_attaches(tmp_path, 
 
 
 @pytest.mark.parametrize("restart", [False, True])
-def test_boot_container_waits_for_a_stopping_container_before_device_changes(tmp_path, mocker, restart):
+def test_boot_container_waits_for_a_stopping_container_before_device_changes(
+    tmp_path, mocker, restart
+):
     cfg = _cfg_for_new(tmp_path)
     incus = MagicMock()
     incus.list_containers.return_value = [{"name": "feat-x", "status": "Stopping"}]

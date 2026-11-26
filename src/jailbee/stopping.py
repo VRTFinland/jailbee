@@ -147,7 +147,11 @@ def refuse_while_stopping(cfg: Config, name: str) -> None:
     from jailbee.lifecycle import lookup_background_job, short_name
 
     row = lookup_background_job(cfg, name)
-    if row is not None and row.op_kind == background.JOB_STOP and not background.clearable(row.phase, row.pid):
+    if (
+        row is not None
+        and row.op_kind == background.JOB_STOP
+        and not background.clearable(row.phase, row.pid)
+    ):
         raise ValueError(
             f"Container '{short_name(cfg, name)}' stop operation is still running. "
             "Wait for it to finish before restarting."
