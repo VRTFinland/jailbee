@@ -100,7 +100,7 @@ permission settings. Never change shared user settings to work around a denial.
 
 The web transcript reader offers these questions as a non-modal answer panel.
 Recommendations are preselected; its final summary sends one `Q12: a` line per
-question through the same tmux boundary as `jailbee agent say`. Unsent answers
+question through the host-side `agent say` command's tmux boundary. Unsent answers
 stay with their source message in this browser, including after a newer reply.
 Older questions can always be answered by number in the free-text composer.
 
