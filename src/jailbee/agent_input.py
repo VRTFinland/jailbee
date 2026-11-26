@@ -118,9 +118,7 @@ def _resolve(
         ):
             return Outcome("no_pane", "Agent is not in the foreground"), None, False
         try:
-            panes = incus.exec(
-                container, runuser("tmux list-panes -a -F '#{pane_id} #{pane_pid}'")
-            )
+            panes = incus.exec(container, runuser("tmux list-panes -a -F '#{pane_id} #{pane_pid}'"))
         except IncusError:
             return Outcome("no_pane", "No pane"), None, False
         ancestors = set()
@@ -131,11 +129,7 @@ def _resolve(
         found = []
         for line in panes.splitlines():
             parts = line.split()
-            if (
-                len(parts) == 2
-                and re.fullmatch(r"%[0-9]+", parts[0])
-                and parts[1].isdigit()
-            ):
+            if len(parts) == 2 and re.fullmatch(r"%[0-9]+", parts[0]) and parts[1].isdigit():
                 pane_process = tree.get(int(parts[1]))
                 if int(parts[1]) in ancestors and pane_process and pane_process.tty == process.tty:
                     found.append(parts[0])

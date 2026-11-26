@@ -212,7 +212,10 @@ def test_live_append_and_latest_answer_jump(
     open_session(page)
     # The reader opens at the end; explicitly scroll up to exercise held updates.
     page.mouse.wheel(0, -1500)
-    page.wait_for_function("() => document.querySelector('.transcript').getBoundingClientRect().bottom > innerHeight + 500")
+    page.wait_for_function(
+        "() => document.querySelector('.transcript').getBoundingClientRect().bottom "
+        "> innerHeight + 500"
+    )
     append_entry(server, path, "An initial live reply.")
     expect(page.get_by_text("An initial live reply.", exact=True)).to_have_count(1)
     append_entry(server, path, "The newest live reply.")

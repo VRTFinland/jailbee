@@ -33,14 +33,16 @@ def test_opens_and_reloads_at_end_even_after_reading_earlier_content(
             localStorage.setItem('jailbee.displayProfile', profile);
             localStorage.setItem('jailbee.followNewMessages', '0');
             localStorage.setItem('jailbee.einkFollow', '0');
-        }""", profile,
+        }""",
+        profile,
     )
     page.reload()
     expect(page.get_by_role("heading", name=TITLE, exact=True)).to_be_visible()
     assert_at_transcript_end(page)
     if profile == "eink":
         page.wait_for_function("""() => {
-            const [current, total] = document.querySelector('.page-indicator').textContent.split('/').map(Number);
+            const text = document.querySelector('.page-indicator').textContent;
+            const [current, total] = text.split('/').map(Number);
             return current > 1 && current === total;
         }""")
     page.evaluate("window.scrollTo(0, 500)")
@@ -57,17 +59,20 @@ def test_explicit_message_anchor_wins_over_initial_end(
 ) -> None:
     open_transcript(page, make_server, tmp_path)
     page.evaluate("profile => localStorage.setItem('jailbee.displayProfile', profile)", profile)
-    target = page.locator('.entry.assistant').nth(8)
+    target = page.locator(".entry.assistant").nth(8)
     anchor = target.get_attribute("id")
     assert anchor is not None
     page.goto(page.url + "#" + anchor)
     page.reload()
     expect(page.get_by_role("heading", name=TITLE, exact=True)).to_be_visible()
-    page.wait_for_function("""id => {
+    page.wait_for_function(
+        """id => {
         const entry = document.getElementById(id);
         const top = document.querySelector('.title-bar').getBoundingClientRect().bottom;
         return entry && Math.abs(entry.getBoundingClientRect().top - top) <= 2;
-    }""", arg=anchor)
+    }""",
+        arg=anchor,
+    )
 
 
 def test_end_follows_but_reading_earlier_content_does_not_jump(
@@ -82,7 +87,10 @@ def test_end_follows_but_reading_earlier_content_does_not_jump(
     assert_at_transcript_end(page)
     page.mouse.move(400, 300)
     page.mouse.wheel(0, -1500)
-    page.wait_for_function("() => document.querySelector('.transcript').getBoundingClientRect().bottom > innerHeight + 500")
+    page.wait_for_function(
+        "() => document.querySelector('.transcript').getBoundingClientRect().bottom "
+        "> innerHeight + 500"
+    )
     wait_for_scroll_settled(page)
     position = page.evaluate("window.scrollY")
     with transcript.open("a") as stream:
