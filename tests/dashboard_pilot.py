@@ -145,7 +145,15 @@ class FakeStateClient:
                 return None
             owned = app.session.queue.get(entry.entry_id) is not None
             if owned:
-                app._on_app_thread(lambda: app.session._entry_asking(entry.entry_id, True))
+
+                def announce():  # type: ignore[no-untyped-def]
+                    current = app.session.queue.get(entry.entry_id)
+                    text = self._action_entries[entry.entry_id].output
+                    if current is not None and text.startswith(current.output):
+                        app.session._entry_output(entry.entry_id, text[len(current.output) :])
+                    app.session._entry_asking(entry.entry_id, True)
+
+                app._on_app_thread(announce)
             try:
                 return app._ask_from_worker(question, entry.entry_id if owned else None)
             finally:
