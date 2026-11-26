@@ -119,6 +119,8 @@ def run_actions(
                 results.append(RunResult(refused=rejection))
                 outputs.append("")
                 return ActionOutcome(results, outcome_text.text(), outputs)
+            if snapshot is not None and snapshot.finished:
+                generation = generation or sent_generation or 1
             if generation is None or (
                 uncertain_generation is not None and generation == uncertain_generation
             ):
@@ -132,6 +134,11 @@ def run_actions(
                 time.sleep(POLL_SECONDS)
                 continue
             disconnected_at = None
+            if acknowledged and snapshot is None and sent_generation != generation:
+                results.append(RunResult(error="action missing after state service reconnect"))
+                outputs.append(last_output)
+                outcome_text.append(last_output)
+                return ActionOutcome(results, outcome_text.text(), outputs)
             if sent and not acknowledged and sent_generation != generation:
                 sent = False
             if not sent:
