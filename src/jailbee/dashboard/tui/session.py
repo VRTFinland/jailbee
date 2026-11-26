@@ -333,7 +333,7 @@ QUEUE_TAIL_LINES = 3
 QUEUE_NO_OUTPUT_YET = "(no output yet)"
 QUEUE_ROW_TAIL_CHARS = 60
 
-_QUEUE_ICONS = {"running": "⟳", "awaiting": "?", "done": "✓", "failed": "✗"}
+_QUEUE_ICONS = {"running": "⟳", "awaiting": "?", "done": "✓", "failed": "✗", "interrupted": "✗"}
 
 
 def _queue_state(entry: QueueEntry) -> str:
@@ -341,6 +341,8 @@ def _queue_state(entry: QueueEntry) -> str:
         return "running"
     if entry.state == "awaiting":
         return "awaiting answer"
+    if entry.state == "interrupted":
+        return "interrupted"
     return f"{entry.state} (exit {entry.status})"
 
 
@@ -1071,7 +1073,7 @@ class DashboardSession:
         self.terminal.show_output(
             entry.command,
             entry.output or (QUEUE_NO_OUTPUT_YET if not entry.finished else ""),
-            failed=entry.state == "failed",
+            failed=entry.state in ("failed", "interrupted"),
             live=True,
             background=True,
             on_close=lambda: self._modal_closed(entry.id),
@@ -1161,7 +1163,7 @@ class DashboardSession:
                 tone="accent"
                 if entry.state == "awaiting"
                 else "error"
-                if entry.state == "failed"
+                if entry.state in ("failed", "interrupted")
                 else None,
             )
             for entry in reversed(list(self.queue))
@@ -1244,7 +1246,7 @@ class DashboardSession:
             text = found.output or (QUEUE_NO_OUTPUT_YET if not found.finished else "")
             self._following = None if found.finished else entry_id
             self.terminal.show_output(
-                found.command, text, failed=found.state == "failed", live=not found.finished
+                found.command, text, failed=found.state in ("failed", "interrupted"), live=not found.finished
             )
             return self.queue_entry_picker(entry_id)
         if entry.value == "dismiss":

@@ -31,7 +31,7 @@ def load(engine: Engine) -> list[ActionEntry]:
             if not isinstance(entry, ActionEntry):
                 raise ValueError("invalid persisted action entry")
             if entry.state in ("running", "awaiting"):
-                entry = replace(entry, state="interrupted")
+                entry = replace(entry, state="interrupted", finished=True)
                 row.state = entry.state
                 row.payload = encode(entry).decode()
                 session.add(row)

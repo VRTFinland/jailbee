@@ -26,7 +26,7 @@ if TYPE_CHECKING:
 
 from jailbee.dashboard.runner import OUTPUT_DROPPED_MARKER, OUTPUT_KEEP_CHARS
 
-EntryState = Literal["running", "awaiting", "done", "failed"]
+EntryState = Literal["running", "awaiting", "done", "failed", "interrupted"]
 
 
 def is_critical(argv: Sequence[str]) -> bool:
@@ -92,7 +92,7 @@ class QueueEntry:
     @property
     def needs_attention(self) -> bool:
         """Failed, or blocked on a question the user has not answered."""
-        return self.state in ("failed", "awaiting")
+        return self.state in ("failed", "awaiting", "interrupted")
 
 
 # The background jobs the queue lists: those that move a container to being
@@ -268,5 +268,5 @@ class NotificationQueue:
             running=sum(e.state == "running" for e in entries)
             + sum(not j.failed for j in self.jobs),
             pending=sum(e.state == "awaiting" for e in entries),
-            failed=sum(e.state == "failed" for e in entries) + sum(j.failed for j in self.jobs),
+            failed=sum(e.state in ("failed", "interrupted") for e in entries) + sum(j.failed for j in self.jobs),
         )

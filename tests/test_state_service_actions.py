@@ -457,9 +457,25 @@ def test_running_action_is_interrupted_after_restart(runtime_dir, tmp_path):
         client.wait_first_snapshot(3)
         client.run_action(RunAction(345, ["ls"], str(tmp_path), "target", False, "dashboard", "none", str(tmp_path), "repo"))
         _until(lambda: 345 in client.action_entries())
+        # A second service sees the durable snapshot while the original worker
+        # is blocked, as it would after a killed process.
+        other_socket = tmp_path / "replacement.sock"
         replacement = StateServer(FakeGatherer(), version="v1", engine=engine)
-        assert replacement._actions[345].state == "interrupted"
-        assert StateServer(FakeGatherer(), version="v1", engine=engine)._actions[345].state == "interrupted"
+        replacement_thread = threading.Thread(target=lambda: asyncio.run(replacement.serve(other_socket)), daemon=True)
+        replacement_thread.start()
+        track_server(replacement, replacement_thread)
+        _until(other_socket.exists)
+        import socket
+        from jailbee.state_service.protocol import ActionEntry, Hello, PROTOCOL, decode, encode
+        with socket.socket(socket.AF_UNIX) as connection:
+            connection.connect(str(other_socket))
+            connection.sendall(encode(Hello(PROTOCOL, "v1", dashboard_id="dashboard")))
+            with connection.makefile("rb") as reader:
+                decode(reader.readline())
+                entry = decode(reader.readline())
+                assert isinstance(entry, ActionEntry)
+                assert entry.state == "interrupted"
+                assert entry.finished
     finally:
         release.set()
         client.close()
