@@ -90,6 +90,10 @@ class ConnectionFollows:
                     available=False, code="unsupported_agent", message="Subagent chat unavailable"
                 )
                 if key.subagent_id
+                else ChatAvailability(
+                    available=False, code="permission_denied", message="Agent chat is disabled"
+                )
+                if not ctx.deps.agent_chat
                 else self._chat_status.get(key)
                 or ChatAvailability(
                     available=False, code="checking", message="Checking availability"

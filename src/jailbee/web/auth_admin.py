@@ -380,9 +380,22 @@ def audit_logging() -> Iterator[None]:
 
 
 def recent_events(engine: Engine, limit: int = 50) -> list[AuditEvent]:
-    """The newest ``limit`` audit entries, oldest first."""
+    """The newest ``limit`` entries per audit class, oldest first."""
     with Session(engine) as s:
-        rows = s.exec(select(WebAuthEvent).order_by(col(WebAuthEvent.id).desc()).limit(limit)).all()
+        rows = []
+        for is_message in (True, False):
+            condition = col(WebAuthEvent.event) == "agent_message"
+            if not is_message:
+                condition = col(WebAuthEvent.event) != "agent_message"
+            rows.extend(
+                s.exec(
+                    select(WebAuthEvent)
+                    .where(condition)
+                    .order_by(col(WebAuthEvent.id).desc())
+                    .limit(limit)
+                ).all()
+            )
+        rows.sort(key=lambda row: row.id or 0, reverse=True)
         return [
             AuditEvent(r.at, r.event, r.method, r.device_name, r.source) for r in reversed(rows)
         ]

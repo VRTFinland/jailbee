@@ -296,8 +296,11 @@ def _entries(record: dict[str, object], record_id: str) -> list[Entry]:
                 call = _tool_call(block, entry_id, when, model)
                 if call is not None:
                     found.append(call)
+        message_id = message.get("id")
+        if not isinstance(message_id, str) or not message_id:
+            message_id = record_id
         found = [
-            replace(entry, message_id=record_id)
+            replace(entry, message_id=message_id)
             if isinstance(entry, (AssistantText, Thinking, ToolCall))
             else entry
             for entry in found
