@@ -1,7 +1,7 @@
 import {describe, expect, it} from "vitest"
 import {mount} from "@vue/test-utils"
 import StatusChip from "./StatusChip.vue"
-import {agentStatus, containerStatus, rowStatuses} from "./status"
+import {agentStatus, containerStatus, listStatuses, rowStatuses} from "./status"
 import vocabulary from "./status-vocabulary.json"
 
 // The wire values come from the dashboard core (tests/test_web_status_vocabulary.py
@@ -72,6 +72,35 @@ describe("status mapping", () => {
                 expect(chip.text()).toBe(status.label)
             }
         }
+    })
+})
+
+describe("list status policy", () => {
+    it.each(["Running", "Frozen"])("omits a redundant %s chip", (state) => {
+        expect(listStatuses({state, phase: null, agent: null})).toEqual([])
+    })
+
+    it("uses mapper casing and puts a phase before even a stopped state", () => {
+        expect(listStatuses({state: "Stopped", phase: null, agent: null})).toEqual([
+            {status: "stopped", label: "stopped"},
+        ])
+        expect(listStatuses({state: "Stopped", phase: "booting", agent: "waiting"})).toEqual([
+            {status: "booting", label: "booting"}, {status: "waiting", label: "waiting for you"},
+        ])
+    })
+
+    it.each([null, "idle", "waiting"])("shows recent idle once beside %s", (agent) => {
+        const chips = listStatuses({state: "Running", phase: null, agent, agent_recent_idle: "5m"})
+        expect(chips).toEqual([
+            ...(agent === "waiting" ? [{status: "waiting", label: "waiting for you"}] : []),
+            {status: "idle", label: "idle 5m", emphasis: true},
+        ])
+    })
+
+    it("retains unknown phase wording", () => {
+        expect(listStatuses({state: "Running", phase: "migrating", agent: null})).toEqual([
+            {status: "unknown", label: "migrating"},
+        ])
     })
 })
 

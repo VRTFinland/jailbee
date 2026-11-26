@@ -5,7 +5,7 @@ import {settings, updateSettings} from "../settings"
 import Button from "./ui/Button.vue"
 import ListRow from "./ui/ListRow.vue"
 import StatusChip from "./ui/StatusChip.vue"
-import {agentStatus, containerStatus} from "./ui/status"
+import {agentStatus, listStatuses} from "./ui/status"
 
 const props = withDefaults(defineProps<{
     view: FrontPageView
@@ -41,20 +41,13 @@ const repos = computed(() => {
         <ul v-else class="rows">
             <ListRow v-for="c in repo.containers" :key="c.name" wrap
                 :to="{name: 'container', params: {name: c.name}}"
-                class="row" :class="{nested: c.depth > 0, 'filter-context': context.has(c.name)}"
+                :context="context.has(c.name)" class="row" :class="{nested: c.depth > 0}"
                 :data-container="c.name" :data-state="c.state" :data-phase="c.phase ?? undefined"
                 :data-agent="c.agent ? agentStatus(c.agent)!.status : undefined">
                 <template #title><span class="name"><span class="indent">{{ c.indent }}</span>{{ c.cells[0] }}</span></template>
                 <template #trailing>
                     <div class="statuses">
-                        <!-- Preserve phase-first wording, including stopped boot jobs, and the absence of a Running label. -->
-                        <StatusChip v-if="c.phase || c.state === 'Stopped'" class="phase" v-bind="containerStatus(c)"
-                            :label="c.phase || c.state" />
-                        <StatusChip v-if="c.agent" class="agent" :class="{'agent-recent-idle': c.agent === 'idle' && c.agent_recent_idle}"
-                            v-bind="agentStatus(c.agent)!"
-                            :label="agentStatus(c.agent)!.label + (c.agent === 'idle' && c.agent_recent_idle ? ` ${c.agent_recent_idle}` : '')" />
-                        <StatusChip v-if="c.agent !== 'idle' && c.agent_recent_idle" class="agent agent-recent-idle"
-                            v-bind="agentStatus('idle')!" :label="`idle ${c.agent_recent_idle}`" />
+                        <StatusChip v-for="(chip, index) in listStatuses(c)" :key="index" v-bind="chip" />
                     </div>
                 </template>
                 <p v-if="c.orchestrator || c.child_count" class="orchestration">
@@ -80,8 +73,6 @@ const repos = computed(() => {
 
 <style scoped>
 .filter-notice { margin: var(--md-space-8) 0 0; font-size: var(--md-type-body-medium-size); }
-.row.filter-context[data-container] { opacity: var(--md-context-opacity); }
-[data-theme="eink"] .row.filter-context[data-container] { border-style: dashed; }
 .repo { margin: var(--md-space-24) 0; }
 .repo-heading {
     font-size: var(--md-type-title-medium-size);
@@ -96,7 +87,6 @@ const repos = computed(() => {
 .rows { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--md-space-8); }
 .row.nested { margin-left: var(--md-space-16); }
 .statuses { display: flex; flex-wrap: wrap; gap: var(--md-space-8); }
-.agent-recent-idle { font-weight: var(--md-type-emphasis-weight); }
 .orchestration { margin: var(--md-space-8) 0 0; overflow-wrap: anywhere; }
 .orchestration a { color: inherit; }
 .name, .indent { font-family: var(--md-font-mono); }

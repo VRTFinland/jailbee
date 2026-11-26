@@ -78,7 +78,8 @@ watch(() => [props.context, props.session, props.parent, settings.bodyFontSize, 
     void nextTick(paginate)
 })
 const open = ref(false)
-const trigger = ref<HTMLButtonElement | null>(null)
+const triggerButton = ref<InstanceType<typeof IconButton> | null>(null)
+const trigger = computed<HTMLButtonElement | null>(() => triggerButton.value?.$el ?? null)
 const panel = ref<HTMLElement | null>(null)
 
 async function close(restoreFocus = true) {
@@ -89,8 +90,7 @@ async function close(restoreFocus = true) {
     }
 }
 watch(() => route.path, () => { if (open.value) void close(false) })
-async function toggle(event: MouseEvent) {
-    trigger.value = event.currentTarget as HTMLButtonElement
+async function toggle() {
     if (open.value) return close()
     open.value = true
     page.value = 0
@@ -142,8 +142,8 @@ onBeforeUnmount(() => {
 
 <template>
     <div class="quick-settings">
-        <IconButton icon="menu" label="Quick settings" class="quick-trigger"
-            aria-haspopup="dialog" :aria-expanded="open" :aria-describedby="filtered ? 'filter-description' : undefined" @click="toggle" />
+        <IconButton ref="triggerButton" icon="menu" label="Quick settings" class="quick-trigger"
+            :variant="settings.showTitleBar ? 'text' : 'tonal'" aria-haspopup="dialog" :aria-expanded="open" :aria-describedby="filtered ? 'filter-description' : undefined" @click="toggle" />
         <span v-if="filtered" id="filter-description" class="filter-marker"><span class="visually-hidden">Container filter enabled</span></span>
         <div v-if="open" class="quick-backdrop" @click="close()" />
         <section v-if="open" ref="panel" class="quick-panel" role="dialog" aria-label="Quick settings" aria-modal="true" tabindex="-1">
@@ -193,10 +193,9 @@ onBeforeUnmount(() => {
 .quick-settings { position: relative; flex: none; z-index: 40; margin-left: auto; }
 .session-info { flex-direction: column; align-items: flex-start; overflow-wrap: anywhere; user-select: text; }
 .quick-settings:not(.title-menu) { position: fixed; top: calc(var(--app-banner-height, 0px) + var(--quick-trigger-top)); right: 0.75rem; }
-.quick-trigger { position: relative; }
 .filter-marker { pointer-events: none; }
 .quick-backdrop { position: fixed; inset: 0; background: rgb(0 0 0 / 20%); z-index: -1; }
-.quick-panel { position: absolute; top: calc(var(--quick-trigger-size) + 0.25rem); right: 0; width: min(22rem, calc(100vw - 2rem)); padding: 0.5rem; border: 1px solid var(--border-strong); border-radius: var(--radius); background: var(--surface); color: var(--text); box-shadow: 0 4px 16px rgb(0 0 0 / 20%); }
+.quick-panel { position: absolute; top: calc(var(--md-target-min) + var(--md-space-4)); right: 0; width: min(22rem, calc(100vw - 2rem)); padding: 0.5rem; border: 1px solid var(--border-strong); border-radius: var(--radius); background: var(--surface); color: var(--text); box-shadow: 0 4px 16px rgb(0 0 0 / 20%); }
 .menu-row { display: flex; align-items: center; gap: 0.5rem; box-sizing: border-box; width: 100%; min-height: 2.75rem; padding: 0.25rem 0.5rem; margin: 0; color: inherit; text-decoration: none; font: inherit; border: 0; background: transparent; text-align: left; }
 .menu-row[hidden], .menu-pages[hidden] { display: none; }
 .menu-row[aria-pressed="true"] { background: var(--notice-bg); outline: 2px solid var(--accent); outline-offset: -2px; }

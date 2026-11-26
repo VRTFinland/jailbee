@@ -14,6 +14,41 @@ from tests_e2e.server import E2EServer
 from tests_e2e.test_session_reading import open_transcript, record, wait_for_scroll_settled
 
 
+@pytest.mark.parametrize("theme", ["light", "dark", "eink"])
+def test_floating_trigger_has_opaque_surface_and_panel_tracks_its_target_size(
+    logged_in: Page, theme: str
+) -> None:
+    page = logged_in
+    page.evaluate(
+        """theme => {
+        localStorage.setItem('jailbee.showTitleBar', '0');
+        localStorage.setItem('jailbee.theme', theme);
+    }""",
+        theme,
+    )
+    page.reload()
+    trigger = page.get_by_role("button", name="Quick settings", exact=True)
+    expect(trigger).to_be_visible()
+    assert trigger.evaluate("el => getComputedStyle(el).backgroundColor") not in {
+        "transparent",
+        "rgba(0, 0, 0, 0)",
+    }
+    if theme == "eink":
+        expect(trigger).to_have_css("background-color", "rgb(255, 255, 255)")
+        expect(trigger).to_have_css("border-top-color", "rgb(0, 0, 0)")
+        expect(trigger).to_have_css("border-top-style", "solid")
+        expect(trigger).to_have_css("border-top-width", "1px")
+    # The popover follows the primitive's actual hit-target token, even when enlarged.
+    page.evaluate("document.documentElement.style.setProperty('--md-target-min', '64px')")
+    trigger.click()
+    panel = page.get_by_role("dialog", name="Quick settings")
+    expect(panel).to_be_visible()
+    button_box, panel_box = trigger.bounding_box(), panel.bounding_box()
+    assert button_box and panel_box
+    assert button_box["height"] == 64
+    assert 0 <= panel_box["y"] - (button_box["y"] + button_box["height"]) <= 8
+
+
 @pytest.mark.parametrize("width", [1280, 390], ids=["desktop", "phone"])
 def test_menu_is_at_right_edge_and_does_not_overlap_title(logged_in: Page, width: int) -> None:
     page = logged_in

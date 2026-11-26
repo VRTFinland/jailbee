@@ -19,11 +19,13 @@ defineProps<{
     to?: RouteLocationRaw
     /** Wrap long titles and trailing chips before the full-width body. */
     wrap?: boolean
+    /** Supporting ancestor retained for orientation, not a primary result. */
+    context?: boolean
 }>()
 </script>
 
 <template>
-    <li class="list-row" :class="{selected, wrap, linked: to !== undefined, 'ui-state-layer': to !== undefined}"
+    <li class="list-row" :class="{selected, wrap, 'filter-context': context, linked: to !== undefined, 'ui-state-layer': to !== undefined}"
         :aria-current="selected && to === undefined ? 'true' : undefined">
         <span class="list-row-title">
             <router-link v-if="to !== undefined" :to="to" class="list-row-link"
@@ -51,6 +53,12 @@ defineProps<{
     border-radius: var(--md-shape-large);
     background: var(--md-surface-container-lowest);
     color: var(--md-on-surface);
+}
+.list-row.filter-context {
+    opacity: var(--md-context-opacity);
+}
+[data-theme="eink"] .list-row.filter-context {
+    border-style: dashed;
 }
 .list-row.wrap {
     display: flex;

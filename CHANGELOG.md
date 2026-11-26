@@ -25,7 +25,8 @@ before editing `## Unreleased`.
   motion) in browser tests with explicit migration-only exceptions, and a design
   guide for contributors and agents in `frontend/DESIGN.md`. The title bar,
   front page and container lists now use the shared buttons, icons, rows and
-  status chips, with their layout, filters and live updates preserved
+  status chips, with shared list status wording, context and activity emphasis,
+  opaque floating menu controls, and their layout, filters and live updates preserved
   ([#167](https://github.com/VRTFinland/jailbee/issues/167)).
 - Web dashboard reader improvements: compact breadcrumb title bars and session details,
   an in-context settings overlay, configurable e-ink page controls and page step,

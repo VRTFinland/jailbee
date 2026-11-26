@@ -127,13 +127,13 @@ def test_nested_eink_rows_keep_phase_chips_distinct(server: E2EServer, logged_in
     rest = page.locator('[data-container="work-rest"]')
     job = page.locator('[data-container="work-job"]')
     boot = page.locator('[data-container="work-boot"]')
-    expect(rest.locator(".phase")).to_have_count(0)
-    expect(job.locator(".phase")).to_have_text("job")
-    expect(boot.locator(".phase")).to_have_text("booting")
-    assert job.locator(".phase svg path").get_attribute("d") != boot.locator(
-        ".phase svg path"
+    expect(rest.locator(".status-chip")).to_have_count(0)
+    expect(job.locator(".status-chip")).to_have_text("job")
+    expect(boot.locator(".status-chip")).to_have_text("booting")
+    assert job.locator(".status-chip svg path").get_attribute("d") != boot.locator(
+        ".status-chip svg path"
     ).get_attribute("d")
-    for chip in (job.locator(".phase"), boot.locator(".phase")):
+    for chip in (job.locator(".status-chip"), boot.locator(".status-chip")):
         expect(chip).to_have_css("color", "rgb(0, 0, 0)")
         expect(chip).to_have_css("border-top-color", "rgb(0, 0, 0)")
     for row in (rest, job, boot):

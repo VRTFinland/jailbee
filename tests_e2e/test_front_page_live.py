@@ -73,7 +73,7 @@ def test_row_header_stays_above_cells_and_long_names_remain_readable(
         title = row.locator(".list-row-title")
         assert title.evaluate("el => el.scrollWidth <= el.clientWidth")
         assert title.evaluate("el => getComputedStyle(el).whiteSpace") != "nowrap"
-        chip, cells = row.locator(".phase").bounding_box(), row.locator("dl").bounding_box()
+        chip, cells = row.locator(".status-chip").bounding_box(), row.locator("dl").bounding_box()
         assert chip and cells
         assert chip["y"] + chip["height"] <= cells["y"]
         assert logged_in.evaluate("document.documentElement.scrollWidth <= innerWidth")
@@ -116,7 +116,7 @@ def test_snapshots_add_change_and_remove_containers_without_reloading(
             )
         )
     )
-    expect(main).to_contain_text("Stopped")
+    expect(main.locator('[data-status="stopped"]')).to_have_text("stopped")
     expect(logged_in.get_by_role("link", name="next", exact=True)).to_be_visible()
 
     server.push(snapshot_of(repo_group("work", container("work-next", "work"))))
@@ -155,7 +155,7 @@ def test_row_phases_have_distinct_icons_and_labels_in_the_eink_theme(
         has=logged_in.get_by_role("link", name="running", exact=True)
     )
     expect(running).to_be_visible()
-    expect(running.locator(".phase")).to_have_count(0)
+    expect(running.locator(".status-chip")).to_have_count(0)
     icons: set[str] = set()
     # The shared chip replaces phase-specific row edges. Its visible words and
     # distinct painted vector keep every state legible without colour or fades.
@@ -164,13 +164,13 @@ def test_row_phases_have_distinct_icons_and_labels_in_the_eink_theme(
         ("auto", "autostart"),
         ("build", "job"),
         ("broken", "failed"),
-        ("off", "Stopped"),
+        ("off", "stopped"),
     ):
         row = logged_in.get_by_role("listitem").filter(
             has=logged_in.get_by_role("link", name=name, exact=True)
         )
         expect(row).to_be_visible()
-        chip = row.locator(".phase")
+        chip = row.locator(".status-chip")
         expect(chip).to_have_text(label)
         expect(chip).to_be_visible()
         expect(chip).to_have_css("color", "rgb(0, 0, 0)")
@@ -311,7 +311,7 @@ def test_an_idle_agent_with_only_the_inbox_follower_reads_idle(
             has=logged_in.get_by_role("link", name=name, exact=True)
         )
 
-    expect(row("quiet").locator(".agent")).to_have_text("idle")
+    expect(row("quiet").locator('[data-status="idle"]')).to_have_text("idle")
     expect(row("quiet")).not_to_contain_text("shell")
     expect(row("quiet")).not_to_contain_text("working")
-    expect(row("dev").locator(".agent")).to_have_text("shell")
+    expect(row("dev").locator('[data-status="shell"]')).to_have_text("shell")

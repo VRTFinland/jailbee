@@ -10,6 +10,7 @@ import type {StatusName} from "./StatusChip.vue"
 export interface Status {
     status: StatusName | "unknown"
     label: string
+    emphasis?: boolean
 }
 
 const STATES: Record<string, StatusName> = {Running: "running", Frozen: "frozen", Stopped: "stopped"}
@@ -41,6 +42,18 @@ export function agentStatus(agent: string | null): Status | null {
         return {status: "error", label: `API error: ${agent.slice(ERROR_PREFIX.length)}`}
     }
     return Object.hasOwn(AGENTS, agent) ? {...AGENTS[agent]} : {status: "unknown", label: agent}
+}
+
+/** List policy: phase first, otherwise stopped only; then agent and recent idle. */
+export function listStatuses(row: Pick<ContainerRow, "state" | "phase" | "agent" | "agent_recent_idle">): Status[] {
+    const chips: Status[] = []
+    if (row.phase || row.state === "Stopped") chips.push(containerStatus(row))
+    const agent = agentStatus(row.agent)
+    if (agent && (row.agent !== "idle" || !row.agent_recent_idle)) chips.push(agent)
+    if (row.agent_recent_idle) {
+        chips.push({status: "idle", label: `${AGENTS.idle.label} ${row.agent_recent_idle}`, emphasis: true})
+    }
+    return chips
 }
 
 /** A row's chips: the container's, then the agent's when there is one. */

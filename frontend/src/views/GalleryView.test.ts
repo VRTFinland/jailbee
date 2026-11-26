@@ -63,14 +63,16 @@ describe("GalleryView", () => {
             expect(buttons.slice(-2).map((b) => [b.text(), b.find("svg").exists()]))
                 .toEqual([["New container", true], ["Settings", true]])
             const iconButtons = panel.findAll(".icon-button")
-            expect(iconButtons.map((b) => b.attributes("aria-label"))).toEqual(["Menu", "Close", "Settings (disabled)", "Actions for feat-reader-chrome", "Actions for dev-ork"])
-            expect(iconButtons[2].attributes("disabled")).toBeDefined()
+            expect(iconButtons.map((b) => b.attributes("aria-label"))).toEqual(["Menu", "Close", "Menu (tonal)", "Settings (tonal, disabled)", "Settings (disabled)", "Actions for feat-reader-chrome", "Actions for dev-ork"])
+            expect(iconButtons[2].attributes("data-variant")).toBe("tonal")
+            expect(iconButtons[3].attributes("disabled")).toBeDefined()
+            expect(iconButtons[4].attributes("disabled")).toBeDefined()
             const switches = panel.findAll('[role="switch"]')
             expect(switches.map((s) => [s.attributes("aria-checked"), s.attributes("disabled") !== undefined]))
                 .toEqual([["true", false], ["false", false], ["true", true], ["false", true], ["false", false]])
             expect(panel.findAll(".status-chip").map((c) => c.attributes("data-status"))).toEqual([
                 "running", "frozen", "stopped", "booting", "autostart", "job", "failed",
-                "waiting", "busy", "idle", "shell", "error", "error", "unknown",
+                "waiting", "busy", "idle", "shell", "error", "error", "unknown", "idle",
                 "running", "booting", "failed", // the list rows' trailing chips
                 "running", "busy", "booting", "job", "waiting", // linked and wrapping rows
             ])

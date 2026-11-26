@@ -150,6 +150,8 @@ function typeStyle(token: string): Record<string, string> {
                         <div class="samples">
                             <IconButton icon="menu" label="Menu" />
                             <IconButton icon="close" label="Close" />
+                            <IconButton icon="menu" label="Menu (tonal)" variant="tonal" />
+                            <IconButton icon="settings" label="Settings (tonal, disabled)" variant="tonal" disabled />
                             <IconButton icon="settings" label="Settings (disabled)" disabled />
                         </div>
                     </div>
@@ -170,6 +172,7 @@ function typeStyle(token: string): Record<string, string> {
                             <StatusChip v-for="status in STATUS_NAMES" :key="status" :status="status" />
                             <StatusChip status="error" label="API error: overloaded" />
                             <StatusChip status="unknown" label="Error" />
+                            <StatusChip status="idle" label="idle 5m" emphasis />
                         </div>
                     </div>
 
@@ -205,7 +208,7 @@ function typeStyle(token: string): Record<string, string> {
                                     <IconButton icon="menu" label="Actions for dev-ork" />
                                 </template>
                             </ListRow>
-                            <ListRow wrap title="A long container name that wraps instead of truncating" secondary="Wrapped title and chips above metadata">
+                            <ListRow wrap context title="A long container name that wraps instead of truncating" secondary="Wrapped title and chips above metadata">
                                 <template #trailing><StatusChip status="booting" /></template>
                                 <p class="row-line">Orchestrator · 2 children</p>
                             </ListRow>
