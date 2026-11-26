@@ -628,13 +628,46 @@ without a leading letter recommends yes. Answer `12a`, `Q12a` or `Q12: a`;
 
 Set `agents.claude.unattended: false` for the previous behaviour. Run `jb apply`,
 restart running containers to install or switch the policy mounts, then start a
-new agent session. Settings use the existing managed-settings drop-in, not a new
-launcher; Claude organizations whose remote managed settings suppress drop-ins
-still have the known [drop-in limitation](https://github.com/VRTFinland/jailbee/issues/170).
+new agent session. Settings use the existing managed-settings drop-in and the
+command-line fallback described below.
 The question instruction requires the normal agent-instructions mount; opting out
 with `agent_instructions: false` leaves permission settings in place but omits
 that instruction. Different repos' on/off policies are staged separately, so an
 apply in one repo cannot change another repo's mounted policy.
+
+### Remote managed settings
+
+Claude Code skips file-based managed settings, including JailBee's drop-in,
+when the signed-in organization has remote managed settings. Changing any
+Claude Code setting in the admin console can activate this state; toggling
+it off still leaves a non-empty remote policy.
+
+JailBee also passes the same file,
+`/etc/claude-code/managed-settings.d/50-jailbee.json`, with `--settings`.
+This covers autostart (including orchestrated children), resumed sessions and
+the Claude preset's opt-in AI PR descriptions, before any base rebuild.
+A rebuilt base adds a login-shell `claude` function and updates `claude-jb`
+for hand-typed launches. Run `jb base build` and create replacement containers
+to get those shell changes; existing images do not gain them from `jb apply`.
+The flag is added only when the file exists, and an explicit `--settings`
+or `--settings=...` is preserved instead of adding another. The drop-in stays;
+both paths use the same marketplace/plugin identity, so the inbox follower
+loads once, not twice. Plugin hooks and unattended settings use this same file.
+
+This fallback does not cover an IDE extension that starts the binary directly.
+It cannot override organization policies blocking plugins, marketplaces or hooks,
+or supply managed-only settings such as `allowedChannelPlugins`; an admin must
+set those in the organization's console. Host-wide managed-policy memory is
+independent of these settings.
+
+`jb doctor` warns when `remote-settings.json` in the shared Claude credential
+holder is non-empty. That file records the last session's fetch, not a live
+admin-console query. Interactive login shells show a one-line notice on stderr;
+non-interactive shells remain silent, and nothing is printed on stdout.
+Missing, empty and `{}` remote settings are quiet. To restore drop-in loading,
+**delete the organization's Claude Code managed settings in the admin console**;
+toggling a setting off is not enough. Start a new Claude session to refresh the
+cached state.
 
 ### What the containers of a repo share
 

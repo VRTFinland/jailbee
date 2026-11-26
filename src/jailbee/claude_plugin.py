@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import tempfile
+from io import StringIO
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, NotRequired, TypedDict
 
@@ -12,6 +14,37 @@ from jailbee.paths import xdg_data_home
 
 if TYPE_CHECKING:
     from jailbee.config import Config
+
+
+SETTINGS_PATH = "/etc/claude-code/managed-settings.d/50-jailbee.json"
+
+
+def with_settings(command: str) -> str:
+    """Add settings once to a Claude shell command, checking the mount at launch.
+
+    The host cannot stat a container's mount. An unquoted substitution emits
+    exactly two fixed words when present, and no arguments on older containers.
+    Keep the rest of the command intact: headless presets contain expansions.
+    """
+    try:
+        words = shlex.split(command)
+    except ValueError:
+        return command
+    if not words or Path(words[0]).name not in {"claude", "claude-jb"}:
+        return command
+    for word in words[1:]:
+        if word == "--":
+            break
+        if word == "--settings" or word.startswith("--settings="):
+            return command
+    stream = StringIO(command)
+    lexer = shlex.shlex(stream, posix=True)
+    lexer.whitespace_split = True
+    lexer.get_token()
+    offset = stream.tell()
+    binary, rest = command[:offset].rstrip(), command[offset:]
+    flag = f"$(test ! -f {SETTINGS_PATH} || printf '%s\\n' --settings {SETTINGS_PATH})"
+    return f"{binary} {flag} {rest}".rstrip()
 
 
 class DirectorySource(TypedDict):

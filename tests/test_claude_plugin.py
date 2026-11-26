@@ -1,5 +1,8 @@
 import json
 import shlex
+import subprocess
+
+import pytest
 from pathlib import Path
 
 import typer
@@ -7,6 +10,62 @@ import yaml
 
 from jailbee import claude_plugin
 from jailbee.profiles import binds_profile_yaml
+
+
+@pytest.mark.parametrize("binary", ["claude", "claude-jb", "/opt/bin/claude"])
+def test_launch_settings_reach_binary_once(binary, tmp_path):
+    settings = tmp_path / "settings.json"
+    settings.write_text("{}")
+    command = claude_plugin.with_settings(f"{binary} --model opus")
+    assert claude_plugin.with_settings(command) == command
+    stub = tmp_path / "record"
+    stub.write_text('#!/bin/bash\nprintf "%s\\n" "$@"\n')
+    stub.chmod(0o755)
+    command = command.replace(claude_plugin.SETTINGS_PATH, str(settings))
+    command = command.replace(binary, str(stub), 1)
+    proc = subprocess.run(["bash", "-c", command], capture_output=True, text=True, check=True)
+    assert proc.stdout.splitlines() == ["--settings", str(settings), "--model", "opus"]
+
+
+def test_launch_settings_missing_file_keeps_argv(tmp_path):
+    binary = tmp_path / "claude"
+    binary.write_text('#!/bin/bash\nprintf "%s\\n" "$@"\n')
+    binary.chmod(0o755)
+    command = claude_plugin.with_settings(f"{binary} --model opus")
+    command = command.replace(claude_plugin.SETTINGS_PATH, str(tmp_path / "missing.json"))
+    proc = subprocess.run(["bash", "-c", command], capture_output=True, text=True, check=True)
+    assert proc.stdout.splitlines() == ["--model", "opus"]
+
+
+@pytest.mark.parametrize("command", ["claude --settings custom.json", "claude --settings=custom.json", "codex", "env X=1 claude"])
+def test_launch_settings_preserve_explicit_settings_and_other_binaries(command):
+    assert claude_plugin.with_settings(command) == command
+
+
+def test_settings_path_is_in_mounted_dropin(make_cfg, tmp_path):
+    cfg = make_cfg(tmp_path, agents={"claude": {"enabled": True}})
+    mount = claude_plugin.profile_devices(cfg)["claude-managed-settings"]["path"]
+    assert claude_plugin.SETTINGS_PATH == f"{mount}/50-jailbee.json"
+
+
+@pytest.mark.parametrize("runner", ["claude", "claude-jb"])
+def test_autostart_delivers_settings_after_runner_rewrite(make_cfg, tmp_path, runner):
+    from jailbee.autostart import agent_autostart_steps
+    from jailbee.orchestration.runner import Runner
+
+    cfg = make_cfg(tmp_path, agents={"claude": {"enabled": True, "autostart": True}})
+    steps = agent_autostart_steps(cfg, runner=Runner(agent=runner))
+    [step] = steps
+    assert "--settings" in step.run
+    assert step.run.startswith(f"exec {runner} ")
+
+
+def test_disabled_and_non_claude_autostart_do_not_get_settings(make_cfg, tmp_path):
+    from jailbee.autostart import agent_autostart_steps
+
+    cfg = make_cfg(tmp_path, agents={"claude": {"enabled": False}, "codex": {"enabled": True, "autostart": True}})
+    [step] = agent_autostart_steps(cfg)
+    assert step.run == "exec codex"
 
 
 def test_unattended_settings_default_and_opt_out(make_cfg, tmp_path, monkeypatch):

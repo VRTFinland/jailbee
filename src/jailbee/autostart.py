@@ -413,6 +413,10 @@ def agent_autostart_steps(
                 )
             else:
                 command = rewritten
+        if spec.name == "claude":
+            from jailbee.claude_plugin import with_settings
+
+            command = with_settings(command)
         env = {**(extra_env or {}), **dict(spec.env)}
         prompt_args = cfg.agents[spec.name].prompt_args if is_primary else None
         if is_primary and prompt_args:

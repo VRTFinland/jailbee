@@ -106,7 +106,12 @@ registered for interactive recovery. Headless Claude sessions and other agents
 use `jailbee inbox wait`. The packaged marketplace
 lives in `jailbee/claude_marketplace`; its read-only managed-settings drop-in
 mounts at `/etc/claude-code/managed-settings.d` independently of
-`agent_instructions`.
+`agent_instructions`. JailBee also passes that drop-in's `50-jailbee.json`
+with `--settings` on Claude launches, including resumed and headless runs;
+the rebuilt base covers shell-typed `claude` and `claude-jb`. This preserves
+plugin loading when remote managed settings suppress drop-ins. IDE binary
+launches and organization restrictions remain outside this fallback; see
+`jb doctor` for detection and the admin-console remedy.
 
 ## Services
 

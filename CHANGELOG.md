@@ -503,6 +503,15 @@ before editing `## Unreleased`.
 
 ### Changed
 
+- Claude launches also pass JailBee's managed settings with `--settings`, so
+  remote organization settings no longer suppress the inbox follower, plugin
+  hooks or unattended policy. Autostart, resume and the Claude AI PR preset
+  work without a base rebuild; rebuild the base for hand-typed `claude` and
+  `claude-jb`. Explicit settings flags are preserved and the plugin loads once.
+  `jb doctor` and interactive login notices explain remaining IDE and managed-only
+  policy limits and the admin-console remedy
+  ([#170](https://github.com/VRTFinland/jailbee/issues/170),
+  [#172](https://github.com/VRTFinland/jailbee/issues/172)).
 - `jailbee inbox send message --kind done` refuses locally with exit 1 when
   called inside a linked worktree or while the container repository has linked
   worktrees registered. The controller removes them before reporting completion;

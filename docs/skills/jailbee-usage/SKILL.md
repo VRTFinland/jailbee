@@ -931,8 +931,14 @@ recommendation. Do not use dialogs for questions.
 
 For the old behaviour set `agents.claude.unattended: false` on the host, run
 `jb apply`, restart running containers to switch the policy mounts, and start a
-new session. The settings use the existing managed drop-in; remote managed
-settings may suppress it (known limitation). `agent_instructions: false` omits
+new session. The same settings file is delivered through the managed drop-in
+and `--settings` on JailBee launches and shell-typed `claude`/`claude-jb` (rebuild
+the base for the shell changes). Remote managed settings suppress drop-ins but
+not the flag. IDE binary launches, managed-only settings (`allowedChannelPlugins`)
+and organization policies blocking plugins or hooks remain outside its coverage.
+`jb doctor` warns from the last fetched `remote-settings.json`; delete the
+organization's Claude Code managed settings in the admin console to restore
+drop-ins, rather than toggling a setting off. `agent_instructions: false` omits
 only the question instruction, not the permission settings. Do not edit shared
 Claude user settings to implement this switch.
 

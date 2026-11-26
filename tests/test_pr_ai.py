@@ -7,6 +7,15 @@ import json
 CLAUDE = {"claude": {"enabled": True}}
 
 
+def test_claude_headless_preset_supplies_settings(make_cfg, tmp_path):
+    from jailbee.pr_ai import resolve_pr_agent
+
+    cfg = make_cfg(tmp_path, agents=CLAUDE)
+    choice = resolve_pr_agent(cfg)
+    assert choice.agent is not None
+    assert "--settings" in choice.agent.headless
+
+
 def _envelope(inner_text: str) -> str:
     """Wrap model text in Claude's --output-format json envelope."""
     return json.dumps({"type": "result", "result": inner_text})

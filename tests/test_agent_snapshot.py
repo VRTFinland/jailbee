@@ -821,5 +821,5 @@ def test_empty_launcher_values_survive_capture_and_replay(tmp_path, source, argv
     snapshot.capture(tmp_path, proc=proc, windows={})
     launcher = sessions(tmp_path)[0]["launcher"]
     assert launcher == argv
-    command = resume_run(ResumeEntry(ID, "/work", tuple(launcher), None))
+    command = resume_run(ResumeEntry(ID, "/work", tuple(launcher), None), enabled=False)
     assert shlex.split(command.split(" && exec ", 1)[1]) == [*argv, "--resume", ID]
