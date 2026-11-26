@@ -39,11 +39,18 @@ def test_say_requires_session_when_several_live(cli_seams):
     delivered.assert_not_called()
 
 
-@pytest.mark.parametrize(("code", "exit_code"), [
-    ("container_not_running", 3), ("no_live_session", 4), ("unsupported_agent", 5),
-    ("no_pane", 6), ("waiting_at_dialog", 7), ("unsent_terminal_input", 8),
-    ("delivery_error", 9),
-])
+@pytest.mark.parametrize(
+    ("code", "exit_code"),
+    [
+        ("container_not_running", 3),
+        ("no_live_session", 4),
+        ("unsupported_agent", 5),
+        ("no_pane", 6),
+        ("waiting_at_dialog", 7),
+        ("unsent_terminal_input", 8),
+        ("delivery_error", 9),
+    ],
+)
 def test_say_reports_distinct_refusal(cli_seams, code, exit_code):
     delivered, _ = cli_seams
     delivered.return_value = agent_input.Outcome(code, "refused")
@@ -78,8 +85,10 @@ def test_say_missing_container_noninteractive_lists_candidates(monkeypatch):
     from jailbee.incus import Incus
 
     monkeypatch.setattr(cli, "_load_or_exit", lambda _: Mock(container_prefix="p"))
-    containers = [lifecycle.ContainerInfo("p-one", "Running", None, None, None),
-                  lifecycle.ContainerInfo("p-two", "Running", None, None, None)]
+    containers = [
+        lifecycle.ContainerInfo("p-one", "Running", None, None, None),
+        lifecycle.ContainerInfo("p-two", "Running", None, None, None),
+    ]
     monkeypatch.setattr(lifecycle, "list_containers", lambda *args, **kw: containers)
     monkeypatch.setattr(Incus, "__init__", lambda self: None)
     result = CliRunner().invoke(cli.app, ["agent", "say"])
@@ -92,16 +101,23 @@ def test_say_missing_container_interactive_uses_selection(monkeypatch):
     from jailbee.incus import Incus
 
     monkeypatch.setattr(cli, "_load_or_exit", lambda _: Mock(container_prefix="p"))
-    containers = [lifecycle.ContainerInfo("p-one", "Running", None, None, None),
-                  lifecycle.ContainerInfo("p-two", "Running", None, None, None)]
+    containers = [
+        lifecycle.ContainerInfo("p-one", "Running", None, None, None),
+        lifecycle.ContainerInfo("p-two", "Running", None, None, None),
+    ]
     monkeypatch.setattr(lifecycle, "list_containers", lambda *args, **kw: containers)
     monkeypatch.setattr(Incus, "__init__", lambda self: None)
-    monkeypatch.setattr(Incus, "list_containers", lambda self: [{"name": "p-two", "status": "Running"}])
+    monkeypatch.setattr(
+        Incus, "list_containers", lambda self: [{"name": "p-two", "status": "Running"}]
+    )
     monkeypatch.setattr(prompting, "is_interactive", lambda: True)
     monkeypatch.setattr(tui, "pick_container", lambda rows: "p-two")
     monkeypatch.setattr(prompting, "_ask", lambda *args, **kwargs: "prompt text")
-    monkeypatch.setattr(agent_input, "live_sessions", lambda *args: [
-        AgentSession("claude", 42, 10, "idle", None, None, None, "abc")])
+    monkeypatch.setattr(
+        agent_input,
+        "live_sessions",
+        lambda *args: [AgentSession("claude", 42, 10, "idle", None, None, None, "abc")],
+    )
     delivered = Mock(return_value=agent_input.Outcome("delivered", "Delivered"))
     monkeypatch.setattr(agent_input, "send", delivered)
     result = CliRunner().invoke(cli.app, ["agent", "say"])
@@ -111,7 +127,9 @@ def test_say_missing_container_interactive_uses_selection(monkeypatch):
 
 def test_say_empty_stdin_is_refused(cli_seams):
     delivered, _ = cli_seams
-    result = CliRunner().invoke(cli.app, ["agent", "say", "box", "-", "--session", "abc"], input="  ")
+    result = CliRunner().invoke(
+        cli.app, ["agent", "say", "box", "-", "--session", "abc"], input="  "
+    )
     assert result.exit_code == 2
     assert "empty" in result.output.lower()
     delivered.assert_not_called()

@@ -52,21 +52,38 @@ def test_refusals_do_not_paste(monkeypatch, sessions, tree, panes, expected):
 
 def test_successful_delivery_survives_buffer_cleanup_failure(monkeypatch):
     adapter = Mock()
-    adapter.read_sessions.return_value = [AgentSession("claude", 42, 123, "idle", None, None, None, "id")]
+    adapter.read_sessions.return_value = [
+        AgentSession("claude", 42, 123, "idle", None, None, None, "id")
+    ]
     monkeypatch.setattr(agent_input, "wired_adapters", lambda cfg: [adapter])
     incus = Mock()
     incus.list_containers.return_value = [{"name": "box", "status": "Running"}]
-    incus.exec.side_effect = ["42 10 123\n10 1 20\n", "%1 10", "────\n> \n────", "", "", IncusError("cleanup")]
+    incus.exec.side_effect = [
+        "42 10 123\n10 1 20\n",
+        "%1 10",
+        "────\n> \n────",
+        "",
+        "",
+        IncusError("cleanup"),
+    ]
     assert agent_input.send(Mock(), incus, "box", "id", "text").code == "delivered"
 
 
 def test_cleanup_does_not_mask_delivery_failure(monkeypatch):
     adapter = Mock()
-    adapter.read_sessions.return_value = [AgentSession("claude", 42, 123, "idle", None, None, None, "id")]
+    adapter.read_sessions.return_value = [
+        AgentSession("claude", 42, 123, "idle", None, None, None, "id")
+    ]
     monkeypatch.setattr(agent_input, "wired_adapters", lambda cfg: [adapter])
     incus = Mock()
     incus.list_containers.return_value = [{"name": "box", "status": "Running"}]
-    incus.exec.side_effect = ["42 10 123\n10 1 20\n", "%1 10", "────\n> \n────", IncusError("paste failed"), IncusError("cleanup failed")]
+    incus.exec.side_effect = [
+        "42 10 123\n10 1 20\n",
+        "%1 10",
+        "────\n> \n────",
+        IncusError("paste failed"),
+        IncusError("cleanup failed"),
+    ]
     result = agent_input.send(Mock(), incus, "box", "id", "text")
     assert result.code == "delivery_error"
     assert "paste failed" in result.message

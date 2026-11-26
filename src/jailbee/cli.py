@@ -12228,7 +12228,7 @@ def agent_say_cmd(
     if session is None:
         try:
             sessions = agent_input.live_sessions(cfg, incus, full)
-        except agent_input.ContainerNotRunning as exc:
+        except agent_input.ContainerNotRunningError as exc:
             error(str(exc))
             raise typer.Exit(3) from exc
         except IncusError as exc:

@@ -75,14 +75,14 @@ def _sessions(cfg: Config, container: str, tree: dict[int, tuple[int, int]]) -> 
     return sessions
 
 
-class ContainerNotRunning(Exception):
+class ContainerNotRunningError(Exception):
     """The selected container is not running."""
 
 
 def live_sessions(cfg: Config, incus: Incus, container: str) -> list[AgentSession]:
     """Return recorded sessions whose process identity still matches the container."""
     if not _running(incus, container):
-        raise ContainerNotRunning("Container not running")
+        raise ContainerNotRunningError("Container not running")
     return _sessions(cfg, container, _processes(incus, container))
 
 
@@ -154,7 +154,9 @@ def send(cfg: Config, incus: Incus, container: str, session_id: str, text: str) 
             try:
                 incus.exec(container, _runuser(f"tmux delete-buffer -b {buffer}"))
             except IncusError:
-                logging.getLogger(__name__).warning("Could not delete tmux input buffer", exc_info=True)
+                logging.getLogger(__name__).warning(
+                    "Could not delete tmux input buffer", exc_info=True
+                )
     except IncusError as exc:
         return Outcome("delivery_error", f"Delivery failed: {exc}")
     return Outcome("delivered", "Delivered")
