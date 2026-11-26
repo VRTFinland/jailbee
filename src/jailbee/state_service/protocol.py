@@ -171,6 +171,7 @@ class ActionEntry:
     error: str | None = None
     cancelled: bool = False
     declined: bool = False
+    state: Literal["running", "awaiting", "done", "failed", "interrupted"] = "running"
 
 
 @dataclass(frozen=True)

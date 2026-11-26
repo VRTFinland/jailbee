@@ -28,7 +28,7 @@ from jailbee.db.models import SchemaMeta
 
 log = logging.getLogger(__name__)
 
-CURRENT_SCHEMA_VERSION = 30
+CURRENT_SCHEMA_VERSION = 31
 
 
 def state_dir() -> Path:
@@ -372,6 +372,11 @@ def _migrate_to_v29(conn: Connection) -> None:
         conn.exec_driver_sql("ALTER TABLE session_info_cache ADD COLUMN git_branch VARCHAR")
 
 
+def _migrate_to_v31(conn: Connection) -> None:
+    """v30 -> v31 adds action_entry through create_all."""
+    return None
+
+
 # target_version -> non-destructive migration step
 _MIGRATIONS: dict[int, Callable[[Connection], None]] = {
     2: _migrate_to_v2,
@@ -403,6 +408,7 @@ _MIGRATIONS: dict[int, Callable[[Connection], None]] = {
     28: _migrate_to_v28,
     29: _migrate_to_v29,
     30: _migrate_to_v30,
+    31: _migrate_to_v31,
 }
 
 

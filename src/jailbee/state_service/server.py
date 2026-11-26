@@ -40,6 +40,8 @@ from jailbee.state_service.protocol import (
 )
 
 if TYPE_CHECKING:
+    from sqlalchemy.engine import Engine
+
     from jailbee.dashboard.runner import Spawner
     from jailbee.incus import Incus
     from jailbee.state_service.gatherer import Gatherer
@@ -94,9 +96,16 @@ class StateServer:
         idle_timeout: float = IDLE_TIMEOUT_SECONDS,
         clock: Callable[[], float] = time.monotonic,
         action_spawn: Spawner | None = None,
+        engine: Engine | None = None,
     ) -> None:
         self._action_spawn = action_spawn
-        self._actions: dict[int, ActionEntry] = {}
+        self._engine = engine
+        if engine is not None:
+            from jailbee.db.actions import load
+
+            self._actions = {entry.entry_id: entry for entry in load(engine)}
+        else:
+            self._actions: dict[int, ActionEntry] = {}
         self._action_tasks: set[asyncio.Task[None]] = set()
         self._gatherer = gatherer
         self._version = version
@@ -228,6 +237,7 @@ class StateServer:
             request.prefix,
         )
         self._actions[entry.entry_id] = entry
+        self._action_changed(entry)
         self._send_action(client, entry)
         loop = asyncio.get_running_loop()
 
@@ -270,6 +280,7 @@ class StateServer:
         if len(output) > OUTPUT_KEEP_CHARS:
             output = OUTPUT_DROPPED_MARKER + output[-OUTPUT_KEEP_CHARS:]
         self._actions[entry_id] = replace(entry, output=output)
+        self._action_changed(self._actions[entry_id])
         for recipient in list(self._clients):
             if recipient.dashboard_id == entry.origin:
                 self._send_action(recipient, ActionOutput(entry_id, chunk))
@@ -278,15 +289,29 @@ class StateServer:
         self._actions[finish.entry_id] = replace(
             self._actions[finish.entry_id],
             finished=True,
+            state="done" if finish.status == 0 and not (finish.error or finish.refused or finish.cancelled or finish.declined) else "failed",
             status=finish.status,
             refused=finish.refused,
             error=finish.error,
             cancelled=finish.cancelled,
             declined=finish.declined,
         )
+        self._action_changed(self._actions[finish.entry_id])
         for recipient in list(self._clients):
             if recipient.dashboard_id == self._actions[finish.entry_id].origin:
                 self._send_action(recipient, finish)
+
+    def _action_changed(self, entry: ActionEntry) -> None:
+        if self._engine is not None:
+            from jailbee.db.actions import save
+
+            save(self._engine, entry)
+
+    def _action_dismissed(self, entry_id: int) -> None:
+        if self._engine is not None:
+            from jailbee.db.actions import delete
+
+            delete(self._engine, entry_id)
 
     def _send_action(
         self, client: _Client, message: ActionEntry | ActionOutput | ActionFinish | ActionRejected
@@ -366,7 +391,8 @@ def run_service(incus: Incus) -> int:
         from jailbee.state_service.service_probe import ServiceProbe, live_fetch
         from jailbee.state_service.session_log import SessionRecorder
 
-        recorder = SessionRecorder(get_engine())
+        engine = get_engine()
+        recorder = SessionRecorder(engine)
         probe = ServiceProbe(live_fetch(incus))
         asyncio.run(
             StateServer(
@@ -376,7 +402,8 @@ def run_service(incus: Incus) -> int:
                     recorder=recorder,
                     pr_heads=PrHeadAutofetcher(),
                     services=probe,
-                )
+                ),
+                engine=engine,
             ).serve(sock)
         )
         return 0
