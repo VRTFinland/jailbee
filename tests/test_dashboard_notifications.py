@@ -1455,3 +1455,36 @@ def test_pilot_b_on_a_non_critical_output_screen_does_nothing(mocker, tmp_path):
     )
 
     assert isinstance(seen[0], pm.OutputScreen)
+
+
+def test_interrupted_entry_needs_failure_attention():
+    from jailbee.dashboard.notifications import NotificationQueue, QueueEntry
+
+    queue = NotificationQueue()
+    queue._entries[123] = QueueEntry(123, "jailbee doctor", "alpha", state="interrupted")
+    assert queue.counts().failed == 1
+    assert ("entry", 123) in queue.attention_items()
+
+
+def test_pilot_interrupted_entry_is_drawn_as_failure(mocker, tmp_path):
+    import asyncio
+
+    from jailbee.dashboard.notifications import QueueEntry
+    from tests.dashboard_pilot import make_app
+
+    app = make_app(mocker, [_pilot_group(tmp_path)])
+    app.session.queue._entries[123] = QueueEntry(
+        123, "jailbee doctor", "alpha", state="interrupted"
+    )
+
+    async def main():
+        async with app.run_test(size=(100, 25)) as pilot:
+            await pilot.pause()
+            await pilot.press("Q")
+            await pilot.pause()
+            entry = app.session.queue_picker().entries[0]
+            assert "interrupted" in entry.label
+            assert entry.tone == "error"
+            assert app.frame.native_box is not None
+
+    asyncio.run(main())

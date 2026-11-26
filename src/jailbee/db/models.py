@@ -58,6 +58,16 @@ class SchemaMeta(SQLModel, table=True):
     version: int
 
 
+class ActionEntryRow(SQLModel, table=True):
+    """Durable action snapshot; prompt-channel questions are never stored."""
+
+    __tablename__ = "action_entry"
+
+    entry_id: int = Field(primary_key=True)
+    payload: str
+    state: str
+
+
 class PoolIP(SQLModel, table=True):
     """One IP for one hostname in one repo's ACL pool."""
 
