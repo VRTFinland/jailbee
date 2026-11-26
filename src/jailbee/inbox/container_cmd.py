@@ -10,7 +10,7 @@ from typer._click.exceptions import UsageError
 from typer.core import TyperGroup
 
 from jailbee.inbox import cli, send, socket_cli
-from jailbee.inbox.errors import InboxBadUsage, InboxRefused, InboxUsage
+from jailbee.inbox.errors import InboxBadUsage, InboxRefusedError, InboxUsage
 from jailbee.inbox.hook_cmd import register_hooks
 
 
@@ -72,7 +72,7 @@ def _run(command: Callable[[], int]) -> None:
     except TimeoutError:
         typer.echo(transport.UNREACHABLE_MESSAGE, err=True)
         code = transport.EXIT_UNREACHABLE
-    except InboxRefused as exc:
+    except InboxRefusedError as exc:
         typer.echo(f"{cli.PROG}: {exc}", err=True)
         code = 1
     except InboxBadUsage as exc:

@@ -1,4 +1,4 @@
-class InboxRefused(Exception):
+class InboxRefusedError(Exception):
     """A request refused locally before contacting the broker."""
 
 

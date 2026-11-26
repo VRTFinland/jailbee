@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import BinaryIO
 
-from jailbee.inbox.errors import InboxBadUsage, InboxRefused, InboxUsage
+from jailbee.inbox.errors import InboxBadUsage, InboxRefusedError, InboxUsage
 
 CONTAINER_INFO_FILE = Path("/etc/jailbee/container.json")
 
@@ -57,7 +57,7 @@ def _refuse_linked_worktree_done() -> None:
         worktrees = repo_git / "worktrees"
         linked = linked or (worktrees.is_dir() and next(worktrees.iterdir(), None) is not None)
     if linked:
-        raise InboxRefused(
+        raise InboxRefusedError(
             "done is the top-level agent's report. If an agent dispatched you, "
             "return your result to it. Otherwise remove the linked worktrees "
             "(git worktree remove <path>) and send done again."
