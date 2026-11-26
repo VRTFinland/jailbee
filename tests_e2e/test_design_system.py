@@ -114,7 +114,7 @@ def test_bundled_icons_render_at_token_sizes_and_follow_the_text_colour(logged_i
     for name in PANELS:
         panel = page.get_by_role("region", name=name, exact=True)
         icons = panel.get_by_role("img")
-        expect(icons).to_have_count(25)
+        expect(icons).to_have_count(26)
         for icon in icons.all():
             expect(icon).to_be_visible()
             # A real vector with painted geometry, not a missing font glyph or external image.
