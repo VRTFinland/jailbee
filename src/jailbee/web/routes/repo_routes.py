@@ -165,8 +165,8 @@ async def send_message(
     await ctx.homes_ready()
     if ctx.deps.agent_chat:
         await ctx.snapshot()
-    found = await run_in_threadpool(ctx.repo_sessions.transcript, prefix, agent, session_id)
-    if found is None:
+    found = await run_in_threadpool(ctx.repo_sessions.transcript_exists, prefix, agent, session_id)
+    if not found:
         raise HTTPException(status_code=404, detail="Unknown session")
     outcome = await run_in_threadpool(chat.send, ctx, prefix, agent, session_id, body.text)
     await run_in_threadpool(

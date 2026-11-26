@@ -269,6 +269,19 @@ def test_totp_guessing_is_limited_on_its_own(
     assert client.post("/api/auth", json=body).status_code == 200
 
 
+def test_message_flood_preserves_security_events_and_message_text(monkeypatch):
+    monkeypatch.setattr(auth_admin, "AUDIT_KEEP", 2)
+    monkeypatch.setattr(auth_admin, "AGENT_MESSAGES_KEEP", 2)
+    engine = get_engine()
+    auth_admin.record_event(engine, "revoke", source="security")
+    for text in ("first", "second", "third"):
+        auth_admin.record_event(engine, "agent_message", source=text)
+    events = auth_admin.recent_events(engine)
+    assert [(e.event, e.source) for e in events] == [
+        ("revoke", "security"), ("agent_message", "second"), ("agent_message", "third")
+    ]
+
+
 @pytest.mark.parametrize("method", ["link", "fido2"])
 def test_a_flood_of_unlimited_method_failures_keeps_the_guessing_trail(
     client: TestClient, pin: PinHolder, monkeypatch: pytest.MonkeyPatch, method: str

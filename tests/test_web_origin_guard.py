@@ -58,6 +58,15 @@ def ws_greeting(client: TestClient, headers: dict[str, str], token: str = "anony
         return str(ws.receive_json()["type"])
 
 
+def test_cross_origin_http_post_is_refused_with_auth_off() -> None:
+    client = make_client("http://localhost:8910", auth_enabled=False)
+    path = "/api/repos/alpha/sessions/claude/example/messages"
+    response = client.post(path, content='{"text":"hello"}', headers={"origin": "https://evil.example"})
+    assert response.status_code == 403
+    response = client.post(path, content='{"text":"hello"}', headers={"origin": "http://localhost:8910"})
+    assert response.status_code != 403
+
+
 # --- WebSocket Origin (always) ----------------------------------------------
 
 
