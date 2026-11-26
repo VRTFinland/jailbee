@@ -108,6 +108,8 @@ describe("GalleryView", () => {
             expect(panel.text()).toContain("Container actions")
             expect(panel.findAll("label").map((label) => label.text())).toEqual([
                 "Container name", "Invalid name", "Disabled field", "Multiline field", "Theme", "Native preferences", "Disabled select",
+                "a) Keep the current approach Recommendation", "b) Try a new approach", "Optional note",
+                "a) Keep the current approach Recommendation", "b) Try a new approach", "Optional note",
             ])
         }
     })
