@@ -141,7 +141,8 @@ def test_repo_live_sessions_include_a_process_whose_transcript_is_not_written_ye
     (home / "projects" / "-work-repo" / f"{SESSION_A}.jsonl").unlink()
     for client in open_client(home):
         rows = client.get("/api/repos/alpha/sessions").json()["sessions"]
-        active = next(r for r in rows if r["session_id"] == SESSION_A)
+        assert [r["session_id"] for r in rows] == [SESSION_A, SESSION_B]
+        active = rows[0]
         assert active["live"] is True
         assert active["container"] == "alpha-1"
         assert active["title"] == ""

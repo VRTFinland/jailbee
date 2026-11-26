@@ -163,7 +163,7 @@ watch([name, historyPage, historyQuery, liveOnly], async ([selected, page, query
         <h2>Sessions</h2>
         <label class="session-filter">
             <Switch v-model="liveOnly" label="Live only" />
-            <span>{{ liveOnly ? "Live only" : "All sessions" }}</span>
+            <span>Live only</span>
         </label>
         <p v-if="error" class="notice ui-notice">{{ error }}</p>
         <p v-else-if="live === null" class="muted">Loading…</p>

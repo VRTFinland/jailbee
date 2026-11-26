@@ -77,10 +77,17 @@ describe("ContainerView", () => {
         expect(wrapper.findAll("li.session")).toHaveLength(1)
         expect(wrapper.find('input[type="search"]').exists()).toBe(false)
         expect(wrapper.find('nav[aria-label="Earlier sessions"]').exists()).toBe(false)
-        await wrapper.get('[role="switch"][aria-label="Live only"]').trigger("click")
+        const toggle = wrapper.get('[role="switch"]')
+        const label = wrapper.get("label.session-filter")
+        expect(toggle.attributes("aria-label")).toBe(label.text())
+        expect(label.text()).toBe("Live only")
+        expect(toggle.attributes("aria-checked")).toBe("true")
+        await toggle.trigger("click")
         await flushPromises()
         expect(wrapper.findAll("li.session")).toHaveLength(2)
-        expect(wrapper.text()).toContain("All sessions")
+        expect(toggle.attributes("aria-label")).toBe(label.text())
+        expect(label.text()).toBe("Live only")
+        expect(toggle.attributes("aria-checked")).toBe("false")
         expect(settings.liveSessionsOnly).toBe(true)
         expect(router.currentRoute.value.name).toBe("container")
         wrapper.unmount()
@@ -122,6 +129,29 @@ describe("ContainerView", () => {
         await router.push("/containers/alpha-2")
         await flushPromises()
         expect(wrapper.get('[role="switch"][aria-label="Live only"]').attributes("aria-checked")).toBe("true")
+        wrapper.unmount()
+    })
+
+    it("ignores a late response after leaving for another container", async () => {
+        updateSettings({liveSessionsOnly: true, openOnlyLiveSession: true})
+        let answerAlpha!: (response: Response) => void
+        const fetchMock = vi.fn<typeof fetch>(input => {
+            if (input === "/api/containers/alpha-1/sessions") {
+                return new Promise<Response>(resolve => {answerAlpha = resolve})
+            }
+            return Promise.resolve(jsonResponse(200, {...liveList, container: "alpha-2", sessions: []}))
+        })
+        const {wrapper, router} = await mountContainer(fetchMock)
+        await router.push("/containers/alpha-2")
+        await flushPromises()
+        expect(fetchMock.mock.calls.map(call => call[0])).toEqual([
+            "/api/containers/alpha-1/sessions", "/api/containers/alpha-2/sessions",
+        ])
+        answerAlpha(jsonResponse(200, liveList))
+        await flushPromises()
+        expect(router.currentRoute.value.path).toBe("/containers/alpha-2")
+        expect(wrapper.findAll("li.session")).toHaveLength(0)
+        expect(wrapper.text()).toContain("No live sessions")
         wrapper.unmount()
     })
 
