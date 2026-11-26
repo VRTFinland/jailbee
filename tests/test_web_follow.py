@@ -475,7 +475,9 @@ def test_follow_reports_chat_changes_without_transcript_writes(started, monkeypa
         while (message := ws.receive_json())["type"] != "append":
             pass
         assert message["chat"]["available"] is True
-        status[0] = ChatAvailability(available=False, code="no_live_session", message="No live session")
+        status[0] = ChatAvailability(
+            available=False, code="no_live_session", message="No live session"
+        )
         while (message := ws.receive_json())["type"] != "append":
             pass
         assert message["entries"] == []
