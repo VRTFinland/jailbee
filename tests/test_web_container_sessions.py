@@ -332,10 +332,7 @@ def test_web_chat_delivers_and_audits_exact_message(home, tmp_path, monkeypatch,
         "42 10 123 S 42 42 5\n10 1 22 S 10 42 5\n",
         "%1 10 1\n",
         "────────\n> \n────────\n",
-        "",
-        "",
-        "",
-    ]
+    ] * 2 + ["", "", ""]
     if refusal == "container_not_running":
         incus.list_containers.return_value = []
     elif refusal == "no_live_session":

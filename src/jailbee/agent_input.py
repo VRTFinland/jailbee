@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import fcntl
+import hashlib
 import logging
 import re
-import threading
 import uuid
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -176,21 +177,26 @@ def availability(cfg: Config, incus: Incus, container: str, session_id: str) -> 
     return _resolve(cfg, incus, container, session_id)[0]
 
 
-_SEND_LOCKS = tuple(threading.Lock() for _ in range(64))
-
-
 def send(cfg: Config, incus: Incus, container: str, session_id: str, text: str) -> Outcome:
     """Deliver a user turn. Capture and paste cannot exclude concurrent human typing."""
-    # The pane is unknown until resolution; serialize the entire operation by container.
-    with _SEND_LOCKS[hash(container) % len(_SEND_LOCKS)]:
-        return _send_locked(cfg, incus, container, session_id, text)
+    from jailbee.state_service.paths import ensure_runtime_dir
 
-
-def _send_locked(cfg: Config, incus: Incus, container: str, session_id: str, text: str) -> Outcome:
     text = "".join(c for c in text if c in "\n\t" or (ord(c) >= 32 and not 127 <= ord(c) <= 159))
     outcome, pane = _resolve(cfg, incus, container, session_id)
-    if pane is None:
-        return outcome
+    for _ in range(4):
+        if pane is None:
+            return outcome
+        digest = hashlib.sha256(f"{container}\0{pane}".encode()).hexdigest()
+        with (ensure_runtime_dir() / f"agent-input-{digest}.lock").open("a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            outcome, current = _resolve(cfg, incus, container, session_id)
+            if current == pane:
+                return _paste(incus, container, pane, text)
+            pane = current
+    return Outcome("delivery_error", "Agent pane changed during delivery")
+
+
+def _paste(incus: Incus, container: str, pane: str, text: str) -> Outcome:
     buffer = "jailbee-" + uuid.uuid4().hex
     try:
         incus.exec_with_input(container, runuser(f"tmux load-buffer -b {buffer} -"), text)

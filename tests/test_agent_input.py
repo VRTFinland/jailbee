@@ -39,10 +39,7 @@ def test_terminal_input_is_preserved(tmp_path, monkeypatch, frame, expected):
         "42 10 123 S 42 42 34816\n10 1 22 S 10 42 34816\n",
         "%1 10 1\n",
         frame,
-        "",
-        "",
-        "",
-    ]
+    ] * 2 + ["", "", ""]
     result = send(Mock(), incus, "box", "abc", "hello\nmaailma ä")
     assert result.code == expected
     if expected == "delivered":

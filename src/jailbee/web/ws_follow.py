@@ -49,6 +49,7 @@ class ConnectionFollows:
         self._authorized = authorized
         self._followers: dict[FollowKey, Follower] = {}
         self._chat_tasks: dict[FollowKey, asyncio.Task[None]] = {}
+        self._chat_status: dict[FollowKey, ChatAvailability] = {}
 
     async def handle(self, message: Subscribe | Unsubscribe) -> None:
         if isinstance(message, Unsubscribe):
@@ -89,9 +90,8 @@ class ConnectionFollows:
                     available=False, code="unsupported_agent", message="Subagent chat unavailable"
                 )
                 if key.subagent_id
-                else await run_in_threadpool(
-                    chat.availability, ctx, key.prefix, key.agent, key.session_id
-                )
+                else self._chat_status.get(key)
+                or ChatAvailability(available=False, code="checking", message="Checking availability")
             )
             await self._send(
                 TranscriptAppend(key=key, entries=entries, offset=next_offset, chat=status)
@@ -105,6 +105,7 @@ class ConnectionFollows:
         previous = await run_in_threadpool(
             chat.availability, self._ctx, key.prefix, key.agent, key.session_id
         )
+        self._chat_status[key] = previous
         if await self._authorized() and key in self._followers:
             await self._send(
                 TranscriptAppend(
@@ -118,6 +119,7 @@ class ConnectionFollows:
             current = await run_in_threadpool(
                 chat.availability, self._ctx, key.prefix, key.agent, key.session_id
             )
+            self._chat_status[key] = current
             if current != previous and key in self._followers:
                 previous = current
                 await self._send(
@@ -127,6 +129,7 @@ class ConnectionFollows:
                 )
 
     def _drop(self, key: FollowKey) -> None:
+        self._chat_status.pop(key, None)
         task = self._chat_tasks.pop(key, None)
         if task is not None:
             task.cancel()

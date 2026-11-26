@@ -271,7 +271,7 @@ def test_totp_guessing_is_limited_on_its_own(
 
 def test_message_flood_preserves_security_events_and_message_text(monkeypatch):
     monkeypatch.setattr(auth_admin, "AUDIT_KEEP", 2)
-    monkeypatch.setattr(auth_admin, "AGENT_MESSAGES_KEEP", 2)
+    monkeypatch.setattr(auth_admin, "AGENT_MESSAGES_KEEP", 2, raising=False)
     engine = get_engine()
     auth_admin.record_event(engine, "revoke", source="security")
     for text in ("first", "second", "third"):
