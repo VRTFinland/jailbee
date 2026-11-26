@@ -182,6 +182,11 @@ class NotificationQueue:
             local = self._entries.get(entry_id)
             self._entries[entry_id] = replace(
                 entry,
+                state=(
+                    local.state
+                    if local is not None and local.pending_question is not None
+                    else entry.state
+                ),
                 foreground=(local.foreground if local is not None else False),
                 pending_question=local.pending_question if local is not None else None,
             )

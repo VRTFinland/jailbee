@@ -50,6 +50,30 @@ def _choose(session, label_part: str):  # type: ignore[no-untyped-def]
     session.picker_chosen(next(e for e in picker.entries if label_part in e.label))
 
 
+def test_shared_action_sync_preserves_local_question_and_origin_modal():
+    from jailbee.dashboard.notifications import NotificationQueue, QueueEntry
+
+    queue = NotificationQueue()
+    local = QueueEntry(
+        42,
+        "jailbee merge",
+        "repo",
+        state="awaiting",
+        pending_question=object(),
+        critical=True,
+        foreground=True,
+    )
+    queue._entries[42] = local
+    remote = QueueEntry(42, "jailbee merge", "repo", state="running", critical=True)
+
+    queue.sync_shared([remote])
+
+    synced = queue.get(42)
+    assert synced is not None
+    assert synced.state == "awaiting"
+    assert synced.foreground
+
+
 def test_a_started_action_is_a_running_entry_and_counts_on_the_badge(mocker, tmp_path):
     _children(mocker)
     session, _ = _one_repo(mocker, tmp_path, defer=True)
