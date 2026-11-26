@@ -26,6 +26,7 @@ from jailbee.config.models_remote import RemotePolicy
 from jailbee.dashboard import runner as drunner
 from jailbee.dashboard.commands import Transport
 from jailbee.dashboard.hit import Hit
+from jailbee.dashboard.questions import AnswerRegistry
 from jailbee.dashboard.runner import ActionOutcome, ActionRun
 from jailbee.dashboard.tui import scrollbar
 from jailbee.dashboard.tui.frame import DashboardView
@@ -218,9 +219,7 @@ class DashboardApp(App[int], inherit_bindings=False):
         self._pending_prompts: set[asyncio.Future[Any]] = set()
         self._prompts_closed = False
         self._handoff_epoch = 0  # odd while suspended; detects a hand-off spanning a relay
-        self._entry_answers: dict[int, asyncio.Future[Any]] = {}
-        self._disconnected_entries: set[int] = set()
-        self._shown_questions: set[int] = set()
+        self._answers = AnswerRegistry()
         self._output_screen: OutputScreen | None = None  # the one a live entry follows
         self._critical_screen: OutputScreen | None = None
 
@@ -369,10 +368,7 @@ class DashboardApp(App[int], inherit_bindings=False):
 
     def _disconnect_entry(self, entry_id: int) -> None:
         def cancel() -> None:
-            self._disconnected_entries.add(entry_id)
-            answer = self._entry_answers.get(entry_id)
-            if answer is not None:
-                self._resolve_answer(answer, None)
+            self._answers.disconnect(entry_id)
 
         self._on_app_thread(cancel)
 
@@ -393,9 +389,9 @@ class DashboardApp(App[int], inherit_bindings=False):
             or bool(handoff_epoch % 2)
             or handoff_epoch != self._handoff_epoch
         )
-        if self._prompts_closed or entry_id in self._disconnected_entries:
+        if self._prompts_closed or (entry_id is not None and self._answers.disconnected(entry_id)):
             if entry_id is not None:
-                self._disconnected_entries.discard(entry_id)
+                self._answers.finish(entry_id)
             return None
         answer: asyncio.Future[Any] = asyncio.get_running_loop().create_future()
         self._pending_prompts.add(answer)
@@ -403,7 +399,7 @@ class DashboardApp(App[int], inherit_bindings=False):
         if entry is None:
             self.push_screen(modal_for(prompt), lambda value: self._resolve_answer(answer, value))
         else:
-            self._entry_answers[entry.id] = answer
+            self._answers.register(entry.id, answer)
             if self.session.question_arrived(
                 entry.id,
                 prompt,
@@ -425,26 +421,23 @@ class DashboardApp(App[int], inherit_bindings=False):
         finally:
             self._pending_prompts.discard(answer)
             if entry is not None:
-                self._entry_answers.pop(entry.id, None)
-                self._disconnected_entries.discard(entry.id)
+                self._answers.finish(entry.id)
 
     @staticmethod
     def _resolve_answer(answer: asyncio.Future[Any], value: Any) -> None:
-        if not answer.done():
-            answer.set_result(value)
+        AnswerRegistry.resolve_future(answer, value)
 
     def show_question(self, entry_id: int) -> None:
         """Answer an entry without unblocking any other command waiting in the queue."""
         entry = self.session.queue.get(entry_id)
-        answer = self._entry_answers.get(entry_id)
+        answer = self._answers.get(entry_id)
         if entry is None or entry.pending_question is None or answer is None:
             return
-        if entry_id in self._shown_questions or answer.done():
+        if not self._answers.show(entry_id):
             return
-        self._shown_questions.add(entry_id)
 
         def resolve(value: Any) -> None:
-            self._shown_questions.discard(entry_id)
+            self._answers.hide(entry_id)
             if value is not LATER:
                 if not answer.done():
                     self.session.question_answered(entry_id)
@@ -453,11 +446,7 @@ class DashboardApp(App[int], inherit_bindings=False):
         modal = modal_for(entry.pending_question, entry=entry)
 
         def close_resolved(_future: asyncio.Future[Any]) -> None:
-            if (
-                self._prompts_closed
-                or not self.screen_stack
-                or entry_id not in self._shown_questions
-            ):
+            if self._prompts_closed or not self.screen_stack or not self._answers.shown(entry_id):
                 return
             if self.screen is modal:
                 modal.dismiss(None)
@@ -466,7 +455,7 @@ class DashboardApp(App[int], inherit_bindings=False):
                 # covered question, leaving the user's current screen untouched.
                 self._screen_stack.remove(modal)
                 modal._pop_result_callback()
-                self._shown_questions.discard(entry_id)
+                self._answers.hide(entry_id)
                 self.call_later(modal.remove)
 
         answer.add_done_callback(close_resolved)

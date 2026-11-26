@@ -424,6 +424,19 @@ Frontend-independent models, columns, menus and dispatch live in the shared
 `dashboard/` package; the state service and Qt frontend do not depend on the
 terminal UI. This split keeps status collection separate from rendering.
 
+The service also owns background dashboard actions. A dashboard sends the
+command, target, origin identity, transport and repository scope; the service
+uses `dashboard/runner.py` rather than adding another subprocess boundary.
+Entry updates, output chunks and final results travel back over the state
+protocol. Entries are shared with dashboards in scope and stored in the host
+state database until dismissed. On startup, unfinished entries become
+`interrupted`; pending questions are not persisted. Critical foreground state
+and terminal hand-off blocking remain local to the originating dashboard.
+Answer arbitration and interaction-based question routing live in the shared
+`dashboard/` core. This first slice cancels service-hosted questions at one
+handler seam; shared question delivery, action-aware lifetime, remote policy
+resolution and version-replacement draining are follow-up tickets.
+
 ## Prompt channel and action runner
 
 Every question a command asks goes through `jailbee.prompting` (`confirm`,

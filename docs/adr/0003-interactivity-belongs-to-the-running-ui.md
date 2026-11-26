@@ -10,6 +10,14 @@ A dashboard runs an action by starting JailBee's own CLI as a child process. Unt
 
 ## Consequences
 
+- Background dashboard actions are now started by the state service through
+  `dashboard.runner`; the service holds the child's end of the UI boundary,
+  while dashboards receive entry changes and output through `StateClient`.
+  Attach-style actions still use the requesting terminal. Answer arbitration
+  and interaction tracking are frontend-agnostic dashboard core components.
+  The first action-host slice cancels questions at a single handler seam;
+  publication and answering across dashboards follow in the question-routing
+  ticket. Pending questions are never persisted with action entries.
 - A test forbids prompt libraries outside `prompting`. The exceptions are named.
 - The terminal dashboard stops releasing the terminal for non-attach actions. Their output is shown by the dashboard instead.
 - Owning a question includes deciding when to show it. A question from a background action waits in the notification queue as a pending question, while the command's prompt handler stays blocked; answering the entry resolves only that command's question. It opens at once only when the user is with that action. The show-now decision is a pure function in the frontend-agnostic dashboard core, so every dashboard applies it the same way. The session owns question arrival and queue mutation; entry ownership travels with the question, not through frontend state. The frontend reports user interaction, overlay visibility and suspension explicitly. Dispatch or an answer grants immediate follow-up questions only until the next interaction; suspension always defers them. Later leaves the answer future unresolved, explicit abort resolves it with cancellation, and channel EOF removes a dead command's pending question. A follow-up spec makes the state service the UI that runs commands. Dashboards then receive its questions instead of holding the channel themselves.
