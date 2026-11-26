@@ -477,7 +477,7 @@ def run_pr_push(
 
     from jailbee import pr_ai, pr_links, pr_submodule_flow, prompting
 
-    ai_on = pr_ai.ai_description_on(cfg, no_ai=no_ai)
+    ai_on = pr_ai.ai_description_on(cfg, no_ai=no_ai, ai=ai)
     from jailbee.outbox.io import PrManagement
     from jailbee.outbox.models import OutboxError
 

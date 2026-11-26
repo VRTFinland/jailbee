@@ -11,7 +11,11 @@ from tests.conftest import make_cfg
 
 @pytest.mark.parametrize("answer", [False, True])
 def test_creation_asks_once_for_both_features(tmp_path, mocker, answer):
-    cfg = make_cfg(tmp_path, agents={"claude": {"enabled": True}})
+    cfg = make_cfg(
+        tmp_path,
+        agents={"claude": {"enabled": True}},
+        pr={"ai_description": True, "ai_branch": True},
+    )
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     confirm = mocker.patch("jailbee.prompting._confirm", return_value=answer)
     mocker.patch("jailbee.pr_flow.confirm_pr_branch_name", side_effect=lambda p, s: p)
@@ -44,7 +48,11 @@ def test_creation_asks_once_for_both_features(tmp_path, mocker, answer):
 
 
 def test_creation_noninteractive_skips_with_stderr_hint(tmp_path, mocker, capsys):
-    cfg = make_cfg(tmp_path, agents={"claude": {"enabled": True}})
+    cfg = make_cfg(
+        tmp_path,
+        agents={"claude": {"enabled": True}},
+        pr={"ai_description": True, "ai_branch": True},
+    )
     mocker.patch("jailbee.prompting.is_interactive", return_value=False)
     generate = mocker.patch("jailbee.pr_ai.generate_pr_text")
     plan = pr_flow.resolve_pr_text_and_head(
@@ -72,7 +80,11 @@ def test_creation_noninteractive_skips_with_stderr_hint(tmp_path, mocker, capsys
     [(True, False, "title and description"), (False, True, "branch-name proposal")],
 )
 def test_consent_names_only_enabled_features(tmp_path, mocker, description, branch, phrase):
-    cfg = make_cfg(tmp_path, agents={"claude": {"enabled": True}})
+    cfg = make_cfg(
+        tmp_path,
+        agents={"claude": {"enabled": True}},
+        pr={"ai_description": True, "ai_branch": True},
+    )
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     confirm = mocker.patch("jailbee.prompting._confirm", return_value=True)
     consent = pr_flow.AiConsent()
@@ -86,7 +98,11 @@ def test_consent_names_only_enabled_features(tmp_path, mocker, description, bran
 
 @pytest.mark.parametrize("ai,no_ai,expected", [(True, False, True), (False, True, False)])
 def test_explicit_choice_never_prompts(tmp_path, mocker, ai, no_ai, expected):
-    cfg = make_cfg(tmp_path, agents={"claude": {"enabled": True}})
+    cfg = make_cfg(
+        tmp_path,
+        agents={"claude": {"enabled": True}},
+        pr={"ai_description": True, "ai_branch": True},
+    )
     confirm = mocker.patch("jailbee.prompting._confirm")
     assert (
         pr_flow.AiConsent(ai=ai, no_ai=no_ai).allow(cfg, description=True, branch=True) is expected
@@ -104,7 +120,12 @@ def test_explicit_choice_never_prompts(tmp_path, mocker, ai, no_ai, expected):
         ("--no-ai", True, 0),
         ("noninteractive", True, 0),
         ("disabled", True, 0),
+        ("defaults", True, 0),
+        ("default-ai", False, 1),
         ("outbox", True, 0),
+        ("title", True, 0),
+        ("body", True, 0),
+        ("explicit", True, 0),
     ],
 )
 def test_cli_agent_run_requires_consent(tmp_path, mocker, submodule, mode, answer, expected):
@@ -112,20 +133,23 @@ def test_cli_agent_run_requires_consent(tmp_path, mocker, submodule, mode, answe
         from tests.test_cli_submodule_pr import _happy, _setup
 
         cfg, _, _ = _setup(mocker, tmp_path)
-        _happy(mocker)
+        create = _happy(mocker)
         args = ["submodule", "pr", "push", "feat-foo", "lib/a", "--yes"]
     else:
         from tests.test_cli_pr import _pr_created, _publish_result, _setup
 
         cfg, _ = _setup(mocker, tmp_path)
         mocker.patch("jailbee.sync.publish_branch_from_container", return_value=_publish_result())
-        mocker.patch("jailbee.pr.create_pr", return_value=_pr_created())
+        create = mocker.patch("jailbee.pr.create_pr", return_value=_pr_created())
         args = ["pr", "push", "feat-foo", "--no-submodules", "--yes"]
     from tests.conftest import mock_pr_agent
 
     mock_pr_agent(cfg, True)
-    cfg.pr.ai_description = mode != "disabled"
-    cfg.pr.ai_branch = mode != "disabled"
+    from jailbee.config import PrConfig
+
+    defaults = mode in {"defaults", "default-ai"}
+    cfg.pr.ai_description = PrConfig().ai_description if defaults else mode != "disabled"
+    cfg.pr.ai_branch = PrConfig().ai_branch if defaults else mode != "disabled"
     mocker.patch("jailbee.git.commit_subject", return_value="Fallback title")
     mocker.patch("jailbee.prompting.is_interactive", return_value=mode != "noninteractive")
     confirm = mocker.patch("jailbee.prompting._confirm", return_value=answer)
@@ -140,12 +164,62 @@ def test_cli_agent_run_requires_consent(tmp_path, mocker, submodule, mode, answe
         mocker.patch("jailbee.pr_outbox.record_consumed")
     if mode.startswith("--"):
         args.append(mode)
+    if mode == "default-ai":
+        args.append("--ai")
+    if mode in {"title", "explicit"}:
+        args.extend(["--title", "Explicit title"])
+    if mode in {"body", "explicit"}:
+        args.extend(["--body", "Explicit body"])
     result = CliRunner().invoke(app, args)
     assert result.exit_code == 0, result.output
     assert generate.call_count == expected
     assert confirm.call_count == int(mode == "ask")
     if mode == "noninteractive":
         assert "--ai" in result.stderr
+    if mode == "outbox":
+        assert create.call_args.kwargs["title"] == "feat: from container"
+    if mode == "default-ai":
+        assert create.call_args.kwargs["title"] == "Title"
+        assert create.call_args.kwargs["body"] == "Body"
+
+
+@pytest.mark.parametrize("submodule", [False, True], ids=["repo", "submodule"])
+def test_ai_enables_description_update_with_default_off_config(tmp_path, mocker, submodule):
+    if submodule:
+        from tests.test_cli_submodule_pr import _created, _happy, _setup
+
+        _cfg, _, _ = _setup(
+            mocker, tmp_path, state_record=pr_flow.PrRecord(123, "feat/foo", True, False)
+        )
+        _happy(mocker)
+        mocker.patch("jailbee.pr.view_existing_pr", return_value=_created(already=True))
+        args = ["submodule", "pr", "push", "feat-foo", "lib/a", "--yes", "--ai"]
+    else:
+        from tests.test_cli_pr import _update_setup
+
+        _cfg, _ = _update_setup(mocker, tmp_path)
+        args = ["pr", "push", "feat-foo", "--no-submodules", "--yes", "--ai"]
+    from jailbee.config import PrConfig
+    from tests.conftest import mock_pr_agent
+
+    mock_pr_agent(_cfg, True)
+    _cfg.pr.ai_description = PrConfig().ai_description
+    _cfg.pr.ai_branch = PrConfig().ai_branch
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
+    confirm = mocker.patch("jailbee.prompting._confirm")
+    generate = mocker.patch(
+        "jailbee.pr_ai.generate_pr_text",
+        return_value=PrText("Updated title", "Updated body", "unused"),
+    )
+    edit = mocker.patch("jailbee.pr.edit_pr")
+
+    result = CliRunner().invoke(app, args)
+
+    assert result.exit_code == 0, result.output
+    generate.assert_called_once()
+    confirm.assert_not_called()
+    assert edit.call_args.kwargs["title"] == "Updated title"
+    assert edit.call_args.kwargs["body"] == "Updated body"
 
 
 @pytest.mark.parametrize("submodule", [False, True])
@@ -160,7 +234,11 @@ def test_conflicting_ai_flags_fail_before_publication(mocker, submodule):
 
 @pytest.mark.parametrize("text", [None, PrText("Generated", "Body", "feat/x")])
 def test_discovered_existing_pr_does_not_repeat_agent_run(tmp_path, mocker, text):
-    cfg = make_cfg(tmp_path, agents={"claude": {"enabled": True}})
+    cfg = make_cfg(
+        tmp_path,
+        agents={"claude": {"enabled": True}},
+        pr={"ai_description": True, "ai_branch": True},
+    )
     scope = pr_flow.PrScope.for_repo(cfg)
     consent = pr_flow.AiConsent()
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
@@ -204,7 +282,11 @@ def test_discovered_existing_pr_does_not_repeat_agent_run(tmp_path, mocker, text
 
 
 def test_noninteractive_description_flag_is_not_agent_consent(tmp_path, mocker, capsys):
-    cfg = make_cfg(tmp_path, agents={"claude": {"enabled": True}})
+    cfg = make_cfg(
+        tmp_path,
+        agents={"claude": {"enabled": True}},
+        pr={"ai_description": True, "ai_branch": True},
+    )
     mocker.patch("jailbee.prompting.is_interactive", return_value=False)
     generate = mocker.patch("jailbee.pr_ai.generate_pr_text")
     update = pr_flow.resolve_pr_description_update(
@@ -226,7 +308,11 @@ def test_noninteractive_description_flag_is_not_agent_consent(tmp_path, mocker, 
 
 @pytest.mark.parametrize("answer", [False, True])
 def test_branch_only_consent_never_applies_generated_description(tmp_path, mocker, answer):
-    cfg = make_cfg(tmp_path, agents={"claude": {"enabled": True}}, pr={"ai_description": False})
+    cfg = make_cfg(
+        tmp_path,
+        agents={"claude": {"enabled": True}},
+        pr={"ai_description": False, "ai_branch": True},
+    )
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     confirm = mocker.patch("jailbee.prompting._confirm", return_value=answer)
     mocker.patch("jailbee.pr_flow.confirm_pr_branch_name", side_effect=lambda p, s: p)
@@ -269,7 +355,11 @@ def test_branch_only_consent_never_applies_generated_description(tmp_path, mocke
 
 
 def test_noninteractive_env_on_a_tty_still_requires_opt_in(tmp_path, mocker, monkeypatch, capsys):
-    cfg = make_cfg(tmp_path, agents={"claude": {"enabled": True}})
+    cfg = make_cfg(
+        tmp_path,
+        agents={"claude": {"enabled": True}},
+        pr={"ai_description": True, "ai_branch": True},
+    )
     monkeypatch.setenv("JAILBEE_NONINTERACTIVE", "1")
     mocker.patch("sys.stdin.isatty", return_value=True)
     confirm = mocker.patch("jailbee.prompting._confirm")
@@ -281,7 +371,11 @@ def test_noninteractive_env_on_a_tty_still_requires_opt_in(tmp_path, mocker, mon
 def test_update_outbox_text_never_asks_agent_consent(tmp_path, mocker):
     from tests.test_cli_submodule_pr import _outbox_source
 
-    cfg = make_cfg(tmp_path, agents={"claude": {"enabled": True}})
+    cfg = make_cfg(
+        tmp_path,
+        agents={"claude": {"enabled": True}},
+        pr={"ai_description": True, "ai_branch": True},
+    )
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     confirm = mocker.patch("jailbee.prompting._confirm")
     generate = mocker.patch("jailbee.pr_ai.generate_pr_text")

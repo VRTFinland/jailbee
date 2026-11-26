@@ -458,7 +458,7 @@ def publish_submodule_pr(
                 error(str(exc))
                 raise typer.Exit(1) from exc
 
-            ai_on = pr_ai.ai_description_on(cfg, no_ai=opts.no_ai)
+            ai_on = pr_ai.ai_description_on(cfg, no_ai=opts.no_ai, ai=opts.ai)
             text_on = ai_on or plan.outbox_source is not None
             resolved_title, resolved_body = ("", "")
             if not is_update:

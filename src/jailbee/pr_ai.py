@@ -278,14 +278,14 @@ def _ai_on(cfg: Config, flag: bool, no_ai: bool) -> bool:
     return choice.agent is not None or choice.problem is not None
 
 
-def ai_description_on(cfg: Config, *, no_ai: bool) -> bool:
-    """Whether `jailbee pr` should ask an agent for the title and body."""
-    return _ai_on(cfg, cfg.pr.ai_description, no_ai)
+def ai_description_on(cfg: Config, *, no_ai: bool, ai: bool = False) -> bool:
+    """Whether config or `--ai` enables agent-written title and body."""
+    return _ai_on(cfg, ai or cfg.pr.ai_description, no_ai)
 
 
-def ai_branch_on(cfg: Config, *, no_ai: bool) -> bool:
-    """Whether `jailbee pr` should ask an agent to propose the head branch name."""
-    return _ai_on(cfg, cfg.pr.ai_branch, no_ai)
+def ai_branch_on(cfg: Config, *, no_ai: bool, ai: bool = False) -> bool:
+    """Whether config or `--ai` enables an agent-proposed head branch name."""
+    return _ai_on(cfg, ai or cfg.pr.ai_branch, no_ai)
 
 
 def agent_label(cfg: Config) -> str:

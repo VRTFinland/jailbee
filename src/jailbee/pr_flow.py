@@ -695,16 +695,19 @@ def resolve_pr_text_and_head(
         error(f"--as '{as_name}' is not a valid branch name.")
         raise typer.Exit(2)
 
-    ai_on = pr_ai.ai_description_on(cfg, no_ai=no_ai)
-    branch_ai_on = pr_ai.ai_branch_on(cfg, no_ai=no_ai)
-    need_text = not (title and body)  # explicit --title/--body win outright
+    consent = consent or AiConsent(no_ai=no_ai)
+    ai_on = pr_ai.ai_description_on(cfg, no_ai=no_ai, ai=consent.ai)
+    branch_ai_on = pr_ai.ai_branch_on(cfg, no_ai=no_ai, ai=consent.ai)
+    # Explicit text settles the description; never run an agent just to fill
+    # the other field or propose a branch name.
+    need_text = title is None and body is None
     need_desc_ai = ai_on and need_text
-    need_branch_ai = branch_ai_on and as_name is None
+    need_branch_ai = branch_ai_on and need_text and as_name is None
 
     # Looked up only when the text could actually be used: consuming a manifest
     # whose body then loses to an explicit --title/--body would delete a
     # description that was never published.
-    outbox_source = outbox_hint
+    outbox_source = outbox_hint if need_text else None
     if use_outbox and need_text and outbox_source is None:
         from jailbee import pr_outbox
 
@@ -721,13 +724,10 @@ def resolve_pr_text_and_head(
     ai_text: PrText | None = None
     if outbox_source is not None:
         ai_text = outbox_source.text
-    elif source_branch and (consent or AiConsent(no_ai=no_ai)).allow(
-        cfg, description=need_desc_ai, branch=need_branch_ai
-    ):
+    elif source_branch and consent.allow(cfg, description=need_desc_ai, branch=need_branch_ai):
         from jailbee.tui import console
 
-        if consent is not None:
-            consent.attempted = True
+        consent.attempted = True
         with console.status(status_label):
             ai_text = pr_ai.generate_pr_text(
                 cfg,

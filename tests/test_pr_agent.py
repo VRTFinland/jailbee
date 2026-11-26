@@ -191,35 +191,50 @@ def test_only_the_claude_family_has_a_resumable_transcript(tmp_path):
 
 
 def test_ai_is_off_when_no_agent_is_available(tmp_path):
-    cfg = _cfg(tmp_path)
+    cfg = _cfg(tmp_path, pr={"ai_description": True, "ai_branch": True})
     assert ai_description_on(cfg, no_ai=False) is False
     assert ai_branch_on(cfg, no_ai=False) is False
 
 
-def test_ai_is_on_with_a_usable_agent(tmp_path):
+def test_ai_is_off_by_default_even_with_a_usable_agent(tmp_path):
     cfg = _cfg(tmp_path, {"claude": ON})
+    assert ai_description_on(cfg, no_ai=False) is False
+    assert ai_branch_on(cfg, no_ai=False) is False
+
+
+def test_ai_is_on_with_explicit_config_and_a_usable_agent(tmp_path):
+    cfg = _cfg(tmp_path, {"claude": ON}, pr={"ai_description": True, "ai_branch": True})
     assert ai_description_on(cfg, no_ai=False) is True
     assert ai_branch_on(cfg, no_ai=False) is True
 
 
-def test_no_ai_turns_both_off(tmp_path):
+@pytest.mark.parametrize("ai", [False, True])
+def test_no_ai_turns_both_off(tmp_path, ai):
+    cfg = _cfg(tmp_path, {"claude": ON}, pr={"ai_description": True, "ai_branch": True})
+    assert ai_description_on(cfg, no_ai=True, ai=ai) is False
+    assert ai_branch_on(cfg, no_ai=True, ai=ai) is False
+
+
+def test_explicit_ai_enables_both_default_off_features(tmp_path):
     cfg = _cfg(tmp_path, {"claude": ON})
-    assert ai_description_on(cfg, no_ai=True) is False
-    assert ai_branch_on(cfg, no_ai=True) is False
+    assert ai_description_on(cfg, no_ai=False, ai=True) is True
+    assert ai_branch_on(cfg, no_ai=False, ai=True) is True
 
 
 def test_the_config_flags_gate_each_surface_independently(tmp_path):
-    cfg = _cfg(tmp_path, {"claude": ON}, pr={"ai_description": False})
+    cfg = _cfg(tmp_path, {"claude": ON}, pr={"ai_description": False, "ai_branch": True})
     assert ai_description_on(cfg, no_ai=False) is False
     assert ai_branch_on(cfg, no_ai=False) is True
-    cfg = _cfg(tmp_path, {"claude": ON}, pr={"ai_branch": False})
+    cfg = _cfg(tmp_path, {"claude": ON}, pr={"ai_branch": False, "ai_description": True})
     assert ai_description_on(cfg, no_ai=False) is True
     assert ai_branch_on(cfg, no_ai=False) is False
 
 
 def test_a_pinned_but_unusable_agent_keeps_ai_on_so_generation_can_explain(tmp_path):
     """Switching it off silently would hide the misconfiguration the user just made."""
-    cfg = _cfg(tmp_path, {"claude": ON}, pr={"agent": "codex"})
+    cfg = _cfg(
+        tmp_path, {"claude": ON}, pr={"agent": "codex", "ai_description": True, "ai_branch": True}
+    )
     assert ai_description_on(cfg, no_ai=False) is True
     assert ai_branch_on(cfg, no_ai=False) is True
 

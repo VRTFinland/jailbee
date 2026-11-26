@@ -1765,7 +1765,7 @@ Requires `gh` authenticated on the host. No NAME + a TTY → picker.
 | `--retarget` / `--no-retarget` | Move (or don't) the container's base branch to the stacked PR's base after opening it. Default: ask on a TTY, otherwise skip and print the command. Only acted on when a stacked PR is opened. |
 | `--pr N` | Push to existing PR N instead of opening a new one, when the container's branch is not named like N's head branch. Mutually exclusive with `--as` (exit 2). Refuses a closed/merged or fork PR; retargeting from another number takes a confirmation. |
 | `--yes` / `-y` | Answer the confirmations asked on a `jailbee new --pr` container: the one-time publish choice (adopt PR #N's head — its meaning before `--stacked` existed) and the `--force` overwrite gate. Required when there is no TTY, unless `--stacked` settles the choice. |
-| `--ai` | Authorize configured PR AI generation without asking; does not override disabled config. Mutually exclusive with `--no-ai`. |
+| `--ai` | Enable PR AI generation for this run without asking, overriding both disabled config flags. Mutually exclusive with `--no-ai`. |
 | `--no-ai` | Skip AI generation of the title/body (even when `pr.ai_description` is on); keep the container branch name as-is. Does **not** ignore a description already staged for the container in the outbox — that is `--no-outbox`. |
 | `--no-submodules` | Skip the submodule PR checklist and publishing; publish only the superproject. |
 | `--no-outbox` | Ignore a PR description staged for the container in the outbox. See [PR review outbox](#pr-review-outbox). |
@@ -1773,7 +1773,9 @@ Requires `gh` authenticated on the host. No NAME + a TTY → picker.
 | `--web` | Open the PR in the browser afterwards. |
 | `-b` / `--branch <b>` | Override branch detection. |
 
-When `pr.ai_description` is on (the default) and the container has an agent with a
+AI generation is off by default (`pr.ai_description: false`, `pr.ai_branch: false`).
+Use `--ai` to enable both for one run, or enable either config flag to offer
+generation interactively (default No). When `pr.ai_description` is on and the container has an agent with a
 `headless` command, a new PR's title/body come from that agent — `pr.agent`,
 default `auto` = the repo's own autostart agent (Claude preferred, `claude-jb` when
 `litellm.autostart` is on); a pinned agent that cannot be used is reported, never
@@ -1787,10 +1789,11 @@ Before running the agent, one confirmation names it and the features actually
 needed (title/description, branch-name proposal, or both). The default is **No**:
 running an agent costs time/money and sends code to a model. Declining behaves
 like `--no-ai`. `--ai` skips the question; `--no-ai` skips generation without
-asking. Neither flag overrides disabled config. `--yes` and `--description` are
+asking. `--ai` overrides disabled config for this run. `--yes` and `--description` are
 not AI consent. Off-TTY or with `JAILBEE_NONINTERACTIVE`, no agent runs without
-`--ai`; a single stderr info line explains the flag. Existing outbox descriptions
-are used without this confirmation. The same policy applies to submodule PRs,
+`--ai`; a single stderr info line explains the flag. Explicit `--title` or `--body` skips the agent run entirely, even with `--ai`;
+the missing field uses the normal fallback on creation. Existing outbox descriptions
+are used without this confirmation or an agent run. The same policy applies to submodule PRs,
 the terminal dashboard and remote SSH. Qt's PR flows open a terminal for the
 question, after its source picker and publication options.
 
@@ -2112,7 +2115,7 @@ yet in the superproject's gitlink"), never as an error.
 | `--as <branch>` | Explicit PR head branch name. **New PRs only** — exit 2 once the path has a recorded PR. |
 | `--pr N` | Push to the submodule's existing PR N instead of opening a new one, when its branch is not named like N's head branch. Resolved against the **submodule's own** repo and remote. Mutually exclusive with `--as` (exit 2); refuses a closed/merged or fork PR; retargeting from another number takes a confirmation. |
 | `--yes` / `-y` | Skip confirmations, including the plan-block confirmation above. Required when there is no TTY. Does **not** authorize AI generation or skip the container/submodule pickers, nor the AI-proposed branch-name prompt on a TTY (Enter accepts the proposal) — that prompt only skips when stdin is not a TTY, or the proposal equals the branch the commits came from. |
-| `--ai` | Authorize configured PR AI generation without asking; does not override disabled config. Mutually exclusive with `--no-ai`. |
+| `--ai` | Enable PR AI generation for this run without asking, overriding both disabled config flags. Mutually exclusive with `--no-ai`. |
 | `--no-ai` | Skip AI generation of the title/body/branch. |
 | `--no-outbox` | Skip staged PR descriptions and the outbox publication offer. |
 | `--force` | Force-push with `--force-with-lease`; a foreign (adopted) head asks first (`--yes` skips). |

@@ -1702,15 +1702,19 @@ submodule, resolved against the submodule's own repo and remote.
 head is fixed, so a different branch name would leave the PR untouched.
 `--pr` and `--as` together are a usage error (exit 2).
 
-When `pr.ai_description` is on (the default) and the container has an agent with
+AI generation is off by default (`pr.ai_description: false`, `pr.ai_branch: false`).
+Use `--ai` to enable both for one run without asking, or enable either config
+flag to offer generation interactively (default No). When `pr.ai_description` is on and the container has an agent with
 a one-shot (`headless`) mode, a new PR's **title and body are written by that
 agent**, and `pr.ai_branch` proposes a convention-following head branch name
 (confirmed interactively). Which agent is `pr.agent`: `auto` (default) is the
 repo's own — the autostart agent, Claude preferred, `claude-jb` when
 `litellm.autostart` is on; name one (`codex`, `claude-jb`, ...) to pin it. A
 pinned agent that is not enabled or has no `headless` command is reported and the
-placeholder is used — never another agent. Opt out with `--no-ai`, or override per
-field with `--title`/`--body`/`--as`. Updating an existing PR leaves the
+placeholder is used — never another agent. `--no-ai` skips generation.
+Explicit `--title` or `--body`, or a staged outbox description, skips the agent
+run even with `--ai`. On creation, a missing explicit field uses the normal
+fallback. `--as` fixes the head branch name. Updating an existing PR leaves the
 description alone unless you pass `--description` (regenerate with the agent),
 `--title`/`--body`, or accept the prompt — which is offered only for a PR JailBee
 itself created.

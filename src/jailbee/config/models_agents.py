@@ -789,19 +789,21 @@ class PrConfig(BaseModel):
         ),
     )
     ai_description: bool = Field(
-        default=True,
+        default=False,
         description=(
-            "When true (default), `jailbee pr` asks the in-container agent to generate "
-            "the PR title and body from the branch's commits and diff, falling back to a "
-            "placeholder on failure."
+            "When true, `jailbee pr` offers to generate the PR title and body with the "
+            "in-container agent (confirmation defaults to No), falling back to a "
+            "placeholder on failure. Defaults to false; `--ai` enables generation for "
+            "one run. Explicit title/body or a staged description skip generation."
         ),
     )
     ai_branch: bool = Field(
-        default=True,
+        default=False,
         description=(
-            "When true (default), `jailbee pr` asks the in-container agent to propose a "
-            "convention-following PR head branch name when opening a new PR. Has no "
-            "effect when `ai_description` is false."
+            "When true, `jailbee pr` offers an agent-proposed PR head branch name when "
+            "opening a new PR (confirmation defaults to No). Independent of "
+            "`ai_description`. Defaults to false; `--ai` enables it for one run. "
+            "Explicit title/body or a staged description skip the agent run."
         ),
     )
     prompt: str | None = Field(
@@ -811,8 +813,8 @@ class PrConfig(BaseModel):
             "Project-specific PR-writing instructions, typically a YAML block scalar in a "
             "repo's `.jailbee/config.yaml`. Embedded in jailbee's own prompt as a section "
             "that outranks the generic guidance, without overriding the JSON response "
-            "contract. Capped at 20 000 characters. Has no effect when `ai_description` "
-            "is false."
+            "contract. Capped at 20 000 characters. Has no effect when no agent run "
+            "is requested."
         ),
     )
     model: str | None = Field(
@@ -822,8 +824,8 @@ class PrConfig(BaseModel):
             "Claude (and `claude-jb`) use `sonnet` so description generation doesn't "
             "compete with the coding work's own budget, and every other agent uses its "
             "own default. Accepts an alias or a full model ID; an explicit null inherits "
-            "the container's default model on every agent. Has no effect when "
-            "`ai_description` is false."
+            "the container's default model on every agent. Has no effect when no agent "
+            "run is requested."
         ),
     )
     timeout: int = Field(
@@ -833,7 +835,7 @@ class PrConfig(BaseModel):
             "Seconds `jailbee pr` gives the in-container agent to produce PR text before "
             "falling back to a placeholder. Defaults to 600 — generation is an agentic "
             "run whose cost scales with the repo, not just the diff. Raise it for a "
-            "large tree. Has no effect when `ai_description` is false."
+            "large tree. Has no effect when no agent run is requested."
         ),
     )
 

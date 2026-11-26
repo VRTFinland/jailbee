@@ -8979,7 +8979,7 @@ def pr_push_cmd(
         typer.Option("--web", help="Open the PR in the browser afterwards"),
     ] = False,
     ai: Annotated[
-        bool, typer.Option("--ai", help="Allow configured PR AI generation without asking.")
+        bool, typer.Option("--ai", help="Enable PR AI generation for this run without asking.")
     ] = False,
     no_ai: Annotated[
         bool,
@@ -9091,16 +9091,17 @@ def pr_push_cmd(
     PR exists yet, opens a draft PR; when one does, the push updates it. Optional
     flags update the description and draft/ready state on an existing PR.
 
-    When `pr.ai_description` is on (the default) and the container has an agent
-    with a one-shot mode, a new PR's title and body can be generated after confirmation — the
-    repo's own agent unless `pr.agent` names another;
-    `--ai` authorizes generation without asking, `--no-ai` skips it, and
-    `--title`/`--body` override per field. Off-TTY generation requires `--ai`. On an existing
+    AI generation is off by default. Enable `pr.ai_description` and/or `pr.ai_branch`
+    to offer generation (confirmation defaults to No), or pass `--ai` to enable both
+    for one run without asking. The repo's own agent writes the text unless `pr.agent`
+    names another. `--no-ai` skips generation; explicit `--title` or `--body`, or a
+    staged outbox description, skips the agent run even with `--ai`.
+    Off-TTY generation requires `--ai`. On an existing
     PR the description is left untouched unless you pass `--description`,
     `--title`/`--body`, or accept the interactive prompt.
 
-    On a new PR the head branch name is proposed by Claude (convention-following)
-    and confirmed interactively; `--as` overrides it and `--no-ai` keeps the
+    On a new PR, enabled branch AI proposes a convention-following head name,
+    confirmed interactively; `--as` overrides it and `--no-ai` keeps the
     container branch name. Once a PR exists, its head is fixed: `--as` is then
     rejected with exit 2 instead of silently pushing elsewhere.
 
@@ -9590,7 +9591,7 @@ def submodule_pr_cmd(
     ] = False,
     web: Annotated[bool, typer.Option("--web", help="Open the PR afterwards")] = False,
     ai: Annotated[
-        bool, typer.Option("--ai", help="Allow configured PR AI generation without asking.")
+        bool, typer.Option("--ai", help="Enable PR AI generation for this run without asking.")
     ] = False,
     no_ai: Annotated[bool, typer.Option("--no-ai", help="Skip AI title/body/branch")] = False,
     no_outbox: Annotated[

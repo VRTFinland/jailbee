@@ -592,9 +592,15 @@ def test_no_ai_keeps_the_source_branch(tmp_path, mocker):
 def test_ai_branch_off_keeps_the_source_branch_but_still_generates_text(tmp_path, mocker):
     from tests.conftest import make_cfg
 
-    cfg = make_cfg(tmp_path, agents={"claude": {"enabled": True}}, pr={"ai_branch": False})
+    cfg = make_cfg(
+        tmp_path,
+        agents={"claude": {"enabled": True}},
+        pr={"ai_branch": False, "ai_description": True},
+    )
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting._confirm", return_value=True)
     mocker.patch("jailbee.pr_ai.generate_pr_text", return_value=_text())
-    plan = _plan(tmp_path, mocker, cfg=cfg)
+    plan = _plan(tmp_path, mocker, cfg=cfg, consent=pr_flow.AiConsent())
     assert plan.publish_name == "feat/foo"
     assert plan.ai_text is not None
 
@@ -618,7 +624,7 @@ def test_both_toggles_off_skips_generation_entirely(tmp_path, mocker):
         pr={"ai_branch": False, "ai_description": False},
     )
     gen = mocker.patch("jailbee.pr_ai.generate_pr_text")
-    plan = _plan(tmp_path, mocker, cfg=cfg)
+    plan = _plan(tmp_path, mocker, cfg=cfg, consent=pr_flow.AiConsent())
     assert plan == pr_flow.HeadPlan(publish_name="feat/foo", ai_text=None)
     gen.assert_not_called()
 
@@ -731,6 +737,17 @@ def test_update_path_never_looks_at_the_outbox(tmp_path, mocker):
 
     pending.assert_not_called()
     assert plan == pr_flow.HeadPlan(publish_name="user/x", ai_text=None)
+
+
+@pytest.mark.parametrize("explicit", [{"title": "Manual title"}, {"body": "Manual body"}])
+def test_explicit_text_does_not_consume_a_selected_outbox_description(tmp_path, mocker, explicit):
+    source = _outbox_source()
+    generate = mocker.patch("jailbee.pr_ai.generate_pr_text")
+    plan = _plan(tmp_path, mocker, use_outbox=True, outbox_hint=source, **explicit)
+    assert plan.ai_text is None
+    assert plan.outbox_source is None
+    assert plan.publish_name == "feat/foo"
+    generate.assert_not_called()
 
 
 def test_outbox_branch_goes_through_the_one_confirmation(tmp_path, mocker):

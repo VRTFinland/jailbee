@@ -13,11 +13,11 @@ from tests.conftest import make_cfg
 # --- PrConfig ----------------------------------------------------------------
 
 
-def test_pr_defaults_follow_the_old_claude_defaults():
+def test_pr_ai_generation_is_opt_in():
     pr = PrConfig()
     assert pr.agent == "auto"
-    assert pr.ai_description is True
-    assert pr.ai_branch is True
+    assert pr.ai_description is False
+    assert pr.ai_branch is False
     assert pr.prompt is None
     assert pr.model is None
     assert pr.timeout == 600
