@@ -232,7 +232,9 @@ class FakeStateClient:
         if question is None or question.question_id != question_id:
             return
         del self._action_questions[entry_id]
-        self._question_resolutions.append(ActionQuestionResolved(entry_id, question_id, self.dashboard_id))
+        self._question_resolutions.append(
+            ActionQuestionResolved(entry_id, question_id, self.dashboard_id)
+        )
         event, answer = self._question_waiters.pop(entry_id)
         answer.append(value)
         event.set()

@@ -5,20 +5,29 @@ from threading import Event
 
 import pytest
 
-from jailbee.dashboard.runner import RunResult
-from tests.dashboard_fixtures import ci
-
 from jailbee.dashboard.model import RepoGroup
+from jailbee.dashboard.runner import RunResult
 from jailbee.dashboard.tui import prompt_modals as pm
 from jailbee.prompt_channel import Prompt
 from jailbee.state_service.protocol import ActionEntry, ActionQuestion, ActionQuestionResolved
+from tests.dashboard_fixtures import ci
 from tests.dashboard_pilot import make_app
 
 
 def test_observer_sees_pending_question_and_resolution_closes_modal(mocker, tmp_path):
     app = make_app(mocker, [RepoGroup("alpha", str(tmp_path), None, [])])
     client = app.session.client
-    client._action_entries[42] = ActionEntry(42, ["destroy", "alpha"], str(tmp_path), "alpha", False, "other", "none", str(tmp_path), "alpha")
+    client._action_entries[42] = ActionEntry(
+        42,
+        ["destroy", "alpha"],
+        str(tmp_path),
+        "alpha",
+        False,
+        "other",
+        "none",
+        str(tmp_path),
+        "alpha",
+    )
     client._action_questions[42] = ActionQuestion(42, 7, Prompt(1, "text", "Destroy?"))
 
     async def scenario():
@@ -74,7 +83,17 @@ def test_origin_receives_service_question_and_answers_child(mocker, tmp_path, ve
 def test_observer_critical_action_has_no_foreground_modal(mocker, tmp_path):
     app = make_app(mocker, [RepoGroup("alpha", str(tmp_path), None, [])])
     client = app.session.client
-    client._action_entries[42] = ActionEntry(42, ["merge", "alpha"], str(tmp_path), "alpha", True, "other", "none", str(tmp_path), "alpha")
+    client._action_entries[42] = ActionEntry(
+        42,
+        ["merge", "alpha"],
+        str(tmp_path),
+        "alpha",
+        True,
+        "other",
+        "none",
+        str(tmp_path),
+        "alpha",
+    )
     client._action_questions[42] = ActionQuestion(42, 7, Prompt(1, "text", "Merge?"))
 
     async def scenario():

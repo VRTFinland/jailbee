@@ -414,10 +414,14 @@ class DashboardApp(App[int], inherit_bindings=False):
             self._answers.register(entry_id, answer)
             origin = item.origin == client.dashboard_id
             on_top = origin and (
-                self.session.question_in_foreground(entry_id) and self.screen is self._critical_screen
-                if entry.foreground else not self.modal_open
+                self.session.question_in_foreground(entry_id)
+                and self.screen is self._critical_screen
+                if entry.foreground
+                else not self.modal_open
             )
-            show = self.session.question_arrived(entry_id, question.prompt, on_top=on_top, queue_key="Q")
+            show = self.session.question_arrived(
+                entry_id, question.prompt, on_top=on_top, queue_key="Q"
+            )
             if show and origin:
                 self.show_question(entry_id)
         self.session.queue_changed()
