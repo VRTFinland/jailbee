@@ -4073,6 +4073,7 @@ def instruction_paths(tmp_path, monkeypatch):
         / "claude"
         / "by-file"
         / "CLAUDE.md"
+        / "unattended"
         / "CLAUDE.md"
     )
     source.parent.mkdir(parents=True)

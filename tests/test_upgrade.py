@@ -79,6 +79,16 @@ def test_manifest_is_ascending_and_well_formed() -> None:
     assert _manifest_shape_errors(UPGRADE_NOTES) == []
 
 
+def test_unattended_upgrade_note_advises_apply():
+    from jailbee.upgrade import UPGRADE_NOTES
+
+    notes = [n for n in UPGRADE_NOTES if "unattended" in n.reason]
+    assert len(notes) == 1
+    assert notes[0].version == (1, 8, 10)
+    assert notes[0].actions == frozenset({"apply"})
+    assert "agents.claude.unattended: false" in notes[0].reason
+
+
 def test_upcoming_network_generation_upgrade_note_advises_apply():
     from jailbee.upgrade import UPGRADE_NOTES
 

@@ -572,6 +572,7 @@ egress, agent view, onboarding seeding):
 - `plugins_enabled`
 - `agent_view`
 - `seed_onboarding`
+- `unattended`
 
 The AI-written PR descriptions are not Claude-only any more: they are the
 agent-neutral [`pr:` block](config.md#pr), whose `pr.agent` picks the agent.
@@ -598,6 +599,41 @@ mounts without restarting containers. Edits reach new sessions after a successfu
 not sessions already running; a failed host-file read leaves the previous
 staged copy in place. See [Agent-wide instructions](config.md#agent-wide-instructions-configjailbeeagentsmd)
 for first-time apply, refresh commands and the host-wide opt-out.
+
+### Unattended Claude sessions
+
+`agents.claude.unattended` defaults to `true`, for both `claude` and `claude-jb`,
+including orchestrated children. The container is the sandbox: sessions start in
+`bypassPermissions` mode without its acceptance dialog. Bare-name deny rules remove
+AskUserQuestion and EnterPlanMode from the tool list; ExitPlanMode stays available
+so plan mode entered by the user can still exit. The JailBee plugin's
+`PermissionRequest` hook rejects remaining permission prompts rather than waiting
+for someone to attach. Its message asks the agent to find a safer command form
+(for example avoiding `cd` with relative `rm` paths), or ask the user if unavoidable.
+
+Managed-policy memory defines questions as:
+
+```text
+❓ **Q12** - **Title**: question text
+a) first option
+b) second option
+➡️ a: rationale
+```
+
+Numbers stay unique across the conversation, even after answers. Options and the
+recommendation are optional; without options the question is open. A recommendation
+without a leading letter recommends yes. Answer `12a`, `Q12a` or `Q12: a`;
+"yes" accepts the recommendation. Questions belong in the conversation, not dialogs.
+
+Set `agents.claude.unattended: false` for the previous behaviour. Run `jb apply`,
+restart running containers to install or switch the policy mounts, then start a
+new agent session. Settings use the existing managed-settings drop-in, not a new
+launcher; Claude organizations whose remote managed settings suppress drop-ins
+still have the known [drop-in limitation](https://github.com/VRTFinland/jailbee/issues/170).
+The question instruction requires the normal agent-instructions mount; opting out
+with `agent_instructions: false` leaves permission settings in place but omits
+that instruction. Different repos' on/off policies are staged separately, so an
+apply in one repo cannot change another repo's mounted policy.
 
 ### What the containers of a repo share
 

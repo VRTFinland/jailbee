@@ -6,7 +6,7 @@ import json
 import os
 import tempfile
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, TypedDict
+from typing import TYPE_CHECKING, Literal, NotRequired, TypedDict
 
 from jailbee.paths import xdg_data_home
 
@@ -23,13 +23,23 @@ class Marketplace(TypedDict):
     source: DirectorySource
 
 
+class Permissions(TypedDict):
+    defaultMode: Literal["bypassPermissions"]
+    deny: list[str]
+
+
 class ManagedSettings(TypedDict):
     extraKnownMarketplaces: dict[str, Marketplace]
     enabledPlugins: dict[str, bool]
+    permissions: NotRequired[Permissions]
+    skipDangerousModePermissionPrompt: NotRequired[bool]
+    env: NotRequired[dict[str, str]]
 
 
-def staging_dir() -> Path:
-    return xdg_data_home() / "jailbee" / "claude-managed-settings"
+def staging_dir(*, unattended: bool = True) -> Path:
+    # A repo's opt-out must not rewrite another repo's mounted default policy.
+    mode = "unattended" if unattended else "interactive"
+    return xdg_data_home() / "jailbee" / "claude-managed-settings" / mode
 
 
 def stage(cfg: Config) -> None:
@@ -46,10 +56,17 @@ def stage(cfg: Config) -> None:
         },
         "enabledPlugins": {"jailbee@jailbee": True},
     }
+    if cfg.claude.unattended:
+        settings["permissions"] = {
+            "defaultMode": "bypassPermissions",
+            "deny": ["AskUserQuestion", "EnterPlanMode"],
+        }
+        settings["skipDangerousModePermissionPrompt"] = True
+        settings["env"] = {"JAILBEE_CLAUDE_UNATTENDED": "1"}
     content = json.dumps(settings, indent=2) + "\n"
     if json.loads(content) != settings:
         raise ValueError("managed settings JSON did not round-trip")
-    directory = staging_dir()
+    directory = staging_dir(unattended=cfg.claude.unattended)
     directory.mkdir(parents=True, exist_ok=True)
     target = directory / "50-jailbee.json"
     fd, temporary = tempfile.mkstemp(dir=directory, prefix=".settings-")
@@ -71,7 +88,7 @@ def profile_devices(cfg: Config) -> dict[str, dict[str, str]]:
     devices = {
         "claude-managed-settings": {
             "type": "disk",
-            "source": str(staging_dir()),
+            "source": str(staging_dir(unattended=cfg.claude.unattended)),
             "path": "/etc/claude-code/managed-settings.d",
             "readonly": "true",
         }

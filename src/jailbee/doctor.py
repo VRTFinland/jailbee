@@ -402,10 +402,12 @@ def _check_agent_instructions(cfg: Config) -> CheckResult:
     """Report host-wide instruction staging without requiring Incus."""
     from jailbee.agent_instructions import (
         PREAMBLE,
+        UNATTENDED_INSTRUCTIONS,
         desired_content,
         instruction_agents,
         source_path,
         staging_dir,
+        unattended_for,
     )
     from jailbee.paths import display_path
 
@@ -422,14 +424,20 @@ def _check_agent_instructions(cfg: Config) -> CheckResult:
         return CheckResult(name, False, f"cannot read {display_path(source)}: {exc}")
     stale: list[str] = []
     for agent, gi in agents:
-        target = staging_dir(agent, gi.file) / gi.file
+        unattended = unattended_for(cfg, agent)
+        target = staging_dir(agent, gi.file, unattended=unattended) / gi.file
+        expected = content
+        if unattended:
+            expected = content.replace(
+                PREAMBLE.encode(), (PREAMBLE + "\n\n" + UNATTENDED_INSTRUCTIONS).encode(), 1
+            )
         try:
             current = target.read_bytes()
         except FileNotFoundError:
             current = None
         except OSError as exc:
             return CheckResult(name, False, f"cannot read {display_path(target)}: {exc}")
-        if current != content:
+        if current != expected:
             stale.append(agent)
     if stale:
         return CheckResult(

@@ -907,6 +907,34 @@ cannot tell in advance. The symptom is a `/login` prompt in the container right
 after a switch that reported success. Logging in there fixes it, and the new
 credential lands in the holder as usual.
 
+## Unattended Claude sessions
+
+`agents.claude.unattended: true` is the default for `claude` and `claude-jb`,
+including children. Managed settings select bypass permissions without the
+acceptance dialog and remove AskUserQuestion and EnterPlanMode. ExitPlanMode stays
+for user-entered plan mode. The plugin's `PermissionRequest` hook auto-rejects
+remaining permission prompts with guidance to use a safer command shape, or ask
+the user if unavoidable. Managed-policy memory defines conversational questions:
+
+```text
+❓ **Q12** - **Title**: question text
+a) first option
+b) second option
+➡️ a: rationale
+```
+
+Numbers are unique across the conversation. Options and recommendations are
+optional; no options means an open question. A recommendation without a leading
+letter recommends yes. Answer `12a`, `Q12a` or `Q12: a`; "yes" accepts the
+recommendation. Do not use dialogs for questions.
+
+For the old behaviour set `agents.claude.unattended: false` on the host, run
+`jb apply`, restart running containers to switch the policy mounts, and start a
+new session. The settings use the existing managed drop-in; remote managed
+settings may suppress it (known limitation). `agent_instructions: false` omits
+only the question instruction, not the permission settings. Do not edit shared
+Claude user settings to implement this switch.
+
 ## Host-wide agent instructions
 
 `/etc/claude-code/CLAUDE.md` holds the host-wide instructions from the host's
