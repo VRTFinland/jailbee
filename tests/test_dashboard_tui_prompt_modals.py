@@ -35,7 +35,13 @@ def test_entry_question_shows_command_context_and_controls(kind):
             host.push_screen(pm.modal_for(prompt, entry=entry))
             await pilot.pause()
             texts = [str(w.render()) for w in host.screen.query("Static, Button")]
-            for expected in ("jailbee merge alpha-a", "alpha-a", "last line", "Later", "Abort command"):
+            for expected in (
+                "jailbee merge alpha-a",
+                "alpha-a",
+                "last line",
+                "Later",
+                "Abort command",
+            ):
                 assert any(expected in text for text in texts)
 
     asyncio.run(script())

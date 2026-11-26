@@ -20,11 +20,10 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.suggester import SuggestFromList
 from textual.widgets import Button, Input, OptionList, SelectionList, Static
-
-from jailbee.dashboard.notifications import QueueEntry
 from textual.widgets.option_list import Option
 from textual.widgets.selection_list import Selection
 
+from jailbee.dashboard.notifications import QueueEntry
 from jailbee.prompt_channel import Prompt, WireOption
 
 _CSS = """
@@ -99,9 +98,14 @@ class PromptModal(ModalScreen[Any]):
     def compose(self) -> ComposeResult:
         with Vertical(classes="dialog"):
             if self.entry is not None:
-                yield Static(Text(f"{self.entry.command}  |  {self.entry.target}"), classes="context")
+                yield Static(
+                    Text(f"{self.entry.command}  |  {self.entry.target}"), classes="context"
+                )
                 if self.entry.output:
-                    yield Static(Text.from_ansi("\n".join(self.entry.output.splitlines()[-3:])), classes="context")
+                    yield Static(
+                        Text.from_ansi("\n".join(self.entry.output.splitlines()[-3:])),
+                        classes="context",
+                    )
             yield Static(Text(self.heading()), classes="title", markup=False)
             context = self.prompt.context
             if context is not None and (context.repo or context.container):
