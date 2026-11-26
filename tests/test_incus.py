@@ -1034,6 +1034,15 @@ def test_missing_ok_does_not_swallow_an_unfinished_busy_operation(incus, mocker)
         incus.config_device_remove("feat-foo", "shared-x", missing_ok=True)
 
 
+def test_busy_deadline_expiring_before_sleep_preserves_the_busy_error(incus, mocker):
+    mocker.patch("jailbee.incus.time.monotonic", side_effect=[0.0, 119.0, 120.0])
+    mocker.patch("jailbee.incus.subprocess.run", return_value=_cp(
+        1, 'Error: Instance is busy running a "stop" operation'
+    ))
+    with pytest.raises(IncusError, match='Instance is busy running a "stop" operation'):
+        incus.config_device_remove("feat-foo", "shared-x", missing_ok=True)
+
+
 def test_busy_stop_uses_only_the_remaining_shutdown_budget(incus, mocker):
     clock = mocker.patch("jailbee.incus.time.monotonic", return_value=0.0)
     mocker.patch("jailbee.incus.time.sleep", side_effect=lambda _: setattr(clock, "return_value", 3.0))
@@ -1045,12 +1054,11 @@ def test_busy_stop_uses_only_the_remaining_shutdown_budget(incus, mocker):
     assert run.call_args.kwargs["timeout"] == 2.0
 
 
-def test_stop_does_not_hide_an_already_stopped_error_without_a_busy_wait(incus, mocker):
+def test_stop_accepts_a_shutdown_finishing_before_the_first_attempt(incus, mocker):
     run = mocker.patch(
         "jailbee.incus.subprocess.run", return_value=_cp(1, "Error: The instance is already stopped")
     )
-    with pytest.raises(IncusError, match="already stopped"):
-        incus.stop("feat-foo", timeout=120)
+    incus.stop("feat-foo", timeout=120)
     assert run.call_count == 1
 
 

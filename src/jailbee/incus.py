@@ -420,7 +420,7 @@ class Incus:
                         f"Instance is still busy after waiting up to {budget:g}s: "
                         f"{busy_error}; {exc}"
                     ) from exc
-                if stopped_ok and busy_error is not None and "The instance is already stopped" in str(exc):
+                if stopped_ok and "The instance is already stopped" in str(exc):
                     return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
                 if not is_busy_operation(exc):
                     raise
@@ -431,9 +431,10 @@ class Incus:
                         f"Instance is still busy after waiting up to {budget:g}s: {exc}"
                     ) from exc
                 runner = self.with_deadline(deadline)
-                delay = runner._bounded_timeout(min(1.0, remaining), args)
-                assert delay is not None
-                time.sleep(delay)
+                # Sleep is capped by the same deadline above. Let the next
+                # attempt report expiry inside the try block, retaining busy
+                # context even when the deadline passes just before sleep.
+                time.sleep(min(1.0, remaining))
 
     # ---- Client version -----------------------------------------------------
 
