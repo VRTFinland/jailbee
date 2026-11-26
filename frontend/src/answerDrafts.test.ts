@@ -51,12 +51,28 @@ describe('answer drafts', () => {
     expect(reloaded.read('session119')).toEqual(Array.from({ length: 100 }, (_, n) => `m${n + 20}`))
   })
 
+  it('bounds remembered selections across visits and reloads independently of history', () => {
+    const storage = new MemoryStorage()
+    const history = createCompletionHistory(storage)
+    for (let i = 0; i < 130; i++) history.select(`session${i}`, `m${i}`)
+    const reloaded = createCompletionHistory(storage)
+    expect(storage.length).toBeLessThanOrEqual(100)
+    expect(reloaded.selection('session0')).toBeNull()
+    expect(reloaded.selection('session129')).toBe('m129')
+    reloaded.select('session129', null)
+    expect(createCompletionHistory(storage).selection('session129')).toBeNull()
+  })
+
   it('keeps bounded completion history when storage is unavailable', () => {
     const storage = { getItem: vi.fn(() => { throw Error() }), setItem: vi.fn(() => { throw Error() }), removeItem: vi.fn(() => { throw Error() }), key: vi.fn(() => { throw Error() }), get length(): number { throw Error() }, clear: vi.fn() }
     const history = createCompletionHistory(storage)
     expect(history.read('session')).toEqual([])
     history.write('session', ['first', 'second'])
     expect(history.read('session')).toEqual(['first', 'second'])
+    history.select('session', 'first')
+    expect(history.selection('session')).toBe('first')
+    history.select('session', null)
+    expect(history.selection('session')).toBeNull()
   })
 
   it('keeps usable in-memory drafts when every storage operation throws', () => {
