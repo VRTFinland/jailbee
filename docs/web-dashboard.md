@@ -149,14 +149,50 @@ terminal typing.
 **Waiting for transcript** means the text was pasted; **Delivered** appears only
 when a matching ordinary user entry arrives in the live transcript. The field
 and send button stay disabled while that confirmation is pending. No separate
-acknowledgement or queue is used. The composer also works in the e-ink display
-profile, above its page controls.
+acknowledgement or queue is used. Confirmation is bounded: commands such as
+`/compact` may not produce an ordinary user entry, so an unconfirmed paste does
+not leave messaging locked indefinitely. Reloading the transcript or reconnecting
+also resets that wait. The composer also works in the e-ink display profile,
+above its page controls.
+
+A leading `/` invokes a Claude command and `!` invokes its shell mode, just as at
+the terminal. Control characters except newline and tab are stripped before
+pasting. Concurrent web and CLI sends to one pane are serialized, but terminal
+typing cannot be locked out.
 
 `jb remote web auth log` records sends and refusals with the device or token name,
 session, outcome and exact text in the local state database. Message text is not
 printed to the server's audit logger. Treat that database as private transcript
 data. `remote.ssh.agent_chat` is a separate, also default-off right for
 `jailbee agent say` over SSH.
+
+### Answer numbered questions
+
+When the latest assistant reply contains well-formed numbered ❓ questions, an
+**Answer** bar offers them as a non-modal panel. On a phone, expand it to half or
+full height; on a wide screen it sits beside the transcript. Collapse it to read
+on without losing answers. The conversation remains scrollable, and e-ink uses
+hairlines without animation.
+
+The panel shows one question at a time. Recommended choices are preselected and
+badged; choose another full-width option or add a note. A question without options
+has a text field. Use Back, Next or the step dots to move between questions;
+**Show in conversation** finds and highlights the question in the transcript.
+The last step lists every answer as recommendation or changed. Select a summary
+row to edit it. Only this summary offers Send, beside a preview of the exact
+message: one `Q12: a` line per question, with an optional ` – note`.
+
+Answers are drafts in this browser, keyed by session and source message. Closing
+the panel or reloading preserves them when browser storage is available. They do
+not sync between devices, and blocked storage falls back to an in-memory draft.
+A newer assistant reply leaves the older draft attached to its source with a
+notice; send it deliberately or discard it. Questions in the new reply get their
+own set. Discard removes the saved draft. Older questions without a retained
+draft can always be answered by number in **Message agent**.
+
+Malformed question blocks do not open a panel. The free-text composer remains
+available, and a refused answer send keeps the draft and shows the reason just
+like a free-text message.
 
 ## Install
 
@@ -426,6 +462,8 @@ cannot churn the audit log. The audit log keeps the newest 1000 entries.
 Failed one-time-link and FIDO2
 logins, which no attempt limit throttles, are kept apart (the newest 100), so
 a flood of them cannot push earlier PIN or TOTP failures out of the log.
+Agent-message entries have their own retention budget too, so chat cannot evict
+login, revocation or security-key events.
 
 Logins, TOTP secrets and sessions live in the JailBee state database
 (`~/.local/state/jailbee/state.sqlite`). Its directory is kept `0700` and the
@@ -470,6 +508,9 @@ anyone who can reach the port sees the dashboard. Without that opt-in the
 server also answers only requests whose `Host` header is `localhost`, a
 loopback address or the `listen` address, so a web page cannot reach the
 dashboard by pointing its own domain at `127.0.0.1` (DNS rebinding).
+State-changing HTTP requests also reject foreign origins, including when login
+is disabled, so a page on another site cannot send agent messages through the
+local browser. Non-browser clients without an Origin header remain supported.
 Authentication is never
 skipped based on where a request comes from; see
 [Web dashboard authentication](security.md#web-dashboard-authentication).
