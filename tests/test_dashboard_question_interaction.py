@@ -121,7 +121,10 @@ def test_followup_opens_only_without_interaction_after_answer(mocker, tmp_path, 
     asyncio.run(scenario())
 
 
-def test_question_arriving_during_blocking_handoff_opens_queue_not_modal(mocker, tmp_path):
+@pytest.mark.parametrize("relay_before_handoff", [False, True])
+def test_question_arriving_during_blocking_handoff_opens_queue_not_modal(
+    mocker, tmp_path, relay_before_handoff
+):
     release = Event()
     arriving = Event()
     ready = Event()
@@ -139,9 +142,13 @@ def test_question_arriving_during_blocking_handoff_opens_queue_not_modal(mocker,
 
     call_from_thread = app.call_from_thread
 
+    resume_relay = Event()
+
     def relay(*args, **kwargs):
-        if app.session.handed_off:
+        if relay_before_handoff or app.session.handed_off:
             arriving.set()
+            if relay_before_handoff:
+                assert resume_relay.wait(5)
         return call_from_thread(*args, **kwargs)
 
     mocker.patch.object(app, "call_from_thread", side_effect=relay)
@@ -149,6 +156,7 @@ def test_question_arriving_during_blocking_handoff_opens_queue_not_modal(mocker,
     def terminal_command():
         release.set()
         assert arriving.wait(5)
+        resume_relay.set()
         return 0
 
     async def scenario():
@@ -156,6 +164,9 @@ def test_question_arriving_during_blocking_handoff_opens_queue_not_modal(mocker,
             try:
                 app.session.run_dashboard_command("alpha-a", "container", ["start", "alpha-a"])
                 assert await asyncio.to_thread(ready.wait, 5)
+                if relay_before_handoff:
+                    release.set()
+                    assert await asyncio.to_thread(arriving.wait, 5)
                 assert app.hand_off(terminal_command) == 0
                 async with asyncio.timeout(5):
                     while not any(e.pending_question for e in app.session.queue):

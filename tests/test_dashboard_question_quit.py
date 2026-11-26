@@ -59,20 +59,3 @@ def test_quit_without_questions_does_not_confirm(mocker, tmp_path):
             assert not isinstance(app.screen, pm.ConfirmModal)
 
     asyncio.run(scenario())
-
-
-def test_question_during_handoff_is_deferred(mocker, tmp_path):
-    from tests.dashboard_pilot import bare_session
-
-    session, terminal = bare_session(mocker, [RepoGroup("alpha", str(tmp_path), None, [])])
-    entry_id = session.queue.start("start alpha", "alpha", critical=True)
-    session._modal_entry = entry_id
-    before = session.queue.attention_items()
-    session.begin_hand_off()
-    assert not session.question_arrived(
-        entry_id, Prompt(1, "text", "Name?"), on_top=True, queue_key="Q"
-    )
-    session.end_hand_off(before)
-    assert session.queue.get(entry_id).pending_question is not None
-    assert session.overlay is not None
-    assert not getattr(terminal, "questions", [])

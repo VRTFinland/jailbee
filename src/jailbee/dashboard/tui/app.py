@@ -103,8 +103,8 @@ class _OnAppThread:
     most one flush is posted, which hands the app thread their coalesced text
     (a blocking hand-off would stall the child once its pipe fills while the
     app thread is busy, e.g. in a tmux hand-off). Question announcements
-    are posted too, so the prompt handler can capture suspension at arrival
-    before waiting on the app thread. They drain earlier output first;
+    are posted too, so the prompt handler can track a hand-off spanning its
+    relay to the app thread. They drain earlier output first;
     :meth:`drain` settles what is still pending before the batch finishes.
     """
 
@@ -217,6 +217,7 @@ class DashboardApp(App[int], inherit_bindings=False):
         self._ui_thread = threading.get_ident()
         self._pending_prompts: set[asyncio.Future[Any]] = set()
         self._prompts_closed = False
+        self._handoff_epoch = 0  # odd while suspended; detects a hand-off spanning a relay
         self._entry_answers: dict[int, asyncio.Future[Any]] = {}
         self._disconnected_entries: set[int] = set()
         self._shown_questions: set[int] = set()
@@ -239,6 +240,7 @@ class DashboardApp(App[int], inherit_bindings=False):
         """Run ``fn`` on the real terminal with the dashboard suspended."""
         client = self.session.client
         attention_before = self.session.queue.attention_items()
+        self._handoff_epoch += 1
         self.session.begin_hand_off()
         # Nothing of this dashboard is on screen while `fn` runs: let the
         # shared service stop gathering on its behalf.
@@ -254,6 +256,7 @@ class DashboardApp(App[int], inherit_bindings=False):
             client.set_active(True)
             client.refresh()
             self.session.end_hand_off(attention_before)
+            self._handoff_epoch += 1
             # `fn` may have set its own OSC 2 title: rewrite ours on the next frame.
             self._last_title = None
             self._painted = None
@@ -378,13 +381,18 @@ class DashboardApp(App[int], inherit_bindings=False):
         if self._prompts_closed or threading.get_ident() == self._ui_thread:
             return None
         try:
-            return self.call_from_thread(self._ask, prompt, entry_id, self.session.handed_off)
+            return self.call_from_thread(self._ask, prompt, entry_id, self._handoff_epoch)
         except (Exception, asyncio.CancelledError):
             return None  # the dashboard is closing: cancel the question
 
     async def _ask(
-        self, prompt: Prompt, entry_id: int | None = None, handed_off: bool = False
+        self, prompt: Prompt, entry_id: int | None = None, handoff_epoch: int = 0
     ) -> Any:
+        handed_off = (
+            self.session.handed_off
+            or bool(handoff_epoch % 2)
+            or handoff_epoch != self._handoff_epoch
+        )
         if self._prompts_closed or entry_id in self._disconnected_entries:
             if entry_id is not None:
                 self._disconnected_entries.discard(entry_id)
@@ -445,8 +453,21 @@ class DashboardApp(App[int], inherit_bindings=False):
         modal = modal_for(entry.pending_question, entry=entry)
 
         def close_resolved(_future: asyncio.Future[Any]) -> None:
-            if self.screen_stack and entry_id in self._shown_questions and self.screen is modal:
+            if (
+                self._prompts_closed
+                or not self.screen_stack
+                or entry_id not in self._shown_questions
+            ):
+                return
+            if self.screen is modal:
                 modal.dismiss(None)
+            elif modal in self.screen_stack:
+                # Textual's dismiss always pops the top screen. Remove only this
+                # covered question, leaving the user's current screen untouched.
+                self._screen_stack.remove(modal)
+                modal._pop_result_callback()
+                self._shown_questions.discard(entry_id)
+                self.call_later(modal.remove)
 
         answer.add_done_callback(close_resolved)
         self.push_screen(modal, resolve)
@@ -627,6 +648,8 @@ class DashboardApp(App[int], inherit_bindings=False):
 
     def refresh_frame(self, *, spin: bool = False) -> None:
         """Refresh the session and repaint if anything visible changed."""
+        if self._prompts_closed:
+            return
         self.session.tick(spin=spin)
         title = self.session.title()
         if title != self._last_title:

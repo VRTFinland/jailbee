@@ -68,7 +68,9 @@ finished one):
 Background commands leave their questions in the queue without interrupting
 what you are doing. A silent notice names the command and `Q`; select its
 "awaiting answer" entry with Enter or a click to open the question modal.
-Several commands can wait independently, without a timeout. A question opens
+Several commands can wait independently, without a timeout. If a command's
+prompt channel closes, its question is removed, even beneath another screen;
+the command's final state stays in the queue. A question opens
 immediately while you are with its action: its critical output modal is on top,
 or you have not pressed a key, clicked or opened another overlay since starting
 it or answering its previous question. Refreshes do not count as interaction.

@@ -1883,7 +1883,8 @@ in Notifications (`Q`) unless the user is still with the action (its critical
 output modal is on top, or no interaction followed dispatch or the previous
 answer). Select an awaiting entry to answer; its modal shows the command,
 target and output tail. `Later` / Esc leaves the command waiting without a
-timeout; `Abort command` / Ctrl-C in the question cancels it. Returning from
+timeout; `Abort command` / Ctrl-C in the question cancels it. A closed prompt
+channel removes the command's question, even beneath another screen. Returning from
 tmux opens the queue for new questions, not a question modal. Quitting with
 pending questions confirms how many commands will be aborted; with none,
 there is no extra confirmation. Output, URLs and failure reasons stay in the

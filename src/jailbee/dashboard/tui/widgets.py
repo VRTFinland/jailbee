@@ -597,6 +597,8 @@ class DashboardFrame(Vertical):
         that already left; two boxes are never mounted (or focusable) at once.
         """
         async with self._settle_lock:
+            if self.app._exit:
+                return
             bottom = self.query_one("#bottom", Horizontal)
             screen = self.screen
             while True:
