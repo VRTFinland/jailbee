@@ -15,14 +15,16 @@ from tests_e2e.server import E2EServer
 
 def appearance(control: Locator) -> dict[str, Any]:
     # Compare intrinsic appearance, not the layout widths owned by the view.
-    return dict(control.evaluate("""element => {
+    return dict(
+        control.evaluate("""element => {
         const style = getComputedStyle(element);
         return Object.fromEntries([
             'backgroundColor', 'color', 'borderTopColor', 'borderTopWidth',
             'borderTopStyle', 'borderRadius', 'fontFamily', 'fontSize',
             'fontWeight', 'lineHeight', 'minHeight', 'padding', 'boxShadow'
         ].map(name => [name, style[name]]));
-    }"""))
+    }""")
+    )
 
 
 @pytest.mark.parametrize("view", ["login", "setup"])
@@ -41,14 +43,17 @@ def test_auth_controls_match_the_gallery(
     page.set_viewport_size({"width": width, "height": 900})
     if view == "login":
         # Exercise both code tabs and the independent security-key action.
-        page.route("**/api/auth/methods", lambda route: route.fulfill(
-            json={"methods": ["pin", "totp", "fido2"]}
-        ))
+        page.route(
+            "**/api/auth/methods",
+            lambda route: route.fulfill(json={"methods": ["pin", "totp", "fido2"]}),
+        )
     page.goto(server.url)
     page.locator("html").evaluate("(element, theme) => element.dataset.theme = theme", theme)
     secret = page.get_by_label("Setup PIN" if view == "setup" else "PIN", exact=True)
     secret.fill("123456")
-    submit = page.get_by_role("button", name="Register key" if view == "setup" else "Log in", exact=True)
+    submit = page.get_by_role(
+        "button", name="Register key" if view == "setup" else "Log in", exact=True
+    )
     expect(submit).to_be_enabled()
     secret.blur()
     page.mouse.move(0, 0)
@@ -58,11 +63,17 @@ def test_auth_controls_match_the_gallery(
     try:
         log_in_with_pin(reference, reference_server.url, reference_server.pin.current)
         reference.goto(reference_server.url + "/#/ui")
-        panel = reference.get_by_role("region", name=f"{'E-ink' if theme == 'eink' else theme.title()} theme, normal profile", exact=True)
+        panel = reference.get_by_role(
+            "region",
+            name=f"{'E-ink' if theme == 'eink' else theme.title()} theme, normal profile",
+            exact=True,
+        )
         field = panel.get_by_label("Container name", exact=True)
         expect(field).to_be_visible()
         assert appearance(secret) == appearance(field)
-        assert appearance(submit) == appearance(panel.get_by_role("button", name="primary", exact=True))
+        assert appearance(submit) == appearance(
+            panel.get_by_role("button", name="primary", exact=True)
+        )
         if view == "setup":
             assert appearance(page.get_by_label("Key name")) == appearance(field)
         else:
