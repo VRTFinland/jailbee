@@ -7,7 +7,7 @@ import threading
 import pytest
 
 from jailbee.state_service.client import StateClient
-from jailbee.state_service.protocol import ActionFinish, ActionOutput, RunAction
+from jailbee.state_service.protocol import RunAction
 from jailbee.state_service.server import StateServer
 from tests.test_state_client import _until
 from tests.test_state_server import FakeGatherer, reap_servers, track_server  # noqa: F401
@@ -59,15 +59,10 @@ def test_action_streams_output_and_result(runtime_dir, tmp_path):
                 "repo",
             )
         )
-        events = []
-
-        def finished():
-            events.extend(client.drain_action_events())
-            return any(isinstance(e, ActionFinish) for e in events)
-
-        _until(finished)
-        assert any(isinstance(e, ActionOutput) and e.chunk == "hello\n" for e in events)
-        assert next(e for e in events if isinstance(e, ActionFinish)).status == 7
+        _until(
+            lambda: bool(client.action_entries().get(123) and client.action_entries()[123].finished)
+        )
+        assert client.action_entries()[123].status == 7
         assert client.action_entries()[123].output == "hello\n"
     finally:
         client.close()
@@ -245,9 +240,18 @@ def test_question_is_answered_by_first_dashboard_over_real_channel(runtime_dir, 
         None, dashboard_id="dashboard", version="v1", spawn=lambda: None, backoff=(0.05,)
     )
     client.start()
-    second = StateClient(None, dashboard_id="second", version="v1", spawn=lambda: None, backoff=(0.05,))
+    second = StateClient(
+        None, dashboard_id="second", version="v1", spawn=lambda: None, backoff=(0.05,)
+    )
     second.start()
-    outsider = StateClient(None, dashboard_id="outside", excluded_prefixes=("repo",), version="v1", spawn=lambda: None, backoff=(0.05,))
+    outsider = StateClient(
+        None,
+        dashboard_id="outside",
+        excluded_prefixes=("repo",),
+        version="v1",
+        spawn=lambda: None,
+        backoff=(0.05,),
+    )
     outsider.start()
     try:
         client.wait_first_snapshot(3)
@@ -268,7 +272,18 @@ def test_question_is_answered_by_first_dashboard_over_real_channel(runtime_dir, 
         )
         _until(lambda: 17 in client.action_questions() and 17 in second.action_questions())
         question = second.action_questions()[17]
+        assert client.action_entries()[17].state == "awaiting"
         assert question.prompt.question == "Proceed?"
+        late = StateClient(
+            None, dashboard_id="late", version="v1", spawn=lambda: None, backoff=(0.05,)
+        )
+        late.start()
+        try:
+            late.wait_first_snapshot(3)
+            _until(lambda: 17 in late.action_questions())
+            assert late.action_questions()[17] == question
+        finally:
+            late.close()
         assert 17 not in outsider.action_questions()
         outsider.answer_action_question(17, question.question_id, False)
         second.answer_action_question(17, question.question_id + 1, False)
@@ -286,9 +301,75 @@ def test_question_is_answered_by_first_dashboard_over_real_channel(runtime_dir, 
         outsider.close()
 
 
+def test_prompt_channel_eof_clears_question(runtime_dir, tmp_path):
+    from jailbee.prompt_channel import CommandEnd, Prompt
+    from jailbee.state_service import paths
+
+    release = threading.Event()
+
+    class Child:
+        stdout = None
+
+        def __init__(self, sock):
+            self.sock = sock
+
+            def ask():
+                command = CommandEnd(sock)
+                try:
+                    command.ask(lambda n: Prompt(n, "text", "Name?"))
+                except (OSError, EOFError, ValueError):
+                    pass
+
+            self.thread = threading.Thread(target=ask, daemon=True)
+            self.thread.start()
+
+            def close_channel():
+                release.wait(5)
+                sock.shutdown(2)
+                sock.close()
+
+            threading.Thread(target=close_channel, daemon=True).start()
+
+        def wait(self):
+            self.thread.join(timeout=3)
+            return 0
+
+        def kill(self):
+            pass
+
+    paths.ensure_runtime_dir()
+    server = StateServer(
+        FakeGatherer(), version="v1", action_spawn=lambda *a, **kw: Child(kw["prompt_sock"])
+    )
+    thread = threading.Thread(
+        target=lambda: asyncio.run(server.serve(paths.socket_path())), daemon=True
+    )
+    thread.start()
+    track_server(server, thread)
+    _until(paths.socket_path().exists)
+    client = StateClient(
+        None, dashboard_id="origin", version="v1", spawn=lambda: None, backoff=(0.05,)
+    )
+    client.start()
+    try:
+        client.wait_first_snapshot(3)
+        client.run_action(
+            RunAction(
+                19, ["ls"], str(tmp_path), "target", False, "origin", "none", str(tmp_path), "repo"
+            )
+        )
+        _until(lambda: 19 in client.action_questions())
+        release.set()
+        _until(lambda: 19 not in client.action_questions())
+        _until(lambda: client.action_entries()[19].finished)
+        assert client.action_entries()[19].cancelled
+    finally:
+        release.set()
+        client.close()
+
+
 def test_reconnect_replays_entries_in_repository_scope_and_rejects_duplicate(runtime_dir, tmp_path):
     from jailbee.state_service import paths
-    from jailbee.state_service.protocol import ActionRejected
 
     class Child:
         stdout = None
@@ -336,15 +417,8 @@ def test_reconnect_replays_entries_in_repository_scope_and_rejects_duplicate(run
         _until(lambda: 55 in again.action_entries())
         assert 55 not in other.action_entries()
         assert again.action_entries()[55].finished
-        again.drain_action_events()
         again.run_action(request)
-        events = []
-
-        def rejected():
-            events.extend(again.drain_action_events())
-            return any(isinstance(event, ActionRejected) for event in events)
-
-        _until(rejected)
+        _until(lambda: again.action_rejection(55) is not None)
         assert again.action_entries()[55].status == 0
     finally:
         other.close()
@@ -572,6 +646,214 @@ def test_finished_action_survives_server_restart(runtime_dir, tmp_path):
     client = start_client()
     try:
         assert 123 not in client.action_entries()
+    finally:
+        client.close()
+
+
+def test_action_does_not_starve_gatherer(runtime_dir, tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+
+    from jailbee.state_service import paths
+
+    started = threading.Event()
+    release = threading.Event()
+    gathered_after_start = threading.Event()
+
+    class Gatherer(FakeGatherer):
+        def tick(self, **kwargs):
+            if started.is_set():
+                gathered_after_start.set()
+            return super().tick(**kwargs)
+
+    class Child:
+        stdout = None
+
+        def __init__(self, sock):
+            sock.close()
+
+        def wait(self):
+            started.set()
+            release.wait(5)
+            return 0
+
+        def kill(self):
+            release.set()
+
+    paths.ensure_runtime_dir()
+    server = StateServer(
+        Gatherer(), version="v1", action_spawn=lambda *a, **kw: Child(kw["prompt_sock"])
+    )
+
+    def serve():
+        async def run():
+            asyncio.get_running_loop().set_default_executor(ThreadPoolExecutor(max_workers=1))
+            await server.serve(paths.socket_path())
+
+        asyncio.run(run())
+
+    thread = threading.Thread(target=serve, daemon=True)
+    thread.start()
+    track_server(server, thread)
+    _until(paths.socket_path().exists)
+    client = StateClient(
+        None, dashboard_id="dashboard", version="v1", spawn=lambda: None, backoff=(0.05,)
+    )
+    client.start()
+    try:
+        client.wait_first_snapshot(3)
+        client.run_action(
+            RunAction(
+                123,
+                ["ls"],
+                str(tmp_path),
+                "target",
+                False,
+                "dashboard",
+                "none",
+                str(tmp_path),
+                "repo",
+            )
+        )
+        assert started.wait(3)
+        client.refresh()
+        assert gathered_after_start.wait(2)
+    finally:
+        release.set()
+        client.close()
+
+
+def test_slow_persistence_does_not_block_action_finish(runtime_dir, tmp_path, monkeypatch):
+    from sqlalchemy import create_engine
+
+    from jailbee.db import _ensure_schema, actions
+    from jailbee.state_service import paths
+
+    saving = threading.Event()
+    release = threading.Event()
+    finish_child = threading.Event()
+    original_save = actions.save
+
+    def slow_save(engine, entry):
+        saving.set()
+        release.wait(5)
+        original_save(engine, entry)
+
+    class Child:
+        stdout = None
+
+        def __init__(self, sock):
+            sock.close()
+
+        def wait(self):
+            finish_child.wait(5)
+            return 0
+
+        def kill(self):
+            finish_child.set()
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'state.db'}")
+    _ensure_schema(engine)
+    monkeypatch.setattr(actions, "save", slow_save)
+    paths.ensure_runtime_dir()
+    server = StateServer(
+        FakeGatherer(),
+        version="v1",
+        engine=engine,
+        action_spawn=lambda *a, **kw: Child(kw["prompt_sock"]),
+    )
+    thread = threading.Thread(
+        target=lambda: asyncio.run(server.serve(paths.socket_path())), daemon=True
+    )
+    thread.start()
+    track_server(server, thread)
+    _until(paths.socket_path().exists)
+    client = StateClient(
+        None, dashboard_id="dashboard", version="v1", spawn=lambda: None, backoff=(0.05,)
+    )
+    client.start()
+    try:
+        client.wait_first_snapshot(3)
+        client.run_action(
+            RunAction(
+                123,
+                ["ls"],
+                str(tmp_path),
+                "target",
+                False,
+                "dashboard",
+                "none",
+                str(tmp_path),
+                "repo",
+            )
+        )
+        assert saving.wait(3)
+        finish_child.set()
+        _until(lambda: 123 in client.action_entries() and client.action_entries()[123].finished)
+    finally:
+        release.set()
+        finish_child.set()
+        client.close()
+
+
+def test_save_failure_does_not_prevent_action_completion(runtime_dir, tmp_path, monkeypatch):
+    from sqlalchemy import create_engine
+
+    from jailbee.db import _ensure_schema, actions
+    from jailbee.state_service import paths
+
+    class Child:
+        stdout = None
+
+        def __init__(self, sock):
+            sock.close()
+
+        def wait(self):
+            return 0
+
+        def kill(self):
+            pass
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'state.db'}")
+    _ensure_schema(engine)
+
+    def fail_save(*args):
+        raise OSError("disk failure")
+
+    monkeypatch.setattr(actions, "save", fail_save)
+    paths.ensure_runtime_dir()
+    server = StateServer(
+        FakeGatherer(),
+        version="v1",
+        engine=engine,
+        action_spawn=lambda *a, **kw: Child(kw["prompt_sock"]),
+    )
+    thread = threading.Thread(
+        target=lambda: asyncio.run(server.serve(paths.socket_path())), daemon=True
+    )
+    thread.start()
+    track_server(server, thread)
+    _until(paths.socket_path().exists)
+    client = StateClient(
+        None, dashboard_id="dashboard", version="v1", spawn=lambda: None, backoff=(0.05,)
+    )
+    client.start()
+    try:
+        client.wait_first_snapshot(3)
+        client.run_action(
+            RunAction(
+                123,
+                ["ls"],
+                str(tmp_path),
+                "target",
+                False,
+                "dashboard",
+                "none",
+                str(tmp_path),
+                "repo",
+            )
+        )
+        _until(lambda: 123 in client.action_entries() and client.action_entries()[123].finished)
+        assert client.action_entries()[123].status == 0
     finally:
         client.close()
 

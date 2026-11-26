@@ -20,9 +20,8 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from jailbee.prompt_channel import Prompt
-
 from jailbee import __version__
+from jailbee.prompt_channel import Prompt
 from jailbee.state_service.paths import ensure_runtime_dir, lock_path, socket_path
 from jailbee.state_service.protocol import (
     MAX_WIRE_LINE_BYTES,
@@ -33,11 +32,11 @@ from jailbee.state_service.protocol import (
     ActionOutput,
     ActionQuestion,
     ActionQuestionResolved,
-    AnswerActionQuestion,
     ActionRejected,
     ActionSyncEnd,
     ActionSyncStart,
     Active,
+    AnswerActionQuestion,
     DismissAction,
     Hello,
     ProtocolError,
@@ -117,6 +116,8 @@ class StateServer:
 
             self._actions = {entry.entry_id: entry for entry in load(engine)}
         self._action_tasks: set[asyncio.Task[None]] = set()
+        self._persist_pending: dict[int, ActionEntry | None] = {}
+        self._persist_task: asyncio.Task[None] | None = None
         self._gatherer = gatherer
         self._version = version
         self._idle_timeout = idle_timeout
@@ -148,6 +149,8 @@ class StateServer:
             for writer in list(self._writers):
                 _abort(writer)
             await server.wait_closed()
+            if self._persist_task is not None:
+                await self._persist_task
 
     async def _schedule(self) -> None:
         while not self._stopping:
@@ -217,7 +220,9 @@ class StateServer:
                     ):
                         return
                     question = self._questions.get(entry.entry_id)
-                    if question is not None and not self._send_action(client, question[0], replay=True):
+                    if question is not None and not self._send_action(
+                        client, question[0], replay=True
+                    ):
                         return
                     await asyncio.wait_for(writer.drain(), DRAIN_TIMEOUT_SECONDS)
                 if not self._send_action(client, ActionSyncEnd(), replay=True):
@@ -292,8 +297,8 @@ class StateServer:
             excluded_prefixes=list(request.excluded_prefixes),
         )
         self._actions[entry.entry_id] = entry
-        self._action_changed(entry)
         self._broadcast_action(entry)
+        self._action_changed(entry)
         loop = asyncio.get_running_loop()
 
         def send_output(chunk: str) -> None:
@@ -336,7 +341,19 @@ class StateServer:
                 finish = ActionFinish(request.entry_id, error=str(exc))
             loop.call_soon_threadsafe(self._action_finish, finish)
 
-        task = asyncio.create_task(asyncio.to_thread(run))
+        async def wait_for_action() -> None:
+            done = loop.create_future()
+
+            def work() -> None:
+                try:
+                    run()
+                finally:
+                    loop.call_soon_threadsafe(done.set_result, None)
+
+            threading.Thread(target=work, name="jailbee-action", daemon=True).start()
+            await done
+
+        task = asyncio.create_task(wait_for_action())
         self._action_tasks.add(task)
         task.add_done_callback(self._action_tasks.discard)
 
@@ -349,6 +366,10 @@ class StateServer:
         question = ActionQuestion(entry_id, self._question_serial, prompt)
         future: asyncio.Future[Any] = asyncio.get_running_loop().create_future()
         self._questions[entry_id] = (question, future)
+        entry = replace(self._actions[entry_id], state="awaiting")
+        self._actions[entry_id] = entry
+        self._broadcast_action(entry)
+        self._action_changed(entry)
         self._broadcast_action(question)
         try:
             return await future
@@ -359,8 +380,13 @@ class StateServer:
     def _answer_question(self, client: _Client, answer: AnswerActionQuestion) -> None:
         entry = self._actions.get(answer.entry_id)
         pending = self._questions.get(answer.entry_id)
-        if (entry is None or pending is None or not client.dashboard_id
-                or not self._in_scope(entry, client) or pending[0].question_id != answer.question_id):
+        if (
+            entry is None
+            or pending is None
+            or not client.dashboard_id
+            or not self._in_scope(entry, client)
+            or pending[0].question_id != answer.question_id
+        ):
             return
         self._resolve_question(answer.entry_id, answer.value, client.dashboard_id)
 
@@ -369,6 +395,10 @@ class StateServer:
         if pending is None:
             return
         question, future = pending
+        entry = replace(self._actions[entry_id], state="running")
+        self._actions[entry_id] = entry
+        self._broadcast_action(entry)
+        self._action_changed(entry)
         if not future.done():
             future.set_result(value)
         self._broadcast_action(ActionQuestionResolved(entry_id, question.question_id, answered_by))
@@ -385,7 +415,12 @@ class StateServer:
         return True
 
     def _broadcast_action(
-        self, message: ActionEntry | ActionOutput | ActionFinish | ActionQuestion | ActionQuestionResolved
+        self,
+        message: ActionEntry
+        | ActionOutput
+        | ActionFinish
+        | ActionQuestion
+        | ActionQuestionResolved,
     ) -> None:
         entry = self._actions[message.entry_id] if not isinstance(message, ActionEntry) else message
         for recipient in list(self._clients):
@@ -412,8 +447,8 @@ class StateServer:
             output = OUTPUT_DROPPED_MARKER + output[-OUTPUT_KEEP_CHARS:]
         entry = replace(entry, output=output)
         self._actions[entry_id] = entry
-        self._action_changed(entry)
         self._broadcast_action(ActionOutput(entry_id, chunk))
+        self._action_changed(entry)
 
     def _action_finish(self, finish: ActionFinish) -> None:
         entry = replace(
@@ -430,20 +465,38 @@ class StateServer:
             declined=finish.declined,
         )
         self._actions[finish.entry_id] = entry
-        self._action_changed(entry)
         self._broadcast_action(finish)
+        self._action_changed(entry)
 
     def _action_changed(self, entry: ActionEntry) -> None:
-        if self._engine is not None:
-            from jailbee.db.actions import save
-
-            save(self._engine, entry)
+        self._queue_persist(entry.entry_id, entry)
 
     def _action_dismissed(self, entry_id: int) -> None:
-        if self._engine is not None:
-            from jailbee.db.actions import delete
+        self._queue_persist(entry_id, None)
 
-            delete(self._engine, entry_id)
+    def _queue_persist(self, entry_id: int, entry: ActionEntry | None) -> None:
+        if self._engine is None:
+            return
+        self._persist_pending[entry_id] = entry
+        if self._persist_task is None or self._persist_task.done():
+            self._persist_task = asyncio.create_task(self._persist_actions())
+
+    async def _persist_actions(self) -> None:
+        from jailbee.db.actions import delete, save
+
+        assert self._engine is not None
+        while self._persist_pending:
+            # Coalesce rapidly arriving output before rewriting the snapshot.
+            await asyncio.sleep(0.1)
+            pending, self._persist_pending = self._persist_pending, {}
+            for entry_id, entry in pending.items():
+                try:
+                    if entry is None:
+                        await asyncio.to_thread(delete, self._engine, entry_id)
+                    else:
+                        await asyncio.to_thread(save, self._engine, entry)
+                except Exception:
+                    log.exception("Could not persist action %s", entry_id)
 
     def _send_action(
         self,

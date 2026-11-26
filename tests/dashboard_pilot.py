@@ -235,6 +235,9 @@ class FakeStateClient:
         answer.append(value)
         event.set()
 
+    def action_connection(self):  # type: ignore[no-untyped-def]
+        return 1
+
     def wait_first_snapshot(self, timeout):  # type: ignore[no-untyped-def]
         self.events.append(("wait",))
         if self.fail is not None:
