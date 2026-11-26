@@ -635,10 +635,15 @@ def test_agent_say_requires_agent_chat_even_with_full_command_policy(restricted:
 
     with pytest.raises(RouteError, match="agent_chat is off"):
         policy_allows(("agent", "say", "box", "hi"), FULL, restrict_host=restricted)
-    assert policy_allows(
-        ("agent", "say", "box", "hi"), FULL, restrict_host=restricted,
-        unlocks=RemoteUnlocks(agent_chat=True),
-    ) == "agent say"
+    assert (
+        policy_allows(
+            ("agent", "say", "box", "hi"),
+            FULL,
+            restrict_host=restricted,
+            unlocks=RemoteUnlocks(agent_chat=True),
+        )
+        == "agent say"
+    )
 
 
 def test_mem_is_a_container_command() -> None:

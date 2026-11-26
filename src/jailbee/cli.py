@@ -12212,7 +12212,9 @@ def agent_open_cmd(
 
 @agent_app.command("say")
 def agent_say_cmd(
-    container: Annotated[str | None, typer.Argument(help="Container; asked for when omitted.")] = None,
+    container: Annotated[
+        str | None, typer.Argument(help="Container; asked for when omitted.")
+    ] = None,
     text: Annotated[str | None, typer.Argument(help="Text, or - to read standard input.")] = None,
     session: Annotated[str | None, typer.Option("--session", help="Agent session ID.")] = None,
     config: ConfigOption = None,
@@ -12224,8 +12226,10 @@ def agent_say_cmd(
     cfg = _load_or_exit(config)
     incus, full = _resolve_existing(cfg, container)
     if session is None:
-        if not any(c.get("name") == full and c.get("status", "").lower() == "running"
-                   for c in incus.list_containers()):
+        if not any(
+            c.get("name") == full and c.get("status", "").lower() == "running"
+            for c in incus.list_containers()
+        ):
             error("Container not running")
             raise typer.Exit(3)
         try:
@@ -12235,15 +12239,20 @@ def agent_say_cmd(
             raise typer.Exit(1) from exc
         session = prompting.choose_one(
             "session",
-            [prompting.Option(s.session_id, f"{s.session_id} ({s.agent})", str(s.session_id))
-             for s in sessions if s.session_id],
+            [
+                prompting.Option(s.session_id, f"{s.session_id} ({s.agent})", str(s.session_id))
+                for s in sessions
+                if s.session_id
+            ],
             empty_reason="no live session",
             alternative="--session",
         )
     if text == "-":
         text = sys.stdin.read()
     elif text is None:
-        text = prompting.ask_text("text", validate=lambda value: None if value.strip() else "Text is empty")
+        text = prompting.ask_text(
+            "text", validate=lambda value: None if value.strip() else "Text is empty"
+        )
     if not text.strip():
         error("Text is empty")
         raise typer.Exit(2)
@@ -12252,9 +12261,15 @@ def agent_say_cmd(
         success(result.message)
         return
     error(result.message)
-    codes = {"container_not_running": 3, "no_live_session": 4, "unsupported_agent": 5,
-             "no_pane": 6, "waiting_at_dialog": 7, "unsent_terminal_input": 8,
-             "delivery_error": 9}
+    codes = {
+        "container_not_running": 3,
+        "no_live_session": 4,
+        "unsupported_agent": 5,
+        "no_pane": 6,
+        "waiting_at_dialog": 7,
+        "unsent_terminal_input": 8,
+        "delivery_error": 9,
+    }
     raise typer.Exit(codes.get(result.code, 9))
 
 

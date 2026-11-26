@@ -41,9 +41,9 @@ def _empty_prompt(screen: str) -> bool:
     if len(borders) < 2:
         return False
     region = lines[borders[-2] + 1 : borders[-1]]
-    if not region or not re.match(r"^\s*[❯>]", region[0]):
+    if not region or not re.match(r"^\s*[\u276f>]", region[0]):
         return False
-    first = re.sub(r"^\s*[❯>]", "", region[0], count=1)
+    first = re.sub(r"^\s*[\u276f>]", "", region[0], count=1)
     return not first.strip() and all(not line.strip() for line in region[1:])
 
 
@@ -81,7 +81,9 @@ def live_sessions(cfg: Config, incus: Incus, container: str) -> list[AgentSessio
     return _sessions(cfg, container, _processes(incus, container))
 
 
-def _resolve(cfg: Config, incus: Incus, container: str, session_id: str) -> tuple[Outcome, str | None]:
+def _resolve(
+    cfg: Config, incus: Incus, container: str, session_id: str
+) -> tuple[Outcome, str | None]:
     if not _running(incus, container):
         return Outcome("container_not_running", "Container not running"), None
     try:
@@ -95,7 +97,9 @@ def _resolve(cfg: Config, incus: Incus, container: str, session_id: str) -> tupl
         if session.waiting_for:
             return Outcome("waiting_at_dialog", "Waiting at a dialog"), None
         try:
-            panes = incus.exec(container, _runuser("tmux list-panes -a -F '#{pane_id} #{pane_pid}'"))
+            panes = incus.exec(
+                container, _runuser("tmux list-panes -a -F '#{pane_id} #{pane_pid}'")
+            )
         except IncusError:
             return Outcome("no_pane", "No pane"), None
         ancestors = set()
@@ -117,7 +121,9 @@ def _resolve(cfg: Config, incus: Incus, container: str, session_id: str) -> tupl
         except IncusError:
             return Outcome("no_pane", "No pane"), None
         if not _empty_prompt(screen):
-            return Outcome("unsent_terminal_input", "Unsent terminal input or unrecognised prompt"), None
+            return Outcome(
+                "unsent_terminal_input", "Unsent terminal input or unrecognised prompt"
+            ), None
         return Outcome("available", "Chat available"), pane
     except IncusError as exc:
         return Outcome("delivery_error", f"Delivery failed: {exc}"), None

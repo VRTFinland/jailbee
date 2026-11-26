@@ -13,14 +13,30 @@ from jailbee.incus import IncusError
     ("sessions", "tree", "panes", "expected"),
     [
         ([], "42 10 123\n", "%1 10", "no_live_session"),
-        ([AgentSession("claude", 42, 99, "idle", None, None, None, "id")],
-         "42 10 123\n", "%1 10", "no_live_session"),
-        ([AgentSession("other", 42, 123, "idle", None, None, None, "id")],
-         "42 10 123\n", "%1 10", "unsupported_agent"),
-        ([AgentSession("claude", 42, 123, "waiting", "permission", None, None, "id")],
-         "42 10 123\n", "%1 10", "waiting_at_dialog"),
-        ([AgentSession("claude", 42, 123, "idle", None, None, None, "id")],
-         "42 10 123\n10 1 20\n", "%2 11", "no_pane"),
+        (
+            [AgentSession("claude", 42, 99, "idle", None, None, None, "id")],
+            "42 10 123\n",
+            "%1 10",
+            "no_live_session",
+        ),
+        (
+            [AgentSession("other", 42, 123, "idle", None, None, None, "id")],
+            "42 10 123\n",
+            "%1 10",
+            "unsupported_agent",
+        ),
+        (
+            [AgentSession("claude", 42, 123, "waiting", "permission", None, None, "id")],
+            "42 10 123\n",
+            "%1 10",
+            "waiting_at_dialog",
+        ),
+        (
+            [AgentSession("claude", 42, 123, "idle", None, None, None, "id")],
+            "42 10 123\n10 1 20\n",
+            "%2 11",
+            "no_pane",
+        ),
     ],
 )
 def test_refusals_do_not_paste(monkeypatch, sessions, tree, panes, expected):
@@ -36,7 +52,9 @@ def test_refusals_do_not_paste(monkeypatch, sessions, tree, panes, expected):
 
 def test_missing_tmux_server_is_no_pane(monkeypatch):
     adapter = Mock()
-    adapter.read_sessions.return_value = [AgentSession("claude", 42, 123, "idle", None, None, None, "id")]
+    adapter.read_sessions.return_value = [
+        AgentSession("claude", 42, 123, "idle", None, None, None, "id")
+    ]
     monkeypatch.setattr(agent_input, "wired_adapters", lambda cfg: [adapter])
     incus = Mock()
     incus.list_containers.return_value = [{"name": "box", "status": "Running"}]
