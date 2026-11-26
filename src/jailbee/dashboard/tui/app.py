@@ -395,8 +395,11 @@ class DashboardApp(App[int], inherit_bindings=False):
             if self.session.question_arrived(
                 entry.id,
                 prompt,
-                on_top=not handed_off and (
-                    self.screen is self._critical_screen if entry.foreground else not self.modal_open
+                on_top=not handed_off
+                and (
+                    self.screen is self._critical_screen
+                    if entry.foreground
+                    else not self.modal_open
                 ),
                 queue_key="Q",
             ):
@@ -474,7 +477,10 @@ class DashboardApp(App[int], inherit_bindings=False):
         # Keys and pastes are routed here, one at a time, never through the focus chain:
         # Textual would pick a key's widget on arrival, before the keys ahead of it in
         # the same read had opened or closed anything.
-        if isinstance(event, (events.Key, events.Paste, events.MouseDown)) and not event.is_forwarded:
+        if (
+            isinstance(event, (events.Key, events.Paste, events.MouseDown))
+            and not event.is_forwarded
+        ):
             self.session.user_interacted()
         if self.modal_open and isinstance(event, (events.Key, events.Paste)):
             # A question or output screen has the keyboard: Textual's own routing.

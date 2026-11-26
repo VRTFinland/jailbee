@@ -1047,9 +1047,11 @@ class DashboardSession:
         )
         show = should_show_question(
             critical_foreground=on_top and self.question_in_foreground(entry_id),
-            since_dispatch=available and not entry.foreground
+            since_dispatch=available
+            and not entry.foreground
             and self._action_interactions.get(entry_id) == self._interaction,
-            since_answer=available and not entry.foreground
+            since_answer=available
+            and not entry.foreground
             and self._answer_interactions.get(entry_id) == self._interaction,
         )
         show = not self._handed_off and show
