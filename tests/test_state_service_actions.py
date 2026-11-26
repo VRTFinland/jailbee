@@ -326,6 +326,36 @@ def test_allowed_ssh_action_ignores_service_environment(runtime_dir, tmp_path, m
         client.close()
 
 
+def test_remote_orphan_policy_is_checked_before_repo_scope(runtime_dir, tmp_path, monkeypatch):
+    from jailbee import global_config
+    from jailbee.config.models_remote import RemoteCommandPolicy
+    from jailbee.remote_ssh import repo_scope
+    from jailbee.state_service import paths
+
+    config = global_config.GlobalConfig()
+    config.remote.ssh.commands = RemoteCommandPolicy(mode="allowlist", allow=["orphan destroy"])
+    config.remote.ssh.restrict_host = True
+    monkeypatch.setattr(global_config, "load_global_config", lambda path: (config, []))
+    monkeypatch.setattr(repo_scope, "registered_repos", lambda **kwargs: [repo_scope.RepoChoice("repo", tmp_path)])
+    spawned = []
+    paths.ensure_runtime_dir()
+    server = StateServer(FakeGatherer(), version="v1", action_spawn=lambda *a, **kw: spawned.append(True))
+    thread = threading.Thread(target=lambda: asyncio.run(server.serve(paths.socket_path())), daemon=True)
+    thread.start()
+    track_server(server, thread)
+    _until(paths.socket_path().exists)
+    client = StateClient(None, dashboard_id="remote", transport="ssh", version="v1", spawn=lambda: None)
+    client.start()
+    try:
+        client.wait_first_snapshot(3)
+        client.run_action(RunAction(116, ["orphan", "destroy", "x"], str(tmp_path), "x", False, "remote", "none", str(tmp_path), "repo"))
+        _until(lambda: client.action_rejection(116) is not None)
+        assert not spawned
+        assert 116 not in client.action_entries()
+    finally:
+        client.close()
+
+
 def test_remote_cannot_spoof_registered_repo_scope(runtime_dir, tmp_path, monkeypatch):
     from jailbee import global_config
     from jailbee.config.models_remote import RemoteCommandPolicy

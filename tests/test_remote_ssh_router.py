@@ -623,6 +623,20 @@ def test_every_public_command_is_classified() -> None:
     assert not _CONTAINER_COMMANDS - known_command_paths(), "stale entries"
 
 
+def test_hosted_action_messages_are_not_remote_cli_commands() -> None:
+    from jailbee.state_service.protocol import (
+        ActionQuestion, AnswerActionQuestion, DismissAction, Hello, RunAction, wire_schema,
+    )
+
+    # These are state-socket messages, not CLI leaves. Run and answer are checked
+    # against the action's existing classified CLI argv by the service.
+    assert {"hello", "run_action", "answer_action_question", "dismiss_action", "action_question"} <= wire_schema().keys()
+    assert all(cls.__name__ not in known_command_paths() for cls in (Hello, RunAction, AnswerActionQuestion, DismissAction, ActionQuestion))
+    assert policy_allows(("ls",), FULL) == "ls"
+    with pytest.raises(RouteError, match="manages the host"):
+        policy_allows(("orphan", "destroy", "box"), FULL)
+
+
 @pytest.mark.parametrize("command", ["up", "down", "login", "logout", "logs"])
 def test_litellm_host_actions_are_denied_remotely(command: str) -> None:
     with pytest.raises(RouteError, match="manages the host"):
