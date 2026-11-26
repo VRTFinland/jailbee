@@ -23,7 +23,6 @@ before editing `## Unreleased`.
   to keep it waiting and `Abort command` (Ctrl-C) to cancel explicitly.
   Returning from tmux opens the queue for new questions, not a question modal;
   quitting with pending questions confirms how many commands will be aborted.
-  A critical action whose modal is in the foreground still asks immediately.
   The queue counts pending questions separately from failures: `?` and "awaiting
   answer" use the theme accent, while red `✗` stays reserved for failures
   ([#168](https://github.com/VRTFinland/jailbee/issues/168)).
