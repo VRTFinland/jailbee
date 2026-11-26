@@ -44,6 +44,16 @@ the stored rows of the project directories it lists. The server also reads
 every visible repository's sessions in the background when it starts, after
 dropping the stored rows of deleted transcripts; no request waits for it.
 
+Container and repository session lists default to **Live only**. The visible
+switch changes to **All sessions** for this visit, revealing earlier sessions
+(and the container's history search and pager). With no live sessions, **Show all
+sessions** reveals the history in one tap. **Settings > Sessions** remembers the
+default through **Show only live sessions** and **Open the only live session
+directly**, both on by default. With the filter and shortcut enabled, opening a
+list with exactly one live session opens that transcript directly, replacing the
+list in browser history so Back returns to the entry page. Returning from that
+transcript to its list never jumps back; reloading the list starts a new visit.
+
 A container page shows its live sessions as soon as they are known (they come
 from the state service's snapshot) and keeps them at the top, independently of
 history paging or search. Earlier sessions are recorded and attributed, newest

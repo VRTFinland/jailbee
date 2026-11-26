@@ -29,7 +29,10 @@ before editing `## Unreleased`.
   emphasis, opaque floating menu controls, and their layout, filters and live updates preserved.
   The container view uses the same rows, a labelled search field, tonal history
   paging buttons and vector live-session chips while preserving session ordering,
-  search, pagination and orchestration links.
+  search, pagination and orchestration links. Container and repository session lists
+  default to live sessions, with a per-visit switch to all sessions and a direct
+  shortcut to the only live session that preserves Back and breadcrumb navigation;
+  both defaults can be changed in Settings.
   Login and security-key setup use the shared fields and buttons, preserving PIN,
   authenticator-code, one-time-link and security-key flows.
   The transcript reader uses tonal prompts and tool disclosures, syntax colours

@@ -108,6 +108,19 @@ def _live_keys(c: ContainerInfo) -> list[tuple[str, str]]:
     return list(keys)
 
 
+def live_session_containers(snapshot: Snapshot | None, prefix: str) -> dict[tuple[str, str], str]:
+    """Running session keys and their containers, from the same source as the live list."""
+    if snapshot is None:
+        return {}
+    return {
+        key: c.name
+        for group in snapshot.groups
+        if group.prefix == prefix
+        for c in group.containers
+        for key in _live_keys(c)
+    }
+
+
 def _views(
     repo_sessions: RepoSessions, prefix: str, keys: list[tuple[str, str]], live: bool
 ) -> list[ContainerSessionView]:

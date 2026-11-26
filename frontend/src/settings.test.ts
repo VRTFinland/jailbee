@@ -66,6 +66,22 @@ describe("settings", () => {
         expect(readItem("jailbee.showThinking")).toBe("1")
     })
 
+    it("defaults to live-only sessions and direct opening, and remembers opting out", () => {
+        expect(settings.liveSessionsOnly).toBe(true)
+        expect(settings.openOnlyLiveSession).toBe(true)
+        updateSettings({liveSessionsOnly: false, openOnlyLiveSession: false})
+        reloadSettings()
+        expect(settings.liveSessionsOnly).toBe(false)
+        expect(settings.openOnlyLiveSession).toBe(false)
+        expect(readItem("jailbee.liveSessionsOnly")).toBe("0")
+        expect(readItem("jailbee.openOnlyLiveSession")).toBe("0")
+        localStorage.setItem("jailbee.liveSessionsOnly", "garbage")
+        localStorage.setItem("jailbee.openOnlyLiveSession", "garbage")
+        reloadSettings()
+        expect(settings.liveSessionsOnly).toBe(true)
+        expect(settings.openOnlyLiveSession).toBe(true)
+    })
+
     it("shows the title bar by default and remembers hiding it", () => {
         expect(settings.showTitleBar).toBe(true)
         updateSettings({showTitleBar: false})

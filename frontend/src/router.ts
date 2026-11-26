@@ -60,7 +60,12 @@ export function createAppRouter(history: RouterHistory = createWebHashHistory())
     // setup close code, or the login and setup views' poll). Setup mode is never
     // kept: setup ends with Ctrl-C, so each navigation asks again.
     let mode: Promise<"setup" | "dashboard" | null> | null = null
-    router.beforeEach(async (to) => {
+    router.beforeEach(async (to, from) => {
+        to.meta.fromSession = from.name === "session" || from.name === "subagent"
+            ? router.resolve({name: "session", params: {
+                prefix: from.params.prefix, agent: from.params.agent, sessionId: from.params.sessionId,
+            }}).path
+            : undefined
         mode ??= fetchServerMode()
         const current = await mode
         if (current !== "dashboard") mode = null
