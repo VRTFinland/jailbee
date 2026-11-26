@@ -44,7 +44,10 @@ def remote_unlocks(policy: RemotePolicy | None, transport: Transport) -> router.
 
 
 def check_dashboard_command(
-    argv: Sequence[str], policy: RemotePolicy | None, *, transport: Transport,
+    argv: Sequence[str],
+    policy: RemotePolicy | None,
+    *,
+    transport: Transport,
     excluded_prefixes: frozenset[str] | None = None,
 ) -> None:
     """Refuse dashboard-launched remote commands outside the transport's policy.

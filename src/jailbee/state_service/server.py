@@ -467,7 +467,11 @@ class StateServer:
         entry = self._actions[message.entry_id] if not isinstance(message, ActionEntry) else message
         for recipient in list(self._clients):
             if self._in_scope(entry, recipient):
-                outgoing = self._question_for_client(recipient, message) if isinstance(message, ActionQuestion) else message
+                outgoing = (
+                    self._question_for_client(recipient, message)
+                    if isinstance(message, ActionQuestion)
+                    else message
+                )
                 self._send_action(recipient, outgoing)
 
     def _dismiss_action(self, client: _Client, entry_id: int) -> None:

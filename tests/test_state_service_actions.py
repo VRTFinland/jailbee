@@ -49,7 +49,9 @@ def test_service_action_uses_request_environment_not_server_environment(
     thread.start()
     track_server(server, thread)
     _until(paths.socket_path().exists)
-    client = StateClient(None, dashboard_id="dashboard", transport="none", version="v1", spawn=lambda: None)
+    client = StateClient(
+        None, dashboard_id="dashboard", transport="none", version="v1", spawn=lambda: None
+    )
     client.start()
     try:
         client.wait_first_snapshot(3)
@@ -112,23 +114,57 @@ def test_remote_refusal_precedes_spawn_and_local_is_unaffected(runtime_dir, tmp_
 
     paths.ensure_runtime_dir()
     server = StateServer(FakeGatherer(), version="v1", action_spawn=spawn)
-    thread = threading.Thread(target=lambda: asyncio.run(server.serve(paths.socket_path())), daemon=True)
+    thread = threading.Thread(
+        target=lambda: asyncio.run(server.serve(paths.socket_path())), daemon=True
+    )
     thread.start()
     track_server(server, thread)
     _until(paths.socket_path().exists)
-    remote = StateClient(None, dashboard_id="remote", transport="ssh", version="v1", spawn=lambda: None)
-    local = StateClient(None, dashboard_id="local", transport="none", version="v1", spawn=lambda: None)
+    remote = StateClient(
+        None, dashboard_id="remote", transport="ssh", version="v1", spawn=lambda: None
+    )
+    local = StateClient(
+        None, dashboard_id="local", transport="none", version="v1", spawn=lambda: None
+    )
     remote.start()
     local.start()
     try:
         remote.wait_first_snapshot(3)
         local.wait_first_snapshot(3)
-        remote.run_action(RunAction(111, ["destroy", "x"], str(tmp_path), "x", False, "remote", "none", str(tmp_path), "repo"))
+        remote.run_action(
+            RunAction(
+                111,
+                ["destroy", "x"],
+                str(tmp_path),
+                "x",
+                False,
+                "remote",
+                "none",
+                str(tmp_path),
+                "repo",
+            )
+        )
         _until(lambda: remote.action_rejection(111) is not None)
         assert not spawned
         assert 111 not in remote.action_entries()
-        local.run_action(RunAction(112, ["destroy", "x"], str(tmp_path), "x", False, "local", "ssh", str(tmp_path), "repo"))
-        _until(lambda: local.action_entries().get(112) is not None and local.action_entries()[112].finished)
+        local.run_action(
+            RunAction(
+                112,
+                ["destroy", "x"],
+                str(tmp_path),
+                "x",
+                False,
+                "local",
+                "ssh",
+                str(tmp_path),
+                "repo",
+            )
+        )
+        _until(
+            lambda: (
+                local.action_entries().get(112) is not None and local.action_entries()[112].finished
+            )
+        )
         assert spawned == [True]
     finally:
         remote.close()
@@ -155,6 +191,7 @@ def test_remote_cannot_answer_or_abort_local_question(runtime_dir, tmp_path, mon
                 channel = CommandEnd(sock)
                 answers.append(channel.ask(lambda n: Prompt(n, "confirm", "Proceed?")))
                 channel.close()
+
             self.thread = threading.Thread(target=ask, daemon=True)
             self.thread.start()
 
@@ -166,19 +203,39 @@ def test_remote_cannot_answer_or_abort_local_question(runtime_dir, tmp_path, mon
             pass
 
     paths.ensure_runtime_dir()
-    server = StateServer(FakeGatherer(), version="v1", action_spawn=lambda *a, **kw: Child(kw["prompt_sock"]))
-    thread = threading.Thread(target=lambda: asyncio.run(server.serve(paths.socket_path())), daemon=True)
+    server = StateServer(
+        FakeGatherer(), version="v1", action_spawn=lambda *a, **kw: Child(kw["prompt_sock"])
+    )
+    thread = threading.Thread(
+        target=lambda: asyncio.run(server.serve(paths.socket_path())), daemon=True
+    )
     thread.start()
     track_server(server, thread)
     _until(paths.socket_path().exists)
-    local = StateClient(None, dashboard_id="local", transport="none", version="v1", spawn=lambda: None)
-    remote = StateClient(None, dashboard_id="remote", transport="ssh", version="v1", spawn=lambda: None)
+    local = StateClient(
+        None, dashboard_id="local", transport="none", version="v1", spawn=lambda: None
+    )
+    remote = StateClient(
+        None, dashboard_id="remote", transport="ssh", version="v1", spawn=lambda: None
+    )
     local.start()
     remote.start()
     try:
         local.wait_first_snapshot(3)
         remote.wait_first_snapshot(3)
-        local.run_action(RunAction(113, ["destroy", "x"], str(tmp_path), "x", False, "local", "none", str(tmp_path), "repo"))
+        local.run_action(
+            RunAction(
+                113,
+                ["destroy", "x"],
+                str(tmp_path),
+                "x",
+                False,
+                "local",
+                "none",
+                str(tmp_path),
+                "repo",
+            )
+        )
         _until(lambda: 113 in remote.action_questions())
         question = remote.action_questions()[113]
         assert not question.can_answer

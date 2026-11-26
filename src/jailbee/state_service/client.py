@@ -123,8 +123,10 @@ class StateClient:
     ) -> None:
         from jailbee.remote_ssh.session import is_remote_session, remote_transport
 
-        self._transport = transport if transport is not None else (
-            remote_transport() or ("ssh" if is_remote_session() else "none")
+        self._transport = (
+            transport
+            if transport is not None
+            else (remote_transport() or ("ssh" if is_remote_session() else "none"))
         )
         self._dashboard_id = dashboard_id
         self._cwd_root = cwd_root
@@ -447,7 +449,14 @@ class StateClient:
             cwd = str(self._cwd_root) if self._cwd_root is not None else None
             sock.sendall(
                 encode(
-                    Hello(PROTOCOL, self._version, cwd, self._dashboard_id, self._excluded_prefixes, self._transport)
+                    Hello(
+                        PROTOCOL,
+                        self._version,
+                        cwd,
+                        self._dashboard_id,
+                        self._excluded_prefixes,
+                        self._transport,
+                    )
                 )
             )
             line = reader.readline(MAX_WIRE_LINE_BYTES + 1)
