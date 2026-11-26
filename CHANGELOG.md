@@ -16,6 +16,9 @@ before editing `## Unreleased`.
   Sending refuses open dialogs and unsent terminal input without clearing either.
   Web chat requires the new `remote.web.agent_chat` permission (off by default),
   follows repository visibility, and records sends in the device audit log.
+  Numbered questions in the latest reply open a non-modal answer panel with
+  recommended choices, a final message preview, and per-message drafts that
+  survive reloads; newer replies keep older drafts available to send or discard.
   Claude containers also default to unattended mode for both `claude` and
   `claude-jb`: bypass permissions without the acceptance dialog, no
   AskUserQuestion or EnterPlanMode tools, automatic rejection of remaining
