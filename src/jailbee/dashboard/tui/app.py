@@ -214,6 +214,7 @@ class DashboardApp(App[int], inherit_bindings=False):
         self._pending_prompts: set[asyncio.Future[Any]] = set()
         self._prompts_closed = False
         self._entry_answers: dict[int, asyncio.Future[Any]] = {}
+        self._disconnected_entries: set[int] = set()
         self._shown_questions: set[int] = set()
         self._output_screen: OutputScreen | None = None  # the one a live entry follows
         self._critical_screen: OutputScreen | None = None
@@ -287,6 +288,7 @@ class DashboardApp(App[int], inherit_bindings=False):
                     on_entry_prompt=lambda entry_id, prompt: self._ask_from_worker(
                         prompt, entry_id
                     ),
+                    on_entry_disconnect=self._disconnect_entry,
                     progress=relay,
                     client=self.remote_client,
                     **extra,
@@ -356,6 +358,15 @@ class DashboardApp(App[int], inherit_bindings=False):
         except (Exception, asyncio.CancelledError):
             logger.debug("app-thread post dropped", exc_info=True)
 
+    def _disconnect_entry(self, entry_id: int) -> None:
+        def cancel() -> None:
+            self._disconnected_entries.add(entry_id)
+            answer = self._entry_answers.get(entry_id)
+            if answer is not None:
+                self._resolve_answer(answer, None)
+
+        self._on_app_thread(cancel)
+
     def _ask_from_worker(self, prompt: Prompt, entry_id: int | None = None) -> Any:
         """Block the worker until the UI answers, possibly later from the queue."""
         if self._prompts_closed or threading.get_ident() == self._ui_thread:
@@ -366,7 +377,9 @@ class DashboardApp(App[int], inherit_bindings=False):
             return None  # the dashboard is closing: cancel the question
 
     async def _ask(self, prompt: Prompt, entry_id: int | None = None) -> Any:
-        if self._prompts_closed:
+        if self._prompts_closed or entry_id in self._disconnected_entries:
+            if entry_id is not None:
+                self._disconnected_entries.discard(entry_id)
             return None
         answer: asyncio.Future[Any] = asyncio.get_running_loop().create_future()
         self._pending_prompts.add(answer)
@@ -385,8 +398,7 @@ class DashboardApp(App[int], inherit_bindings=False):
             self._pending_prompts.discard(answer)
             if entry is not None:
                 self._entry_answers.pop(entry.id, None)
-                self.session.queue.set_awaiting(entry.id, False)
-                self.session.queue_changed()
+                self._disconnected_entries.discard(entry.id)
 
     @staticmethod
     def _resolve_answer(answer: asyncio.Future[Any], value: Any) -> None:
