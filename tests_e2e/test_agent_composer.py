@@ -12,7 +12,7 @@ from playwright.sync_api import Page, Route, expect
 
 from jailbee.accounts.adapters.base import get_adapter
 from jailbee.agent_status import AgentSummary
-from tests.conftest import make_cfg
+from jailbee.config import Config, resolve_agents_raw
 from tests.web_fakes import container, repo_group, snapshot_of, wait_until
 from tests_e2e.flows import log_in_with_pin
 from tests_e2e.server import E2EServer
@@ -46,7 +46,7 @@ def test_composer_delivery_and_refusal(
     )
     adapter = get_adapter("claude")
     monkeypatch.setattr(type(adapter), "session_home", lambda self, cfg, name: live.parent)
-    cfg = make_cfg(tmp_path, agents={"claude": {"enabled": True}})
+    cfg = Config.model_validate(resolve_agents_raw({"agents": {"claude": {"enabled": True}}}))
     monkeypatch.setattr("jailbee.web.chat.load_repo_config", lambda path: cfg)
     incus = Mock()
     incus.list_containers.return_value = [{"name": "work-1", "status": "Running"}]
