@@ -329,8 +329,8 @@ def test_web_chat_delivers_and_audits_exact_message(home, tmp_path, monkeypatch,
     incus = Mock()
     incus.list_containers.return_value = [{"name": "alpha-1", "status": "Running"}]
     incus.exec.side_effect = [
-        "42 10 123\n10 1 22\n",
-        "%1 10\n",
+        "42 10 123 S 42 42 5\n10 1 22 S 10 42 5\n",
+        "%1 10 1\n",
         "────────\n> \n────────\n",
         "",
         "",
@@ -353,11 +353,11 @@ def test_web_chat_delivers_and_audits_exact_message(home, tmp_path, monkeypatch,
             )
         )
     elif refusal == "no_pane":
-        incus.exec.side_effect = ["42 10 123\n10 1 22\n", "%1 99\n"]
+        incus.exec.side_effect = ["42 10 123 S 42 42 5\n10 1 22 S 10 42 5\n", "%1 99 1\n"]
     elif refusal == "unsent_terminal_input":
         incus.exec.side_effect = [
-            "42 10 123\n10 1 22\n",
-            "%1 10\n",
+            "42 10 123 S 42 42 5\n10 1 22 S 10 42 5\n",
+            "%1 10 1\n",
             "────────\n> draft\n────────\n",
         ]
     snap = snapshot_of(repo_group("alpha", container("alpha-1", agent_status=live(SESSION_A))))
