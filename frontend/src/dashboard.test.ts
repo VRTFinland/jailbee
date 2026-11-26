@@ -67,8 +67,9 @@ describe("Dashboard", () => {
         sockets[0].hello()
         expect(sockets[0].sent).toEqual([{type: "subscribe", v: PROTOCOL_VERSION, key, offset: 120, meta: "hidden"}])
 
-        sockets[0].deliver({type: "append", v: PROTOCOL_VERSION, key, entries: [entry], offset: 200})
-        expect(onAppend).toHaveBeenCalledWith([entry])
+        const chat = {available: false, code: "no_pane", message: "No pane"}
+        sockets[0].deliver({type: "append", v: PROTOCOL_VERSION, key, entries: [entry], offset: 200, chat})
+        expect(onAppend).toHaveBeenCalledWith([entry], chat)
     })
 
     it("resubscribes from the latest offset after a reconnect", () => {
