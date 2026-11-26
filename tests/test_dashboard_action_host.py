@@ -30,8 +30,28 @@ def test_other_dashboard_critical_action_is_scoped_and_has_no_modal(mocker, tmp_
     groups = [RepoGroup("alpha", str(tmp_path), None, [ci("alpha-a", "alpha")])]
     client = FakeStateClient(groups)
     client._action_entries = {
-        51: ActionEntry(51, ["merge", "alpha-a"], str(tmp_path), "alpha-a", True, "other-dashboard", "none", str(tmp_path), "alpha"),
-        52: ActionEntry(52, ["ls"], str(tmp_path), "private-a", False, "other-dashboard", "none", str(tmp_path), "private"),
+        51: ActionEntry(
+            51,
+            ["merge", "alpha-a"],
+            str(tmp_path),
+            "alpha-a",
+            True,
+            "other-dashboard",
+            "none",
+            str(tmp_path),
+            "alpha",
+        ),
+        52: ActionEntry(
+            52,
+            ["ls"],
+            str(tmp_path),
+            "private-a",
+            False,
+            "other-dashboard",
+            "none",
+            str(tmp_path),
+            "private",
+        ),
     }
 
     def inspect(app):
