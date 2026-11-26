@@ -4,10 +4,13 @@ import {computed, nextTick, ref, watch} from "vue"
 import {useRoute, useRouter} from "vue-router"
 import {apiFetch, Unauthorized} from "../api"
 import PageNav from "../components/PageNav.vue"
+import Button from "../components/ui/Button.vue"
 import IconButton from "../components/ui/IconButton.vue"
 import Field from "../components/ui/Field.vue"
 import ListRow from "../components/ui/ListRow.vue"
 import StatusChip from "../components/ui/StatusChip.vue"
+import Switch from "../components/ui/Switch.vue"
+import {useSessionList} from "../composables/useSessionList"
 import {sessionStatus} from "../components/ui/status"
 import {useDashboard} from "../dashboard"
 import {usePager} from "../composables/usePager"
@@ -17,6 +20,7 @@ const readableTop = ref(0)
 const pager = usePager(() => readableTop.value)
 const route = useRoute()
 const router = useRouter()
+const {liveOnly, openSingleLive} = useSessionList()
 const name = computed(() => String(route.params.name))
 const dashboard = useDashboard()
 const rows = computed(() => dashboard?.state.view?.repos.flatMap(repo => repo.containers) ?? [])
@@ -48,6 +52,7 @@ const error = ref<string | null>(null)
 /** Live sessions first: they come from the snapshot and render at once. The
  * history is a request of its own and joins the list when it arrives. */
 const sessions = computed(() => {
+    if (liveOnly.value) return live.value?.sessions ?? []
     // The two answers come from different snapshots: a session that went live
     // in between is in both, and is shown once, as live.
     const shown = new Set((live.value?.sessions ?? []).map(s => `${s.agent}/${s.session_id}`))
@@ -86,6 +91,7 @@ watch(name, async (selected, _previous, onCleanup) => {
         const result = await liveRequest
         if (!current) return
         live.value = result
+        await openSingleLive(result.repo, result.sessions)
         await nextTick()
         pager.measure()
     } catch (e) {
@@ -101,12 +107,13 @@ watch(name, async (selected, _previous, onCleanup) => {
     }
 }, {immediate: true})
 
-watch([name, historyPage, historyQuery], async ([selected, page, query], previous, onCleanup) => {
+watch([name, historyPage, historyQuery, liveOnly], async ([selected, page, query, onlyLive], previous, onCleanup) => {
     const resetPosition = previous?.[0] === selected
     let current = true
     onCleanup(() => { current = false })
     history.value = null
     historyFailed.value = false
+    if (onlyLive) return
     try {
         const params = new URLSearchParams({limit: String(historyPageSize), offset: String(page * historyPageSize)})
         if (query) params.set("q", query)
@@ -161,12 +168,20 @@ watch([name, historyPage, historyQuery], async ([selected, page, query], previou
                 </ul>
             </section>
             <h2>Sessions</h2>
+            <label class="session-filter">
+                <Switch v-model="liveOnly" label="Live only" />
+                <span>{{ liveOnly ? "Live only" : "All sessions" }}</span>
+            </label>
             <p v-if="error" class="notice ui-notice">{{ error }}</p>
             <p v-else-if="live === null" class="muted">Loading…</p>
+            <div v-else-if="liveOnly && sessions.length === 0">
+                <p class="muted">No live sessions.</p>
+                <Button variant="tonal" @click="liveOnly = false">Show all sessions</Button>
+            </div>
             <p v-else-if="sessions.length === 0 && !historyPending && !historyFailed && !historyQuery" class="muted">No sessions.</p>
-            <Field v-if="live !== null" v-model="search" class="history-search"
+            <Field v-if="live !== null && !liveOnly" v-model="search" class="history-search"
                 label="Search earlier sessions" type="search" placeholder="Title or session ID" />
-            <p v-if="live !== null && history?.total === 0 && historyQuery" class="muted" role="status">No matches.</p>
+            <p v-if="live !== null && !liveOnly && history?.total === 0 && historyQuery" class="muted" role="status">No matches.</p>
             <ul v-if="live !== null && sessions.length" class="sessions">
                 <ListRow v-for="s in sessions" :key="`${s.agent}/${s.session_id}`"
                     class="session" :data-live="s.live" :link-label="sessionLinkLabel(s)" wrap
@@ -184,9 +199,9 @@ watch([name, historyPage, historyQuery], async ([selected, page, query], previou
                     </template>
                 </ListRow>
             </ul>
-            <p v-if="live !== null && historyPending" class="muted">Loading earlier sessions…</p>
-            <p v-else-if="live !== null && historyFailed" class="muted">Earlier sessions could not be loaded.</p>
-            <nav v-if="live !== null" class="history-nav" aria-label="Earlier sessions">
+            <p v-if="live !== null && !liveOnly && historyPending" class="muted">Loading earlier sessions…</p>
+            <p v-else-if="live !== null && !liveOnly && historyFailed" class="muted">Earlier sessions could not be loaded.</p>
+            <nav v-if="live !== null && !liveOnly" class="history-nav" aria-label="Earlier sessions">
                 <IconButton variant="tonal" icon="back" label="Previous earlier sessions" :disabled="historyPending || historyPage === 0" @click="historyPage--" />
                 <span aria-live="polite">Page {{ historyPage + 1 }} of {{ historyPages }}</span>
                 <IconButton variant="tonal" icon="forward" label="Next earlier sessions" :disabled="historyPending || historyFailed || historyPage + 1 >= historyPages" @click="historyPage++" />
@@ -211,6 +226,11 @@ watch([name, historyPage, historyQuery], async ([selected, page, query], previou
 }
 .muted {
     color: var(--md-on-surface-variant);
+}
+.session-filter {
+    display: flex;
+    align-items: center;
+    gap: var(--md-space-8);
 }
 .history-search {
     margin-block: var(--md-space-16);

@@ -39,6 +39,8 @@ export interface Settings {
     followNewMessages: boolean
     agentContext: MetaMode
     containerFilter: ContainerFilter
+    liveSessionsOnly: boolean
+    openOnlyLiveSession: boolean
 }
 
 interface Field<K extends keyof Settings> {
@@ -74,6 +76,18 @@ function prefersDark(): boolean {
 }
 
 const FIELDS: {[K in keyof Settings]: Field<K>} = {
+    liveSessionsOnly: {
+        key: "jailbee.liveSessionsOnly",
+        parse: (raw) => (raw === "1" ? true : raw === "0" ? false : undefined),
+        serialize: (v) => (v ? "1" : "0"),
+        fallback: () => true,
+    },
+    openOnlyLiveSession: {
+        key: "jailbee.openOnlyLiveSession",
+        parse: (raw) => (raw === "1" ? true : raw === "0" ? false : undefined),
+        serialize: (v) => (v ? "1" : "0"),
+        fallback: () => true,
+    },
     containerFilter: {
         key: "jailbee.containerFilter",
         parse: (raw) => (["all", "running", "active"] as const).find(mode => mode === raw),
@@ -157,6 +171,8 @@ function loadAll(): Settings {
         followNewMessages: load("followNewMessages"),
         agentContext: load("agentContext"),
         containerFilter: load("containerFilter"),
+        liveSessionsOnly: load("liveSessionsOnly"),
+        openOnlyLiveSession: load("openOnlyLiveSession"),
     }
 }
 

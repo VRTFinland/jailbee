@@ -1,11 +1,16 @@
 <script setup lang="ts">
 import TitleBar from "../components/TitleBar.vue"
-import {computed, nextTick, onMounted, ref} from "vue"
+import {computed, nextTick, ref, watch} from "vue"
 import {useRoute, useRouter} from "vue-router"
 import {apiFetch, Unauthorized} from "../api"
 import PageNav from "../components/PageNav.vue"
 import RepoList from "../components/RepoList.vue"
 import ListRow from "../components/ui/ListRow.vue"
+import Button from "../components/ui/Button.vue"
+import Switch from "../components/ui/Switch.vue"
+import StatusChip from "../components/ui/StatusChip.vue"
+import {sessionStatus} from "../components/ui/status"
+import {useSessionList} from "../composables/useSessionList"
 import {useDashboard} from "../dashboard"
 import {usePager} from "../composables/usePager"
 import type {SessionList, SessionSummary} from "../protocol"
@@ -14,6 +19,7 @@ const readableTop = ref(0)
 const pager = usePager(() => readableTop.value)
 const route = useRoute()
 const router = useRouter()
+const {liveOnly, openSingleLive} = useSessionList()
 const prefix = computed(() => String(route.params.prefix))
 const dashboard = useDashboard()
 const containers = computed(() => {
@@ -24,6 +30,7 @@ const listedContainers = computed(() => dashboard?.state.view?.repos.flatMap(
     repo => repo.containers.map(row => row.name),
 ) ?? [])
 const sessions = ref<SessionSummary[] | null>(null)
+const filteredSessions = computed(() => sessions.value?.filter(s => !liveOnly.value || s.live) ?? [])
 const error = ref<string | null>(null)
 
 const dateFormat = new Intl.DateTimeFormat(undefined, {dateStyle: "medium", timeStyle: "short"})
@@ -39,15 +46,22 @@ function sessionLinkLabel(session: SessionSummary): string {
         .filter(Boolean).join(" ")
 }
 
-onMounted(async () => {
+watch(prefix, async (selected, _previous, onCleanup) => {
+    let current = true
+    onCleanup(() => { current = false })
+    sessions.value = null
+    error.value = null
     try {
         const list = await apiFetch<SessionList>(
-            `/api/repos/${encodeURIComponent(prefix.value)}/sessions`,
+            `/api/repos/${encodeURIComponent(selected)}/sessions`,
         )
+        if (!current) return
         sessions.value = list.sessions
+        await openSingleLive(selected, list.sessions.filter(s => s.live))
         await nextTick()
         pager.measure()
     } catch (e) {
+        if (!current) return
         if (e instanceof Unauthorized) {
             await router.push({name: "login"})
         } else if (e instanceof Error && e.message.startsWith("API error 404")) {
@@ -56,7 +70,7 @@ onMounted(async () => {
             error.value = "The sessions could not be loaded."
         }
     }
-})
+}, {immediate: true})
 </script>
 
 <template>
@@ -68,13 +82,22 @@ onMounted(async () => {
                 <RepoList :view="containers" :show-headings="false" :listed-containers="listedContainers" />
             </section>
             <h2>Sessions</h2>
+            <label class="session-filter">
+                <Switch v-model="liveOnly" label="Live only" />
+                <span>{{ liveOnly ? "Live only" : "All sessions" }}</span>
+            </label>
             <p v-if="error" class="notice ui-notice">{{ error }}</p>
             <p v-else-if="sessions === null" class="muted">Loading…</p>
+            <div v-else-if="liveOnly && filteredSessions.length === 0">
+                <p class="muted">No live sessions.</p>
+                <Button variant="tonal" @click="liveOnly = false">Show all sessions</Button>
+            </div>
             <p v-else-if="sessions.length === 0" class="muted">No sessions.</p>
             <ul v-else class="sessions">
-                <ListRow v-for="s in sessions" :key="`${s.agent}/${s.session_id}`" class="session" wrap
+                <ListRow v-for="s in filteredSessions" :key="`${s.agent}/${s.session_id}`" class="session" wrap
                     :link-label="sessionLinkLabel(s)" :title="s.title || 'Untitled session'"
                     :to="{name: 'session', params: {prefix, agent: s.agent, sessionId: s.session_id}}">
+                    <template #trailing v-if="sessionStatus(s)"><StatusChip v-bind="sessionStatus(s)!" /></template>
                     <template #secondary>
                         <span class="meta">
                             <span class="agent">{{ s.agent }}</span>
@@ -107,6 +130,11 @@ h2 {
 }
 .muted {
     color: var(--md-on-surface-variant);
+}
+.session-filter {
+    display: flex;
+    align-items: center;
+    gap: var(--md-space-8);
 }
 .sessions {
     list-style: none;

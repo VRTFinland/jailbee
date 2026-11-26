@@ -19,6 +19,18 @@ from tests_e2e.server import E2EServer
 from tests_e2e.sessions import SESSION_ID, append_entry, open_session, session_path
 
 
+@pytest.fixture(autouse=True)
+def session_list_preferences(page: Page) -> None:
+    """Keep these list/reader regression cases in their explicit all-sessions mode.
+
+    Default live filtering and shortcut navigation are covered in test_live_sessions.
+    """
+    page.add_init_script(
+        "localStorage.setItem('jailbee.liveSessionsOnly', '0'); "
+        "localStorage.setItem('jailbee.openOnlyLiveSession', '0')"
+    )
+
+
 @pytest.fixture
 def agent_home(tmp_path: Path) -> Path:
     home = tmp_path / "claude"

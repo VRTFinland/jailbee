@@ -7,7 +7,7 @@ from collections.abc import Callable
 from fastapi import APIRouter, HTTPException
 from starlette.concurrency import run_in_threadpool
 
-from jailbee.web.container_sessions import session_containers
+from jailbee.web.container_sessions import live_session_containers, session_containers
 from jailbee.web.deps import Context, RequireSession
 from jailbee.web.protocol import (
     EntryContent,
@@ -35,9 +35,12 @@ async def repo_sessions(prefix: str, ctx: Context, _auth: RequireSession) -> Ses
     )
     if rows is None:
         raise HTTPException(status_code=404, detail="Unknown repository")
+    snapshot = ctx.hub.latest()
     containers = await run_in_threadpool(
-        session_containers, ctx.hub.latest(), prefix, ctx.deps.engine, rows
+        session_containers, snapshot, prefix, ctx.deps.engine, rows
     )
+    live = live_session_containers(snapshot, prefix)
+    listed = {(r.agent, r.session_id) for r in rows}
     return SessionListView(
         sessions=[
             SessionView(
@@ -46,9 +49,25 @@ async def repo_sessions(prefix: str, ctx: Context, _auth: RequireSession) -> Ses
                 title=r.title,
                 last_activity=r.last_activity,
                 models=list(r.models),
-                container=containers.get((r.agent, r.session_id)),
+                container=live.get(
+                    (r.agent, r.session_id), containers.get((r.agent, r.session_id))
+                ),
+                live=(r.agent, r.session_id) in live,
             )
             for r in rows
+        ]
+        + [
+            SessionView(
+                session_id=sid,
+                agent=agent,
+                title="",
+                last_activity=None,
+                models=[],
+                container=owner,
+                live=True,
+            )
+            for (agent, sid), owner in live.items()
+            if (agent, sid) not in listed
         ]
     )
 

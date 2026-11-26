@@ -158,6 +158,16 @@ function number(event: Event): number {
         <fieldset>
             <legend>Sessions</legend>
             <label class="switch-row">
+                <span>Show only live sessions</span>
+                <Switch label="Show only live sessions" :model-value="settings.liveSessionsOnly"
+                    @update:model-value="updateSettings({liveSessionsOnly: $event})" />
+            </label>
+            <label class="switch-row">
+                <span>Open the only live session directly</span>
+                <Switch label="Open the only live session directly" :model-value="settings.openOnlyLiveSession"
+                    @update:model-value="updateSettings({openOnlyLiveSession: $event})" />
+            </label>
+            <label class="switch-row">
                 <span>Follow new messages (normal display)</span>
                 <Switch label="Follow new messages (normal display)" :model-value="settings.followNewMessages"
                     @update:model-value="updateSettings({followNewMessages: $event})" />

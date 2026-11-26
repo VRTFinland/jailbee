@@ -167,6 +167,8 @@ class SessionView(BaseModel):
     title: str
     last_activity: datetime | None
     models: list[str]
+    live: bool = False
+    """True while the agent process runs, from the state-service snapshot."""
     container: str | None = None
     """The container the session was seen in, or None when unattributed."""
 

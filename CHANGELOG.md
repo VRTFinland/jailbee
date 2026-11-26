@@ -29,7 +29,10 @@ before editing `## Unreleased`.
   emphasis, opaque floating menu controls, and their layout, filters and live updates preserved.
   The container view uses the same rows, a labelled search field, tonal history
   paging buttons and vector live-session chips while preserving session ordering,
-  search, pagination and orchestration links.
+  search, pagination and orchestration links. Container and repository session lists
+  default to live sessions, with a per-visit switch to all sessions and a direct
+  shortcut to the only live session that preserves Back and breadcrumb navigation;
+  both defaults can be changed in Settings.
   Login and security-key setup use the shared fields and buttons, preserving PIN,
   authenticator-code, one-time-link and security-key flows.
   The transcript reader uses tonal prompts and tool disclosures, syntax colours
@@ -529,6 +532,12 @@ before editing `## Unreleased`.
 
 ### Fixed
 
+- Container restarts stop successfully before detaching runtime sockets, so a
+  failed or still-running shutdown no longer strands a running container's GUI
+  or fails immediately on Incus's "busy running a stop operation" error.
+  Conflicting instance operations get a bounded retry, a stuck stop includes
+  diagnostics and a `--force` hint, and restart refuses while a live JailBee
+  stop job is running.
 - A newly spawned child's creating row appears beneath its orchestrator from the
   first dashboard refresh, rather than moving there after the instance appears
   ([#146](https://github.com/VRTFinland/jailbee/issues/146)).
