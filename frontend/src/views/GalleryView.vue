@@ -275,10 +275,20 @@ function typeStyle(token: string): Record<string, string> {
                     </div>
 
                     <div class="group">
-                        <h3 class="group-title">Reader</h3>
+                        <h3 class="group-title">Answer bar</h3>
                         <AnswerPanel :set="sampleQuestions" :available="true" />
+                    </div>
+                    <div class="group">
+                        <h3 class="group-title">Answer half</h3>
                         <AnswerPanel :set="sampleQuestions" :available="true" initial-height="half" />
+                    </div>
+                    <div class="group">
+                        <h3 class="group-title">Answer full</h3>
                         <AnswerPanel :set="sampleQuestions" :available="false" reason="Messaging is unavailable." initial-height="full" />
+                    </div>
+
+                    <div class="group">
+                        <h3 class="group-title">Reader</h3>
                         <TranscriptEntry kind="user">Make the title bar one row.</TranscriptEntry>
                         <TranscriptEntry>I'll update the reader and run the suite.</TranscriptEntry>
                         <TranscriptEntry kind="user" meta>Agent context</TranscriptEntry>
