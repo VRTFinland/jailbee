@@ -65,7 +65,7 @@ What a remote caller may do is one model, `RemotePolicy`, shared by every
 [remote transport](https://github.com/VRTFinland/jailbee/blob/main/GLOSSARY.md)
 (see [ADR 0006](https://github.com/VRTFinland/jailbee/blob/main/docs/adr/0006-remote-policy-shared-by-transports.md)).
 Its fields are `commands` (`mode`, `allow`), `restrict_host`, `excluded_repos`,
-`mount_roots`, `mounts`, `orchestration`, `network`, `files` and `rdp`. The
+`mount_roots`, `mounts`, `orchestration`, `network`, `files`, `rdp` and `agent_chat`. The
 `remote.ssh` and `remote.web` blocks of `~/.config/jailbee/global.yaml` each
 hold one, checked by the same code; the `remote.ssh` YAML keys are unchanged.
 SSH-only settings (`listen`, `port`, entry points, `waypipe`, `gpg`) stay under
@@ -74,16 +74,17 @@ mounts, orchestration, network and files applies to both transports, with the
 transport's own block supplying the values (refusals name it, for example
 `remote.web.network`).
 
-Agent chat is separately opt-in with `remote.web.agent_chat: true` (or
-`remote.ssh.agent_chat: true` for remote SSH commands). Web chat sends text to
+Agent chat is on by default; set `remote.web.agent_chat: false` or
+`remote.ssh.agent_chat: false` to disable it for that transport. Web chat sends text to
 a live agent and records the message and device name in the web audit log.
 
-`remote.web` defaults to the most restrictive policy: `commands.mode:
-disabled`, no mounts, orchestration `off`, `network`, `files` and `rdp` off.
-`restrict_host` is always on for it and `false` is a config error. A web
-session therefore starts with no commands at all, and each right is an explicit
-opt-in in `global.yaml` ([`remote.web`](config.md#remoteweb)). All logged-in web
-devices share the same rights, as all SSH keys do.
+`remote.web` defaults to `commands.mode: disabled`, no mounts, orchestration
+`off`, and `network`, `files` and `rdp` off. `restrict_host` is always on for
+it and `false` is a config error. Agent chat is the deliberate exception to
+opt-in rights: sending a turn is no more powerful than attaching to the agent's
+terminal. Web chat still requires login unless explicitly disabled, an allowed
+Origin, and repository visibility; sends are audited. All logged-in web devices
+share the same rights, as all SSH keys do ([`remote.web`](config.md#remoteweb)).
 
 Every command a remote dashboard runs goes through the same policy check
 before it is started, and menu entries are offered only when that check would

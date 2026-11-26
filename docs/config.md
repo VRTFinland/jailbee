@@ -3682,7 +3682,7 @@ remote:
 | `default_entrypoint` | `help` \| `dashboard` \| `console` | `help` | Route a commandless SSH login to this entry point. `help` prints the enabled remote forms and allowed command paths; `dashboard` and `console` require their corresponding entry point to be enabled and a PTY. An explicit `ssh jailbee@host help` always prints the list, even with a different default. |
 | `commands.mode` | `disabled` \| `allowlist` \| `full` | `full` when the whole `commands` block is omitted; `disabled` when a `commands` block is written without `mode` | Policy for JailBee command execution in the console and dashboard. `disabled` blocks command-running dashboard actions while dashboard/console navigation remains available; `allowlist` accepts exact leaves from `commands.allow`; `full` accepts classified public leaves. In restricted sessions, unknown/unclassified command paths fail closed. While host restrictions apply, a remote command may not set a path-typed option or argument (such as `--config`) nor `new --mount`, regardless of command mode — see [Security](security.md#remote-ssh). |
 | `restrict_host` | bool | `true` | Keep remote sessions off the host itself: no path-typed arguments (`--config`, ...) or `new --mount` on any command; no config editor or GUI app launches in the dashboard (with `rdp` on, or in a `waypipe ssh` session with `waypipe` on, app commands use the shared RDP display or the session's waypipe display); a git bridge that moves refs but never the host's checked-out tree; no `shell`/`tmux`/`exec` into a mount-mode container (it shares the host's working tree); no approving a branch's privilege-widening autostart config; and no host-management command (`config edit`, `remote ...`, `setup`, `apply`, `port to-container`, `gui`, ...) in any `commands.mode`, `full` included. GUI launches, network widening and optional mounts have the narrow opt-ins described below; these do not unlock general host management. `false` lifts all of these at once, so an allowed command behaves exactly as it does locally; the startup log then says `host restrictions: OFF`. A server started from inside a restricted session stays restricted whatever this says. See [Security](security.md#remote-ssh). |
-| `agent_chat` | bool | `false` | Permit sending user turns to live Claude sessions with `agent say`; command policy must also permit that leaf over SSH. This right remains required even with `restrict_host: false`. Under `remote.web`, it enables the transcript reader's composer independently of command policy. See [agent messaging](web-dashboard.md#message-the-agent). |
+| `agent_chat` | bool | `true` | Permit sending user turns to live Claude sessions with `agent say`; command policy must also permit that leaf over SSH. This right remains required even with `restrict_host: false`. Under `remote.web`, it enables the transcript reader's composer independently of command policy. See [agent messaging](web-dashboard.md#message-the-agent). |
 | `rdp` | bool | `false` | Permit the shared RDP display: GUI launches over plain SSH draw on it, SSH may forward to its TCP port, and dev containers mount its socket directory (one screen and clipboard shared by every participating container). See [Remote GUI](remote-gui.md) and [Security](security.md#remote-gui). |
 | `waypipe` | bool | `true` | Permit `waypipe ssh` sessions: GUI launches in such a session open as native windows on the client. Each container reaches only its own waypipe server. Allows one constrained reverse Unix-socket forward per connection. See [Remote GUI](remote-gui.md). |
 | `gpg` | bool | `false` | Accept one client gpg-agent forward per authenticated SSH connection at the fixed marker `/jailbee/gpg-agent`. While connected, all `gpg.enabled` containers use the client's keys; the newest live forward wins, then the host agent resumes. Restart containers once to pick up the switch mounts. SSH authentication still uses the host agent. |
@@ -3777,8 +3777,8 @@ keys are the same as `remote.ssh`'s
 (`commands.mode`, `commands.allow`, `restrict_host`, `excluded_repos`,
 `mount_roots`, `mounts`, `orchestration`, `network`, `files`, `rdp`, `agent_chat`) and mean
 the same, see [`remote.ssh`](#remotessh) and
-[Remote policy](security.md#remote-policy). The defaults are the most
-restrictive policy.
+[Remote policy](security.md#remote-policy). Rights default off except agent chat:
+sending a turn is no more powerful than attaching to the agent's terminal.
 
 Server keys:
 
@@ -3804,7 +3804,7 @@ Policy keys:
 | `network` | `false` |
 | `files` | unset, which follows `commands.mode` (so off by default) |
 | `rdp` | `false` |
-| `agent_chat` | `false` |
+| `agent_chat` | `true` |
 
 ### `credentials`
 

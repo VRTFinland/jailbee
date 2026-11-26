@@ -95,6 +95,7 @@ def started(home: Path, watches: FakeWatchFactory) -> Iterator[tuple[TestClient,
         repo_scope=RemoteRepoScope(frozenset({"secret"})),
         agent_homes=homes.get,
         file_watch=watches,
+        agent_chat=False,
     )
     with TestClient(create_app(deps)) as client:
         body = {"method": "pin", "pin": pin.current, "device_name": "boox"}

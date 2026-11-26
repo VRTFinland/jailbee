@@ -1,4 +1,4 @@
-"""Send user turns to agent sessions without clearing terminal input."""
+"""Send user turns to live, foreground agent sessions through tmux."""
 
 from __future__ import annotations
 
@@ -36,20 +36,6 @@ for name in os.listdir('/proc'):
     except (OSError, IndexError):
         pass
 """
-
-
-def _empty_prompt(screen: str, cursor: int) -> bool:
-    lines = screen.splitlines()
-    borders = [i for i, line in enumerate(lines) if re.fullmatch(r"\s*─{3,}\s*", line)]
-    if len(borders) < 2:
-        return False
-    if not borders[-2] < cursor < borders[-1]:
-        return False
-    region = lines[borders[-2] + 1 : borders[-1]]
-    if not region or not re.match(r"^\s*[\u276f>]", region[0]):
-        return False
-    first = re.sub(r"^\s*[\u276f>]", "", region[0], count=1)
-    return not first.strip() and all(not line.strip() for line in region[1:])
 
 
 def _running(incus: Incus, container: str) -> bool:
@@ -113,32 +99,30 @@ def live_sessions(cfg: Config, incus: Incus, container: str) -> list[AgentSessio
 
 def _resolve(
     cfg: Config, incus: Incus, container: str, session_id: str
-) -> tuple[Outcome, str | None]:
+) -> tuple[Outcome, str | None, bool]:
     try:
         if not _running(incus, container):
-            return Outcome("container_not_running", "Container not running"), None
+            return Outcome("container_not_running", "Container not running"), None, False
         tree = _processes(incus, container)
         matches = [s for s in _sessions(cfg, container, tree) if s.session_id == session_id]
         if len(matches) != 1:
-            return Outcome("no_live_session", "No live session"), None
+            return Outcome("no_live_session", "No live session"), None, False
         session = matches[0]
         if session.agent != "claude":
-            return Outcome("unsupported_agent", "Unsupported agent"), None
-        if session.waiting_for:
-            return Outcome("waiting_at_dialog", "Waiting at a dialog"), None
+            return Outcome("unsupported_agent", "Unsupported agent"), None, False
         process = tree[session.pid]
         if (
             process.state in {"T", "t", "Z", "X"}
             or process.tty <= 0
             or process.group != process.foreground
         ):
-            return Outcome("no_pane", "Agent is not in the foreground"), None
+            return Outcome("no_pane", "Agent is not in the foreground"), None, False
         try:
             panes = incus.exec(
-                container, runuser("tmux list-panes -a -F '#{pane_id} #{pane_pid} #{cursor_y}'")
+                container, runuser("tmux list-panes -a -F '#{pane_id} #{pane_pid}'")
             )
         except IncusError:
-            return Outcome("no_pane", "No pane"), None
+            return Outcome("no_pane", "No pane"), None, False
         ancestors = set()
         pid = session.pid
         while pid in tree and pid not in ancestors:
@@ -148,28 +132,19 @@ def _resolve(
         for line in panes.splitlines():
             parts = line.split()
             if (
-                len(parts) == 3
+                len(parts) == 2
                 and re.fullmatch(r"%[0-9]+", parts[0])
                 and parts[1].isdigit()
-                and parts[2].isdigit()
             ):
                 pane_process = tree.get(int(parts[1]))
                 if int(parts[1]) in ancestors and pane_process and pane_process.tty == process.tty:
-                    found.append((parts[0], int(parts[2])))
+                    found.append(parts[0])
         if len(set(found)) != 1:
-            return Outcome("no_pane", "No pane"), None
-        pane, cursor = found[0]
-        try:
-            screen = incus.exec(container, runuser(f"tmux capture-pane -p -t {pane}"))
-        except IncusError:
-            return Outcome("no_pane", "No pane"), None
-        if not _empty_prompt(screen, cursor):
-            return Outcome(
-                "unsent_terminal_input", "Unsent terminal input or unrecognised prompt"
-            ), None
-        return Outcome("available", "Chat available"), pane
+            return Outcome("no_pane", "No pane"), None, False
+        pane = found[0]
+        return Outcome("available", "Chat available"), pane, bool(session.waiting_for)
     except IncusError as exc:
-        return Outcome("delivery_error", f"Delivery failed: {exc}"), None
+        return Outcome("delivery_error", f"Delivery failed: {exc}"), None, False
 
 
 def availability(cfg: Config, incus: Incus, container: str, session_id: str) -> Outcome:
@@ -183,13 +158,13 @@ def sanitize_text(text: str) -> str:
 
 
 def send(cfg: Config, incus: Incus, container: str, session_id: str, text: str) -> Outcome:
-    """Deliver a user turn. Capture and paste cannot exclude concurrent human typing."""
+    """Deliver a user turn; Claude queues busy turns and owns any existing input."""
     from jailbee.state_service.paths import ensure_runtime_dir
 
     text = sanitize_text(text)
     if not text.strip():
         return Outcome("invalid_message", "Message must not be blank")
-    outcome, pane = _resolve(cfg, incus, container, session_id)
+    outcome, pane, _ = _resolve(cfg, incus, container, session_id)
     for _ in range(4):
         if pane is None:
             return outcome
@@ -199,9 +174,15 @@ def send(cfg: Config, incus: Incus, container: str, session_id: str, text: str) 
         directory.mkdir(mode=0o700, exist_ok=True)
         with (directory / f"{digest}.lock").open("a") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
-            outcome, current = _resolve(cfg, incus, container, session_id)
+            outcome, current, dialog_open = _resolve(cfg, incus, container, session_id)
             if current == pane:
-                return _paste(incus, container, pane, text)
+                result = _paste(incus, container, pane, text)
+                if dialog_open and result.code == "delivered":
+                    return Outcome(
+                        "delivered_with_warning",
+                        "The text went to an open terminal dialog; check it there.",
+                    )
+                return result
             pane = current
     return Outcome("delivery_error", "Agent pane changed during delivery")
 

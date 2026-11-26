@@ -13,9 +13,18 @@ before editing `## Unreleased`.
 - Message a live Claude session with `jailbee agent say` or from the web
   dashboard's transcript reader. Messages arrive as ordinary user turns through
   tmux bracketed paste, including multi-line text and messages sent mid-turn.
-  Sending refuses open dialogs and unsent terminal input without clearing either.
-  Web chat requires the new `remote.web.agent_chat` permission (off by default),
-  follows repository visibility, and records sends in the device audit log.
+  A message sent while the agent is busy queues as the next turn. A paste joins
+  any real text already typed in the terminal, while Claude replaces its ghost
+  suggestion. Sending to an open terminal dialog succeeds with a warning to
+  check it there.
+  Chat is on by default for web and SSH, with `remote.web.agent_chat: false`
+  and `remote.ssh.agent_chat: false` as separate opt-outs. Web chat follows
+  repository visibility and records sends in the device audit log. Enter sends,
+  Shift+Enter adds a line, and delivery status has a reserved row; disabling web
+  chat hides its send controls. The composer starts collapsed on mobile and
+  expanded on desktop, remembers explicit visibility choices on the device, and
+  hides while the answer panel is open without losing its draft or send status.
+  The answer panel uses directional expand controls and a non-destructive Hide.
   Numbered questions in the latest reply open a non-modal answer panel with
   recommended choices, a final message preview, and per-message drafts that
   survive reloads; newer replies keep edited drafts available to send or discard,

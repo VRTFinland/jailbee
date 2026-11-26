@@ -28,7 +28,7 @@ POLICY_KEYS = {
 }
 
 
-def test_web_defaults_to_the_most_restrictive_policy():
+def test_web_defaults_to_restrictive_policy_except_agent_chat():
     web = GlobalConfig().remote.web
     assert web.commands.mode == "disabled"
     assert web.commands.allow == []
@@ -38,7 +38,7 @@ def test_web_defaults_to_the_most_restrictive_policy():
     assert web.orchestration == "off"
     assert web.network is False
     assert web.files_enabled() is False
-    assert web.agent_chat is False
+    assert web.agent_chat is True
     assert web.rdp is False
     assert web.excluded_repos == []
 
@@ -98,9 +98,9 @@ def test_web_files_default_follows_commands_mode_but_stays_off_when_disabled():
 
 def test_ssh_keeps_its_own_defaults():
     ssh = RemoteSSHConfig()
-    assert ssh.agent_chat is False
-    assert RemoteSSHConfig(agent_chat=True).policy.agent_chat is True
-    assert RemoteWebConfig(agent_chat=True).policy.agent_chat is True
+    assert ssh.agent_chat is True
+    assert RemoteSSHConfig(agent_chat=False).policy.agent_chat is False
+    assert RemoteWebConfig(agent_chat=False).policy.agent_chat is False
     assert ssh.commands.mode == "full"
     assert ssh.orchestration == "ssh"
     assert ssh.restrict_host is True

@@ -33,22 +33,9 @@ def test_suspended_or_background_session_never_receives_input(setup_session, pro
     record(directory, "one.json")
     incus.exec.side_effect = [
         process + "\n10 1 22 S 10 10 34816",
-        "%1 10 4",
-        "────\n> \n────\nshell draft",
+        "%1 10",
     ]
     assert agent_input.send(Mock(), incus, "box", "old", "text").code != "delivered"
-    incus.exec_with_input.assert_not_called()
-
-
-def test_cursor_outside_prompt_refuses_stale_frame(setup_session):
-    directory, incus = setup_session
-    record(directory, "one.json")
-    incus.exec.side_effect = [
-        "42 10 123 S 42 42 34816\n10 1 22 S 10 42 34816",
-        "%1 10 3",
-        "────\n> \n────\nshell draft",
-    ]
-    assert agent_input.send(Mock(), incus, "box", "old", "text").code == "unsent_terminal_input"
     incus.exec_with_input.assert_not_called()
 
 
@@ -65,7 +52,7 @@ def test_latest_session_record_wins_before_session_id_lookup(setup_session):
     )
     incus.exec.return_value = "42 10 123 S 42 42 34816\n10 1 22 S 10 42 34816"
     assert agent_input.send(Mock(), incus, "box", "old", "text").code == "no_live_session"
-    assert agent_input.send(Mock(), incus, "box", "new", "text").code == "waiting_at_dialog"
+    assert agent_input.send(Mock(), incus, "box", "new", "text").code == "no_pane"
     incus.exec_with_input.assert_not_called()
 
 
@@ -79,15 +66,15 @@ def test_multiple_sessions_route_to_their_nested_pane(setup_session, session_id,
         "10 1 22 S 10 10 34816\n52 20 456 S 20 20 34817\n"
         "20 1 33 S 20 20 34817\n"
     )
-    incus.exec.side_effect = [tree, "%1 10 1\n%2 20 1\n", "────\n> \n────"] * 2 + ["", "", ""]
+    incus.exec.side_effect = [tree, "%1 10\n%2 20\n"] * 2 + ["", "", ""]
     text = "hello\nmaailma ä"
     assert agent_input.send(Mock(), incus, "box", session_id, text).code == "delivered"
     assert incus.exec_with_input.call_args.args[2].encode("utf-8") == text.encode("utf-8")
     commands = [call.args[1][-1] for call in incus.exec.call_args_list]
-    assert "tmux paste-buffer -pr -b " in commands[6]
-    assert commands[6].endswith(f" -t {pane}")
-    assert commands[7] == f"tmux send-keys -t {pane} Enter"
-    assert commands[8].startswith("tmux delete-buffer -b jailbee-")
+    assert "tmux paste-buffer -pr -b " in commands[4]
+    assert commands[4].endswith(f" -t {pane}")
+    assert commands[5] == f"tmux send-keys -t {pane} Enter"
+    assert commands[6].startswith("tmux delete-buffer -b jailbee-")
 
 
 def test_send_strips_terminal_control_sequences(setup_session):
@@ -95,8 +82,7 @@ def test_send_strips_terminal_control_sequences(setup_session):
     record(directory, "one.json")
     incus.exec.side_effect = [
         "42 10 123 S 42 42 34816\n10 1 22 S 10 42 34816",
-        "%1 10 1",
-        "────\n> \n────",
+        "%1 10",
     ] * 2 + ["", "", ""]
     assert (
         agent_input.send(
@@ -121,9 +107,7 @@ def test_concurrent_sends_do_not_interleave(setup_session):
         if cmd.startswith("import os"):
             return "42 10 123 S 42 42 34816\n10 1 22 S 10 42 34816"
         if "list-panes" in cmd:
-            return "%1 10 1"
-        if "capture-pane" in cmd:
-            return "────\n> \n────"
+            return "%1 10"
         if "paste-buffer" in cmd:
             operations.append("paste")
             if len(operations) == 1:
@@ -150,17 +134,13 @@ def test_send_retries_when_pane_changes_under_lock(setup_session):
     directory, incus = setup_session
     record(directory, "one.json")
     tree = "42 10 123 S 42 42 34816\n10 1 22 S 10 42 34816"
-    screen = "────\n> \n────"
     incus.exec.side_effect = [
         tree,
-        "%1 10 1",
-        screen,
+        "%1 10",
         tree,
-        "%2 10 1",
-        screen,
+        "%2 10",
         tree,
-        "%2 10 1",
-        screen,
+        "%2 10",
         "",
         "",
         "",
@@ -182,9 +162,7 @@ def test_lock_storage_is_bounded_across_many_panes(setup_session, monkeypatch, t
         if cmd.startswith("import os"):
             return "42 10 123 S 42 42 34816\n10 1 22 S 10 42 34816"
         if "list-panes" in cmd:
-            return f"%{pane[0]} 10 1"
-        if "capture-pane" in cmd:
-            return "────\n> \n────"
+            return f"%{pane[0]} 10"
         return ""
 
     incus.exec.side_effect = execute
@@ -193,13 +171,16 @@ def test_lock_storage_is_bounded_across_many_panes(setup_session, monkeypatch, t
     assert len(list(tmp_path.rglob("*.lock"))) <= 256
 
 
-def test_dialog_refusal_precedes_pane_capture(setup_session):
+def test_dialog_delivery_warns_without_disabling_chat(setup_session):
     directory, incus = setup_session
     record(directory, "dialog.json", status="waiting", waitingFor="permission")
-    incus.exec.return_value = "42 10 123 S 10 10 34816\n10 1 22 S 10 10 34816"
-    assert agent_input.send(Mock(), incus, "box", "old", "text").code == "waiting_at_dialog"
-    assert incus.exec.call_count == 1
-    incus.exec_with_input.assert_not_called()
+    tree = "42 10 123 S 42 42 34816\n10 1 22 S 10 42 34816"
+    incus.exec.side_effect = [tree, "%1 10"] * 3 + ["", "", ""]
+    assert agent_input.availability(Mock(), incus, "box", "old").code == "available"
+    result = agent_input.send(Mock(), incus, "box", "old", "text")
+    assert result.code == "delivered_with_warning"
+    assert result.message == "The text went to an open terminal dialog; check it there."
+    assert incus.exec_with_input.call_args.args[2] == "text"
 
 
 def test_equal_age_conflicting_session_records_refuse(setup_session):

@@ -256,7 +256,7 @@ speculatively.
 | `jailbee agent use [PROFILE[/MODEL]] [--clear]` | Write `agents.default_runner` to the repo's host-local config (`claude/opus` = plain Claude, other profile = `claude-jb` on it; model optional), validated against the LiteLLM config, then resync `claude-jb`'s default profile in running containers. `--clear` removes it. Allowed in a restricted remote SSH session. |
 | `jailbee agent use [PROFILE[/MODEL]] --container NAME [--clear]` | Set or remove one container's own runner label (outranks the repo default at its next autostart; running sessions untouched). Without an argument the picker starts with a "repo default" row. |
 | `jailbee agent open [NAME]` | Start the effective agent in a new tmux window of a running container. |
-| `jailbee agent say [NAME] [TEXT] [--session ID]` | Send a user turn to a live Claude tmux session; use `-` as TEXT to read stdin. Refuses dialogs, unsent terminal input and unknown prompt layouts without clearing input. |
+| `jailbee agent say [NAME] [TEXT] [--session ID]` | Send a user turn to a live Claude tmux session; use `-` as TEXT to read stdin. Sending to an open terminal dialog succeeds with exit 0 and warns to check it there; busy Claude queues the turn. A paste joins real text already typed in the terminal, while Claude replaces its ghost suggestion. |
 | `jailbee agent show` | Effective default runner and its source (`local`/`repo`/`global`/`legacy`); lists containers whose own runner label overrides it. Host-only. |
 
 ## LiteLLM proxy
@@ -444,21 +444,32 @@ suggestions, in its own style, instead of a generic router message.
 
 Host-side only; included in every install. Full guide: `docs/web-dashboard.md`.
 The transcript reader can message its live Claude session when
-`remote.web.agent_chat: true` (default false). Messages use the same tmux paste
+`remote.web.agent_chat` is enabled (the default; set it to false to opt out). Messages use the same tmux paste
 boundary as `jailbee agent say`, including multi-line text and busy sessions.
-The composer disables with a reason when unavailable; a refused send keeps its
-text. Delivered appears only when the ordinary user entry reaches the followed
-transcript. Dialogs and unsent terminal input are never cleared. Repository
-visibility applies, and the audit log records the message and device name.
-`remote.ssh.agent_chat` separately gates the host command over SSH. A leading
+Enter sends and Shift+Enter adds a line, including in answer-panel free text;
+Enter does not send during IME composition. When chat is opted out, send controls
+are hidden. The composer disables with a reason when temporarily unavailable; a
+refused send keeps its text. A reserved status row shows delivery and errors even
+when the composer is collapsed. The composer starts collapsed on mobile and
+expanded on desktop, remembers explicit show/hide choices on the device, and
+preserves its draft when hidden. It hides while the answer panel is open and
+returns in its remembered state when the panel is hidden or answered.
+Delivered appears only when the ordinary user entry reaches the followed
+transcript. A send to an open terminal dialog succeeds with a warning to check it
+there; the paste and Enter may act on the dialog. Claude queues sends while busy
+and replaces its ghost suggestion; pasted text joins real text already typed in
+the terminal.
+Repository visibility applies, and the audit log records the message and device name.
+`remote.ssh.agent_chat` separately gates the host command over SSH and also defaults to true. A leading
 `/` or `!` enters Claude command or shell mode; controls except newline/tab are
 stripped before paste and auditing; text blank after stripping is refused.
 Same-pane sends are serialized, not terminal typing. Transcript confirmation has
 a bounded wait and resets on reconnect/reload, without cancelling in-flight sends.
 
 The latest assistant reply's numbered questions open a non-modal answer panel:
-mobile bottom sheet, desktop side column, with no animation on e-ink. It offers
-recommendations, per-answer notes and a summary-only Send with the exact outgoing
+mobile bottom sheet, desktop side column, with no animation on e-ink. The caret
+points in the direction of movement; **Hide** preserves answers and is distinct
+from discarding a draft. It offers recommendations, per-answer notes and a summary-only Send with the exact outgoing
 message. Edited answers persist in this browser per session and source message;
 a newer reply keeps the edited draft with a notice and offers its own questions
 as a new set. Untouched sets follow the newest questions. Send or discard the
