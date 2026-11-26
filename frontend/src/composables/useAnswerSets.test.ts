@@ -60,6 +60,17 @@ describe("session answer drafts", () => {
         reloaded.scope.stop()
     })
 
+    it("preselects recommendations arriving in later records of an untouched message", async () => {
+        const partial = "❓ **Q12** - **Deploy**: Choose.\na) Canary\nb) All"
+        const {state, sources, scope} = setup(ref([{id: "old", text: partial}]))
+        expect(state.selected.value?.answers[0]?.value).toBe("")
+        sources.value = [{id: "old", text: partial + "\n➡️ a: Safe"}]
+        await nextTick()
+        expect(state.selected.value?.answers[0]?.value).toBe("a")
+        expect(createAnswerDraftStore().list(session)).toEqual([])
+        scope.stop()
+    })
+
     it("dismisses completed or discarded sets across reload without recreating them", async () => {
         const {state, sources, scope} = setup()
         state.dismiss("old")

@@ -65,6 +65,7 @@ def test_tool_only_assistant_record_marks_existing_draft_as_older(
     )
     panel = page.get_by_role("complementary", name="Answer questions")
     panel.get_by_role("button", name="Expand answers", exact=True).click()
+    panel.get_by_role("textbox", name="Optional note").fill("Keep this edited draft")
     tool = json.loads(record(3, "assistant", ""))
     tool["message"]["content"] = [
         {

@@ -248,7 +248,7 @@ def test_answers_share_composer_send_gate_and_confirm_in_transcript(
     panel.get_by_role("button", name="Expand answers", exact=True).click()
     expect(panel.get_by_role("textbox", name="Optional note")).to_have_value("after review")
     panel.get_by_role("button", name="Summary", exact=True).click()
-    panel.get_by_role("button", name="Q1: Operations — Changed", exact=True).click()
+    panel.get_by_role("button", name="Q1: Operations", exact=True).click()
     panel.get_by_role("textbox", name="Answer", exact=True).fill("Platform")
     panel.get_by_role("button", name="Next step").click()
     message = "Q12: b – after review\nQ1: Platform"  # noqa: RUF001 - Spec's literal separator.

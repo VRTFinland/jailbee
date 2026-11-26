@@ -67,7 +67,7 @@ export function useAnswerSets(session: () => DraftSession, sources: () => Answer
                     for (const [index, question] of extended.questions.entries()) {
                         const previous = item.set.questions.findIndex(old => old.number === question.number)
                         const answer = item.answers[previous]
-                        if (answer && validAnswers({questions: [question]}, [answer])) answers[index] = {...answer}
+                        if (edited.has(item.id) && answer && validAnswers({questions: [question]}, [answer])) answers[index] = {...answer}
                     }
                     item.text = source.text
                     item.set = extended
