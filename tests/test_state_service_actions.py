@@ -622,6 +622,9 @@ def test_running_action_is_interrupted_after_restart(runtime_dir, tmp_path):
             connection.sendall(encode(Hello(PROTOCOL, "v1", dashboard_id="dashboard")))
             with connection.makefile("rb") as reader:
                 decode(reader.readline())
+                from jailbee.state_service.protocol import ActionSyncStart
+
+                assert isinstance(decode(reader.readline()), ActionSyncStart)
                 entry = decode(reader.readline())
                 assert isinstance(entry, ActionEntry)
                 assert entry.state == "interrupted"

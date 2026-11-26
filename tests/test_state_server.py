@@ -175,6 +175,11 @@ class Conn:
         self.send(Hello(PROTOCOL, version, cwd))
         _LIVE_CONNS.append(self)
         self.hello = self.recv()
+        if version == "v1":
+            from jailbee.state_service.protocol import ActionSyncEnd, ActionSyncStart
+
+            assert isinstance(self.recv(), ActionSyncStart)
+            assert isinstance(self.recv(), ActionSyncEnd)
 
     def send(self, message):
         self.sock.sendall(encode(message))

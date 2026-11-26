@@ -17,6 +17,7 @@ import subprocess
 import sys
 import threading
 import time
+from collections import deque
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import replace
 from typing import IO, TYPE_CHECKING
@@ -32,6 +33,8 @@ from jailbee.state_service.protocol import (
     ActionFinish,
     ActionOutput,
     ActionRejected,
+    ActionSyncStart,
+    ActionSyncEnd,
     Active,
     DismissAction,
     GatherError,
@@ -127,9 +130,10 @@ class StateClient:
         self._latest: Snapshot | None = None
         self._action_entries: dict[int, ActionEntry] = {}
         self._action_rejections: dict[int, str] = {}
-        self._action_events: list[
+        self._replay_entries: dict[int, ActionEntry] | None = None
+        self._action_events: deque[
             ActionEntry | ActionOutput | ActionFinish | ActionRejected | ActionDismissed
-        ] = []
+        ] = deque(maxlen=256)
         self._status: str | None = None
         self._active = True
         self._closed = threading.Event()
@@ -186,7 +190,8 @@ class StateClient:
         self,
     ) -> list[ActionEntry | ActionOutput | ActionFinish | ActionRejected | ActionDismissed]:
         with self._lock:
-            events, self._action_events = self._action_events, []
+            events = list(self._action_events)
+            self._action_events.clear()
             return events
 
     def action_rejection(self, entry_id: int) -> str | None:
@@ -268,6 +273,8 @@ class StateClient:
                 if not self._active:
                     with contextlib.suppress(OSError):
                         sock.sendall(encode(Active(False)))
+            with self._lock:
+                self._replay_entries = None
             got_snapshot = False
             try:
                 while line := reader.readline(MAX_WIRE_LINE_BYTES + 1):
@@ -295,6 +302,17 @@ class StateClient:
 
     def _dispatch(self, message: Message) -> bool:
         """Apply ``message``; True when it was a snapshot."""
+        if isinstance(message, ActionSyncStart):
+            with self._lock:
+                self._replay_entries = {}
+            return False
+        if isinstance(message, ActionSyncEnd):
+            with self._lock:
+                if self._replay_entries is not None:
+                    self._action_entries = self._replay_entries
+                    self._replay_entries = None
+            self._notify()
+            return False
         if isinstance(message, ActionDismissed):
             with self._lock:
                 self._action_entries.pop(message.entry_id, None)
@@ -306,22 +324,26 @@ class StateClient:
 
             with self._lock:
                 self._action_events.append(message)
+                entries = self._replay_entries if self._replay_entries is not None else self._action_entries
                 if isinstance(message, ActionRejected):
+                    self._action_rejections.pop(message.entry_id, None)
                     self._action_rejections[message.entry_id] = message.reason
+                    if len(self._action_rejections) > 256:
+                        del self._action_rejections[next(iter(self._action_rejections))]
                 elif isinstance(message, ActionEntry):
-                    self._action_entries[message.entry_id] = message
+                    entries[message.entry_id] = message
                 elif (
                     not isinstance(message, ActionRejected)
-                    and message.entry_id in self._action_entries
+                    and message.entry_id in entries
                 ):
-                    entry = self._action_entries[message.entry_id]
+                    entry = entries[message.entry_id]
                     if isinstance(message, ActionOutput):
                         output = entry.output + message.chunk
                         if len(output) > OUTPUT_KEEP_CHARS:
                             output = OUTPUT_DROPPED_MARKER + output[-OUTPUT_KEEP_CHARS:]
-                        self._action_entries[message.entry_id] = replace(entry, output=output)
+                        entries[message.entry_id] = replace(entry, output=output)
                     else:
-                        self._action_entries[message.entry_id] = replace(
+                        entries[message.entry_id] = replace(
                             entry,
                             finished=True,
                             status=message.status,
