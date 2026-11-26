@@ -178,7 +178,10 @@ def render_entry(
         case Thinking():
             body = cache.get(entry.id, entry.text, render_markdown) if entry.text else ""
             return RenderedThinking(
-                id=entry.id, timestamp=entry.timestamp, html=body, model=entry.model,
+                id=entry.id,
+                timestamp=entry.timestamp,
+                html=body,
+                model=entry.model,
                 message_id=entry.message_id,
             )
         case ToolCall():

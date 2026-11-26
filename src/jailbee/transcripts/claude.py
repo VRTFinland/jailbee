@@ -298,7 +298,8 @@ def _entries(record: dict[str, object], record_id: str) -> list[Entry]:
                     found.append(call)
         found = [
             replace(entry, message_id=record_id)
-            if isinstance(entry, (AssistantText, Thinking, ToolCall)) else entry
+            if isinstance(entry, (AssistantText, Thinking, ToolCall))
+            else entry
             for entry in found
         ]
     return found
