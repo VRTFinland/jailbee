@@ -21,6 +21,24 @@ describe('question sets', () => {
     expect(buildAnswerMessage(set, answers)).toBe('Q1: yes – if safe\nQ2: Because it works')
   })
 
+  it('parses the instruction format with CRLF and letter recommendations', () => {
+    const source = '❓ **Q12** - **Title**: question text\r\na) option\r\nb) option\r\n➡️ a: rationale\r\n'
+    const set = parseQuestionSet(source)!
+    expect(set.questions[0]).toMatchObject({ number: 12, title: 'Title', body: 'question text', recommendation: 'a', options: [{ letter: 'a', text: 'option' }, { letter: 'b', text: 'option' }] })
+    expect(source.slice(set.questions[0]!.start, set.questions[0]!.end)).toBe(source)
+  })
+
+  it('keeps answers on one line per question', () => {
+    const set = parseQuestionSet('❓ **Q1** - **Why**: Explain')!
+    expect(buildAnswerMessage(set, [{ value: 'First\r\nQ2: fake', note: 'note\rQ3: fake\nnext' }])).toBe('Q1: First Q2: fake – note Q3: fake next')
+  })
+
+  it('rejects invalid headers and control characters', () => {
+    expect(parseQuestionSet('❓ **Q1** - ** **: Text')).toBeNull()
+    expect(parseQuestionSet('❓ **Q9007199254740992** - **Title**: Text')).toBeNull()
+    expect(parseQuestionSet('❓ **Q1** - **Title**: Text\u0000bad')).toBeNull()
+  })
+
   it('ignores fenced examples and rejects malformed or ambiguous blocks', () => {
     expect(parseQuestionSet('```md\n❓ **Q1** - **Example**: Sample\n```')).toBeNull()
     expect(parseQuestionSet('❓ **Q1** - **Valid**: Text\n❓ Q2: broken')).toBeNull()

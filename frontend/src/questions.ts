@@ -28,9 +28,10 @@ export function parseQuestionSet(text: string): QuestionSet | null {
       continue
     }
     if (fence) { offset += raw.length; continue }
+    if (/[\x00-\x08\x0b-\x1f\x7f]/.test(line)) { invalid = true; break }
     if (/^\s*❓/.test(line)) {
       const header = line.match(/^❓ \*\*Q([1-9]\d*)\*\* - \*\*(.+?)\*\*:\s*(.*)$/)
-      if (!header || questions.some(q => q.number === Number(header[1]))) { invalid = true; break }
+      if (!header || !header[2]!.trim() || !Number.isSafeInteger(Number(header[1])) || questions.some(q => q.number === Number(header[1]))) { invalid = true; break }
       if (current) current.end = offset
       current = { number: Number(header[1]), title: header[2]!, body: header[3]!, options: [], recommendation: null, start: offset, end: text.length }
       questions.push(current)
@@ -64,6 +65,8 @@ export function initialAnswers(set: QuestionSet): Answer[] {
 export function buildAnswerMessage(set: QuestionSet, answers: Answer[]): string {
   return set.questions.map((q, i) => {
     const answer = answers[i]
-    return `Q${q.number}: ${answer?.value ?? ''}${answer?.note ? ` – ${answer.note}` : ''}`
+    const value = (answer?.value ?? '').replace(/[\r\n]+/g, ' ')
+    const note = (answer?.note ?? '').replace(/[\r\n]+/g, ' ')
+    return `Q${q.number}: ${value}${note ? ` – ${note}` : ''}`
   }).join('\n')
 }
