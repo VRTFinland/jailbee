@@ -46,6 +46,34 @@ def test_all_servers_are_cleaned_up_when_disposal_fails(
     assert str(result.stdout).count("server stopped") == 2
 
 
+def test_page_closes_before_fixture_servers_stop(
+    pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytester.makeconftest("""
+        pytest_plugins = ["tests_e2e.conftest"]
+        import pytest
+        from tests_e2e.server import E2EServer
+
+        @pytest.fixture(autouse=True)
+        def shutdown_probe(page, monkeypatch):
+            def stop(server):
+                assert page.is_closed(), "live browser can reconnect during server teardown"
+            monkeypatch.setattr(E2EServer, "start", lambda self, **_: None)
+            monkeypatch.setattr(E2EServer, "stop", stop)
+    """)
+    pytester.makepyfile("""
+        def test_server_first(make_server, page):
+            make_server()
+        def test_page_first(page, make_server):
+            make_server()
+    """)
+    monkeypatch.setenv("PYTHONPATH", str(REPO_ROOT))
+
+    result = pytester.runpytest_subprocess("-p", "no:cacheprovider", "--tb=short")
+
+    result.assert_outcomes(passed=2)
+
+
 def test_front_page_restart_preserves_a_stop_failure(
     pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch
 ) -> None:

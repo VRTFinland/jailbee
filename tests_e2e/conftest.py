@@ -195,6 +195,16 @@ def browser_errors(
 
 
 @pytest.fixture
+def page(context: BrowserContext, make_server: Callable[..., E2EServer]) -> Iterator[Page]:
+    # Depend on make_server so the live page cannot reconnect after its server
+    # stops during teardown. Closing just the context happens too late when
+    # tests request the server after the browser context.
+    page = context.new_page()
+    yield page
+    page.close()
+
+
+@pytest.fixture
 def logged_in(server: E2EServer, page: Page) -> Page:
     log_in_with_pin(page, server.url, server.pin.current)
     return page
