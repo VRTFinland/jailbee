@@ -48,9 +48,14 @@ def test_hierarchy_links_counts_and_live_renesting(
     page.locator(".parent").get_by_role("link", name="orch", exact=True).click()
     expect(page.get_by_role("heading", name="Children (2)")).to_be_visible()
     assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
-    page.get_by_role("region", name="Children").get_by_role(
+    child_link = page.get_by_role("region", name="Children").get_by_role(
         "link", name="second", exact=True
-    ).click()
+    )
+    child_row = page.get_by_role("listitem").filter(has=child_link)
+    box = child_row.bounding_box()
+    assert box
+    # The padding, not just the name, opens the child container.
+    child_row.click(position={"x": box["width"] - 8, "y": box["height"] / 2})
     expect(page.get_by_role("heading", name=second.name, exact=True)).to_be_visible()
     page.get_by_role("navigation", name="Breadcrumb").get_by_role(
         "link", name="JailBee", exact=True
