@@ -315,7 +315,7 @@ def test_cancellation_stops_child_and_descendant(tmp_path):
         assert child.stdout.read() == b""
         try:
             status = Path(f"/proc/{descendant}/stat").read_text()
-        except FileNotFoundError:
+        except (FileNotFoundError, ProcessLookupError):
             status = None
         assert status is None or status.split(") ", 1)[1][0] == "Z"
         descendant = None
