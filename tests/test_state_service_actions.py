@@ -227,7 +227,7 @@ def test_large_escaped_output_is_bounded_and_replayed(runtime_dir, tmp_path):
     from jailbee.dashboard.runner import OUTPUT_DROPPED_MARKER, OUTPUT_KEEP_CHARS
     from jailbee.state_service import paths
 
-    text = ("\x01\n\\\"" * (OUTPUT_KEEP_CHARS // 2)) + "THE END"
+    text = ('\x01\n\\"' * (OUTPUT_KEEP_CHARS // 2)) + "THE END"
     output_file = tmp_path / "output"
     output_file.write_bytes(text.encode())
 
@@ -264,9 +264,23 @@ def test_large_escaped_output_is_bounded_and_replayed(runtime_dir, tmp_path):
     client = connect()
     try:
         client.run_action(
-            RunAction(99, ["ls", "\x01" * 12000], str(tmp_path), "target", False, "large", "none", str(tmp_path), "repo")
+            RunAction(
+                99,
+                ["ls", "\x01" * 12000],
+                str(tmp_path),
+                "target",
+                False,
+                "large",
+                "none",
+                str(tmp_path),
+                "repo",
+            )
         )
-        _until(lambda: client.action_entries().get(99) is not None and client.action_entries()[99].finished)
+        _until(
+            lambda: (
+                client.action_entries().get(99) is not None and client.action_entries()[99].finished
+            )
+        )
         expected = OUTPUT_DROPPED_MARKER + text[-OUTPUT_KEEP_CHARS:]
         assert client.action_entries()[99].output == expected
     finally:

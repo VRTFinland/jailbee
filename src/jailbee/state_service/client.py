@@ -25,8 +25,8 @@ from jailbee import __version__
 from jailbee.state_service import StaleDashboard, StateServiceError, StateServiceUnavailable
 from jailbee.state_service.paths import ensure_runtime_dir, log_path, socket_path, spawn_lock_path
 from jailbee.state_service.protocol import (
-    PROTOCOL,
     MAX_WIRE_LINE_BYTES,
+    PROTOCOL,
     ActionEntry,
     ActionFinish,
     ActionOutput,
