@@ -72,7 +72,9 @@ def _processes(incus: Incus, container: str) -> dict[int, _Process]:
     for line in incus.exec(container, ["python3", "-c", _PROCESS_SCRIPT]).splitlines():
         try:
             pid, parent, start, state, group, foreground, tty = line.split()
-            tree[int(pid)] = _Process(int(parent), int(start), state, int(group), int(foreground), int(tty))
+            tree[int(pid)] = _Process(
+                int(parent), int(start), state, int(group), int(foreground), int(tty)
+            )
         except ValueError:
             continue
     return tree
@@ -84,7 +86,9 @@ def _sessions(cfg: Config, container: str, tree: dict[int, _Process]) -> list[Ag
         for session in adapter.read_sessions(adapter.session_home(cfg, container)):
             process = tree.get(session.pid)
             if process and process.start == session.proc_start:
-                records.setdefault((session.agent, session.pid, session.proc_start), []).append(session)
+                records.setdefault((session.agent, session.pid, session.proc_start), []).append(
+                    session
+                )
     sessions = []
     for group in records.values():
         latest = max(s.updated_at if s.updated_at is not None else -1 for s in group)
@@ -121,7 +125,11 @@ def _resolve(
         if session.waiting_for:
             return Outcome("waiting_at_dialog", "Waiting at a dialog"), None
         process = tree[session.pid]
-        if process.state in {"T", "t", "Z", "X"} or process.tty <= 0 or process.group != process.foreground:
+        if (
+            process.state in {"T", "t", "Z", "X"}
+            or process.tty <= 0
+            or process.group != process.foreground
+        ):
             return Outcome("no_pane", "Agent is not in the foreground"), None
         try:
             panes = incus.exec(
@@ -137,8 +145,12 @@ def _resolve(
         found = []
         for line in panes.splitlines():
             parts = line.split()
-            if (len(parts) == 3 and re.fullmatch(r"%[0-9]+", parts[0])
-                    and parts[1].isdigit() and parts[2].isdigit()):
+            if (
+                len(parts) == 3
+                and re.fullmatch(r"%[0-9]+", parts[0])
+                and parts[1].isdigit()
+                and parts[2].isdigit()
+            ):
                 pane_process = tree.get(int(parts[1]))
                 if int(parts[1]) in ancestors and pane_process and pane_process.tty == process.tty:
                     found.append((parts[0], int(parts[2])))
