@@ -6838,9 +6838,9 @@ def retarget(
     new_base: Annotated[
         str | None,
         typer.Argument(
-            help="New base branch (must exist on host as refs/heads/...). "
+            help="New base branch (local or already fetched from upstream). "
             "Asked for on a TTY when omitted.",
-            autocompletion=completion.complete_branch,
+            autocompletion=completion.complete_base_branch,
         ),
     ] = None,
     merge: Annotated[
@@ -6880,7 +6880,7 @@ def retarget(
             )
             raise typer.Exit(1)
         current = _container_base_branch(incus, full)
-        candidates = [b for b in git_helpers.list_branches(cfg.repo_root) if b != current]
+        candidates = [b for b in git_helpers.list_base_candidates(cfg.repo_root) if b != current]
 
         def _base_problem(text: str) -> str | None:
             text = text.strip()

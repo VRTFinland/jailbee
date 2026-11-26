@@ -2308,6 +2308,94 @@ def test_merge_ff_without_checkout_when_base_not_current(mocker, make_cfg, tmp_p
     upd.assert_not_called()
 
 
+def _remote_only_pull_setup(mocker, make_cfg, tmp_path):
+    cfg = make_cfg(tmp_path)
+    incus = mocker.MagicMock()
+    incus.config_get.side_effect = lambda n, k: {"user.jailbee.base_branch": "release/2.1"}.get(k)
+    mocker.patch("jailbee.sync.fetch_from_container", return_value=_fake_fetch("feat/x"))
+    mocker.patch("jailbee.lifecycle.resolve_container_name", return_value="p-feat-x")
+    mocker.patch("jailbee.sync.git.get_current_branch", return_value="main")
+    mocker.patch(
+        "jailbee.sync.git.rev_parse",
+        side_effect=lambda root, ref: {
+            "refs/remotes/origin/release/2.1": "upstream-tip",
+            "refs/jailbee/feat-x/feat/x": "container-tip",
+        }.get(ref),
+    )
+    mocker.patch("jailbee.sync.refresh_bases_for", return_value=())
+    mocker.patch("jailbee.sync.submodules.place_branches_from_commit", return_value=[])
+    return cfg, incus
+
+
+@pytest.mark.parametrize("ancestor", [False, None])
+@pytest.mark.parametrize("checkout", [False, True])
+def test_pull_into_remote_only_base_refuses_to_drop_upstream_commits(
+    mocker, make_cfg, tmp_path, ancestor, checkout
+):
+    """Applies equally after retarget and a new container with a fetched-only base."""
+    from jailbee import sync
+
+    cfg, incus = _remote_only_pull_setup(mocker, make_cfg, tmp_path)
+    mocker.patch("jailbee.sync.git.is_ancestor", return_value=ancestor)
+    ff = mocker.patch("jailbee.sync.git.fast_forward_branch", return_value=True)
+    update = mocker.patch("jailbee.sync.git.update_ref")
+    mocker.patch("jailbee.sync.git.host_tree_dirty", return_value=False)
+
+    with pytest.raises(sync.SyncError, match=r"diverged|Cannot check fetched base"):
+        sync.merge_from_container(cfg, incus, "feat-x", allow_checkout=checkout, ff="always")
+
+    ff.assert_not_called()
+    update.assert_not_called()
+
+
+def test_pull_into_remote_only_base_fast_forwards_when_upstream_is_included(
+    mocker, make_cfg, tmp_path
+):
+    from jailbee import sync
+
+    cfg, incus = _remote_only_pull_setup(mocker, make_cfg, tmp_path)
+    ancestor = mocker.patch("jailbee.sync.git.is_ancestor", return_value=True)
+    ff = mocker.patch("jailbee.sync.git.fast_forward_branch", return_value=True)
+
+    result = sync.merge_from_container(cfg, incus, "feat-x")
+
+    ancestor.assert_called_once_with(cfg.repo_root, "upstream-tip", "refs/jailbee/feat-x/feat/x")
+    ff.assert_called_once_with(cfg.repo_root, "release/2.1", "refs/jailbee/feat-x/feat/x")
+    assert result.pre_merge_head == "upstream-tip"
+    assert result.head_oid == "container-tip"
+
+
+def test_pull_remote_only_divergence_checkout_seeds_from_upstream(mocker, make_cfg, tmp_path):
+    from jailbee import sync
+
+    cfg, incus = _remote_only_pull_setup(mocker, make_cfg, tmp_path)
+    mocker.patch("jailbee.sync.git.is_ancestor", return_value=False)
+    mocker.patch("jailbee.sync.git.host_tree_dirty", return_value=False)
+    mocker.patch("jailbee.sync._move_host_head", side_effect=lambda cfg, *, op, **kw: op())
+    mocker.patch("jailbee.sync.submodules.update_submodules_on_host")
+    update = mocker.patch("jailbee.sync.git.update_ref", return_value=True)
+    checkout = mocker.patch("jailbee.sync.git.checkout_branch")
+    merge = mocker.patch("jailbee.sync.git.merge_ref")
+    mocker.patch("jailbee.sync.git.get_head_sha", return_value="merged-tip")
+    mocker.patch(
+        "jailbee.sync.git.rev_parse",
+        side_effect=lambda root, ref: {
+            "refs/remotes/origin/release/2.1": "upstream-tip",
+            "refs/jailbee/feat-x/feat/x": "container-tip",
+            "HEAD": "merged-tip",
+        }.get(ref),
+    )
+
+    result = sync.merge_from_container(cfg, incus, "feat-x", allow_checkout=True)
+
+    update.assert_called_once_with(
+        cfg.repo_root, "refs/heads/release/2.1", "upstream-tip", old_oid=""
+    )
+    checkout.assert_called_once_with(cfg.repo_root, "release/2.1")
+    merge.assert_called_once()
+    assert result.pre_merge_head == "upstream-tip"
+
+
 def test_merge_non_ff_without_checkout_raises(mocker, make_cfg, tmp_path):
     cfg = make_cfg(tmp_path)
     incus = mocker.MagicMock()
@@ -6045,6 +6133,24 @@ def test_refresh_container_base_pushes_expected_refspec(mocker, make_cfg, tmp_pa
     assert args[2] == "+refs/heads/main:refs/jailbee/base/main"
 
 
+def test_refresh_container_base_uses_fetched_only_base_on_boot(mocker, make_cfg, tmp_path):
+    from jailbee.sync import refresh_container_base
+
+    cfg = make_cfg(tmp_path).model_copy(update={"upstream_remote": "upstream"})
+    incus = mocker.MagicMock()
+    mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/home/dev/repo")
+    mocker.patch("jailbee.sync.git.rev_parse", side_effect=[None, "upstream-tip"])
+    push = mocker.patch("jailbee.sync.git.push_url")
+
+    ok = refresh_container_base(cfg, incus, "p-feat-x", base_branch="release/2.1", force=False)
+
+    assert ok is True
+    assert push.call_args.args[2] == (
+        "refs/remotes/upstream/release/2.1:refs/jailbee/base/release/2.1"
+    )
+    assert push.call_args.kwargs == {"quiet": True}
+
+
 def test_refresh_container_base_skips_when_host_base_missing(mocker, make_cfg, tmp_path):
     from jailbee.sync import refresh_container_base
 
@@ -6582,6 +6688,33 @@ def test_retarget_pushes_new_base_and_deletes_old(mocker, make_cfg, tmp_path):
     assert result.old_base == "feat/a"
     assert result.new_base == "main"
     assert result.base_oid == "abc1234"
+
+
+@pytest.mark.parametrize("remote", ["origin", "upstream"])
+def test_retarget_remote_only_base_pushes_the_fetched_ref(mocker, make_cfg, tmp_path, remote):
+    from jailbee import sync
+
+    cfg = make_cfg(tmp_path).model_copy(update={"upstream_remote": remote})
+    incus = _retarget_setup(mocker)
+    mocker.patch("jailbee.sync.git.rev_parse", side_effect=[None, "abc1234"])
+    push_multi = mocker.patch("jailbee.sync.git.push_url_multi")
+
+    result = sync.retarget_container(cfg, incus, "feat-b", "release/2.1")
+
+    push_multi.assert_called_once_with(
+        cfg.repo_root,
+        "ext::receive",
+        [
+            f"+refs/remotes/{remote}/release/2.1:refs/jailbee/base/release/2.1",
+            ":refs/jailbee/base/feat/a",
+        ],
+    )
+    assert result.new_base == "release/2.1"
+    assert result.base_oid == "abc1234"
+    assert incus.config_set.call_args_list == [
+        mocker.call("p-feat-b", "user.jailbee.base_branch", "release/2.1"),
+        mocker.call("p-feat-b", "user.jailbee.base_explicit", "true"),
+    ]
 
 
 def test_retarget_without_old_base_pushes_only_new(mocker, make_cfg, tmp_path):

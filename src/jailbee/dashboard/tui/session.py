@@ -332,7 +332,7 @@ QUEUE_TAIL_LINES = 3
 QUEUE_NO_OUTPUT_YET = "(no output yet)"
 QUEUE_ROW_TAIL_CHARS = 60
 
-_QUEUE_ICONS = {"running": "⟳", "awaiting": "⚠", "done": "✓", "failed": "✗"}
+_QUEUE_ICONS = {"running": "⟳", "awaiting": "?", "done": "✓", "failed": "✗"}
 
 
 def _queue_state(entry: QueueEntry) -> str:
@@ -1154,10 +1154,22 @@ class DashboardSession:
     def queue_picker(self, *, start_index: int = 0) -> Picker:
         """The notification queue's list: one entry per action, then the clean-up."""
         entries = [
-            PickerEntry(_job_label(job), QUEUE_JOB_PREFIX + job.target) for job in self.queue.jobs
+            PickerEntry(
+                _job_label(job), QUEUE_JOB_PREFIX + job.target, tone="error" if job.failed else None
+            )
+            for job in self.queue.jobs
         ]
         entries += [
-            PickerEntry(_queue_label(entry), str(entry.id)) for entry in reversed(list(self.queue))
+            PickerEntry(
+                _queue_label(entry),
+                str(entry.id),
+                tone="accent"
+                if entry.state == "awaiting"
+                else "error"
+                if entry.state == "failed"
+                else None,
+            )
+            for entry in reversed(list(self.queue))
         ]
         if any(entry.finished for entry in self.queue):
             entries.append(PickerEntry("Dismiss finished", QUEUE_DISMISS_FINISHED, "D"))
@@ -3405,7 +3417,6 @@ class DashboardSession:
                     repo.repo_root
                     if (repo := target_group(self.groups, prompt.target, "repo"))
                     else None,
-                    include_remote=True,
                 ),
             )
         if prompt.purpose == "new-base":

@@ -4,9 +4,11 @@ import SettingsPanel from "../components/SettingsPanel.vue"
 </script>
 
 <template>
-    <div class="page">
+    <div>
         <TitleBar title="Settings" :crumbs="[{label: 'JailBee', to: {name: 'front'}}]" />
-        <SettingsPanel />
+        <div class="page">
+            <SettingsPanel />
+        </div>
     </div>
 </template>
 

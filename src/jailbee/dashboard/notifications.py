@@ -121,7 +121,8 @@ class QueueCounts:
     """What the badge shows."""
 
     running: int
-    attention: int
+    pending: int = 0
+    failed: int = 0
 
 
 class NotificationQueue:
@@ -246,5 +247,6 @@ class NotificationQueue:
         return QueueCounts(
             running=sum(e.state == "running" for e in entries)
             + sum(not j.failed for j in self.jobs),
-            attention=sum(e.needs_attention for e in entries) + sum(j.failed for j in self.jobs),
+            pending=sum(e.state == "awaiting" for e in entries),
+            failed=sum(e.state == "failed" for e in entries) + sum(j.failed for j in self.jobs),
         )

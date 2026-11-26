@@ -88,6 +88,16 @@ def test_container_rows_search_and_paging_match_the_gallery(
     expect(search).to_be_visible()
     previous = page.get_by_role("button", name="Previous earlier sessions")
     expect(previous).to_be_disabled()
+    pager = page.get_by_role("navigation", name="Earlier sessions", exact=True)
+    assert pager.evaluate("""el => {
+        const row = el.getBoundingClientRect();
+        const children = [...el.children].map(child => child.getBoundingClientRect());
+        return Math.abs((children[0].left - row.left)
+            - (row.right - children.at(-1).right)) <= 1;
+    }""")
+    for button in pager.get_by_role("button").all():
+        expect(button).to_have_text("")
+        expect(button.locator("svg")).to_be_visible()
     css = (
         "el => { const s = getComputedStyle(el); return [s.backgroundColor, s.color, "
         "s.borderRadius, s.borderColor, s.minHeight] }"
@@ -114,7 +124,7 @@ def test_container_rows_search_and_paging_match_the_gallery(
     assert field_look == panel.get_by_role("textbox", name="Container name", exact=True).evaluate(
         css
     )
-    assert button_look == panel.get_by_role("button", name="tonal disabled", exact=True).evaluate(
+    assert button_look == panel.get_by_role("button", name="Previous earlier sessions", exact=True).evaluate(
         css
     )
     panel.screenshot(path=tmp_path / f"gallery-{theme}.png")

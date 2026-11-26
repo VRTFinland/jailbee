@@ -71,7 +71,7 @@ def test_successful_worker_exit_does_not_turn_a_gathered_job_into_an_error(
 
     queue = NotificationQueue()
     queue.set_jobs(job_rows(decoded.groups))
-    assert queue.counts().attention == 0
+    assert queue.counts().failed == 0
     assert not queue.jobs[0].phase.endswith(" (dead)")
     assert row_phase(container) != "failed"
     now = datetime.now(UTC)
@@ -188,7 +188,7 @@ def test_worker_killed_mid_phase_still_publishes_one_error(
         alive.return_value = live
         containers = list_containers(cfg, incus, with_background=True)
         queue.set_jobs(job_rows([RepoGroup(cfg.container_prefix, str(tmp_path), None, containers)]))
-        assert queue.counts().attention == (0 if live else 1)
+        assert queue.counts().failed == (0 if live else 1)
         assert queue.attention_items() == (frozenset() if live else {("job", name)})
         assert (row_phase(containers[0]) == "failed") is not live
         assert queue.jobs[0].phase.endswith(" (dead)") is not live
@@ -199,7 +199,7 @@ def test_worker_killed_mid_phase_still_publishes_one_error(
     assert outcome.cleared and outcome.reason == "stale"
     containers = list_containers(cfg, incus, with_background=True)
     queue.set_jobs(job_rows([RepoGroup(cfg.container_prefix, str(tmp_path), None, containers)]))
-    assert queue.counts().attention == 0
+    assert queue.counts().failed == 0
 
 
 def test_observed_live_is_none_on_a_db_loaded_row(make_cfg, tmp_path, monkeypatch):

@@ -99,9 +99,9 @@ def update_line(notice: UpdateNotice, *, hover: dhit.Hit | None = None) -> Text:
 
 
 def queue_badge(counts: QueueCounts, *, accent: str, frame: int = 0) -> Text:
-    """The notification queue's badge: ``⟳ running · ⚠ needs attention``, one click target.
+    """The queue's running, pending-question and failure counts, one click target.
 
-    Non-zero counts are bold: running uses the theme accent, attention red.
+    Non-zero counts are bold: running and pending use the theme accent, failures red.
     Only a running queue cycles through frames; an idle one keeps its static glyph.
     """
     hit = Style(meta={dhit.HIT_KEY: dhit.Hit("queue").meta_value()})
@@ -111,10 +111,13 @@ def queue_badge(counts: QueueCounts, *, accent: str, frame: int = 0) -> Text:
         f"{glyph} {counts.running}",
         style=(Style(color=accent, bold=True) if counts.running else Style(dim=True)) + hit,
     )
+    if counts.pending:
+        badge.append(" · ", style=Style(dim=True) + hit)
+        badge.append(f"? {counts.pending}", style=Style(bold=True, color=accent) + hit)
     badge.append(" · ", style=Style(dim=True) + hit)
     badge.append(
-        f"⚠ {counts.attention}",
-        style=(Style(bold=True, color="red") if counts.attention else Style(dim=True)) + hit,
+        f"✗ {counts.failed}",
+        style=(Style(bold=True, color="red") if counts.failed else Style(dim=True)) + hit,
     )
     return badge
 

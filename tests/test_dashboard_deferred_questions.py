@@ -48,7 +48,8 @@ def test_background_question_waits_in_queue_until_selected(mocker, tmp_path, ans
             assert len(app.screen_stack) == 1
             entry = next(iter(app.session.queue))
             assert entry.pending_question.question == "Branch name?"
-            assert app.session.view().queue.attention == 1
+            assert app.session.view().queue.pending == 1
+            assert app.session.view().queue.failed == 0
             assert "jailbee start alpha-a" in app.session.notice
             assert "Q" in app.session.notice
             assert answers == []

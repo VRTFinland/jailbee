@@ -42,6 +42,8 @@ def test_host_commands_snapshot():
         ["config", "show"],
         ["config", "migrate"],
         ["config", "init"],
+        ["litellm", "up"],
+        ["litellm", "login"],
     ],
 )
 def test_shared_host_subcommands_get_host_hint(args):
@@ -82,6 +84,7 @@ def test_shared_group_typos_stay_unknown_commands(args):
         ["agent", "models"],
         ["service", "refresh"],
         ["config", "validate"],
+        ["litellm", "quota"],
     ],
 )
 def test_shared_container_subcommands_still_resolve(args):
@@ -407,3 +410,21 @@ def test_container_main_names_program_jailbee(
     out = captured.out + captured.err
     assert "Usage: jailbee" in out
     assert "container_main" not in out
+
+
+def test_litellm_quota_passes_options(monkeypatch):
+    from jailbee import litellm_quota
+    from jailbee.container_cli import container_app
+
+    seen = {}
+
+    def fake(**kwargs):
+        seen.update(kwargs)
+        return 1
+
+    monkeypatch.setattr(litellm_quota, "quota", fake)
+
+    result = CliRunner().invoke(container_app, ["litellm", "quota", "-P", "mix", "--json"])
+
+    assert result.exit_code == 1
+    assert seen == {"profile": "mix", "as_json": True}

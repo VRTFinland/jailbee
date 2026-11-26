@@ -44,6 +44,12 @@ function setup(refreshMs = 60_000) {
 }
 
 describe("FrontPage", () => {
+    it("starts the navigation hierarchy at JailBee without duplicate ancestor levels", () => {
+        const {wrapper} = setup()
+        expect(wrapper.findAll('nav[aria-label="Breadcrumb"] a')).toHaveLength(0)
+        expect(wrapper.get('nav h1').text()).toBe('JailBee')
+        wrapper.unmount()
+    })
     beforeEach(() => {
         vi.useFakeTimers()
         vi.stubGlobal("matchMedia", () => ({matches: false, addEventListener() {}, removeEventListener() {}}))

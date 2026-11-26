@@ -98,6 +98,11 @@ The usual broker connection retry applies; exit 4 means the broker is
 unreachable or did not answer in time (the message distinguishes them).
 Treat unavailable readings as unknown, not as free capacity.
 
+With a LiteLLM proxy configured (`claude-jb`), `jailbee litellm quota`
+(`-P PROFILE`, `--json`) shows how much of the ChatGPT subscription's limit
+windows is used and when each resets. Each check spends one 1-token request;
+exit 1 means the profile has no ChatGPT-subscription route.
+
 Before long tests or work that depends on services, check `jailbee service ls`
 or run `jailbee service wait api --until unhealthy` in the background to watch
 for failure. `unhealthy` also matches stopped, failed, or exited services.

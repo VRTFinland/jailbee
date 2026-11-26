@@ -103,10 +103,10 @@ body {
 :root[data-profile="eink"] {
     scroll-behavior: auto !important;
 }
-:root[data-profile="eink"] body {
+:root[data-profile="eink"] .page {
     padding-inline: var(--eink-page-inset);
     padding-bottom: calc(var(--guard-bottom) + var(--page-nav-height) + var(--md-space-16));
 }
-:root[data-profile="eink"]:not([data-page-controls="bar"]) body {
+:root[data-profile="eink"]:not([data-page-controls="bar"]) .page {
     padding-right: max(var(--eink-page-inset), calc(var(--page-controls-width) + var(--md-space-8) + var(--md-space-8)));
 }
