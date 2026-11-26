@@ -69,8 +69,8 @@ from jailbee.update_check import UpdateNotice
 # 42 adds None entries for local-only config/journal error recovery in resumable_repos.
 # 43 adds ContainerInfo.start_identity for precise host-side boot recovery.
 # 44 distinguishes registered repos with unloadable configs from true orphans.
-# 45 adds action hosting messages.
-PROTOCOL = 45
+# 45 adds action hosting messages. 46 adds action scope and dismissal.
+PROTOCOL = 46
 
 # Allows escaped output tails and ordinary snapshots while bounding incoming lines.
 MAX_WIRE_LINE_BYTES = 16 * 1024 * 1024
@@ -88,6 +88,7 @@ class Hello:
     version: str
     cwd_root: str | None = None
     dashboard_id: str | None = None
+    excluded_prefixes: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -151,6 +152,8 @@ class RunAction:
     repo_root: str
     prefix: str
     address_flags: list[str] = field(default_factory=list)
+    cwd_root: str | None = None
+    excluded_prefixes: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -171,12 +174,24 @@ class ActionEntry:
     error: str | None = None
     cancelled: bool = False
     declined: bool = False
+    cwd_root: str | None = None
+    excluded_prefixes: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
 class ActionOutput:
     entry_id: int
     chunk: str
+
+
+@dataclass(frozen=True)
+class DismissAction:
+    entry_id: int
+
+
+@dataclass(frozen=True)
+class ActionDismissed:
+    entry_id: int
 
 
 @dataclass(frozen=True)
@@ -207,6 +222,8 @@ Message = (
     | ActionOutput
     | ActionFinish
     | ActionRejected
+    | DismissAction
+    | ActionDismissed
 )
 
 _NAMES: dict[type[Any], str] = {
@@ -215,6 +232,8 @@ _NAMES: dict[type[Any], str] = {
     ActionOutput: "action_output",
     ActionFinish: "action_finish",
     ActionRejected: "action_rejected",
+    DismissAction: "dismiss_action",
+    ActionDismissed: "action_dismissed",
     Hello: "hello",
     Active: "active",
     Refresh: "refresh",

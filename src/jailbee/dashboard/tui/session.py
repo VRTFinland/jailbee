@@ -653,6 +653,7 @@ class DashboardSession:
         hover, keys and resizes do not speed it up.
         """
         self.jobs.poll()
+        self._sync_shared_actions()
         snapshot = self.client.latest()
         assert snapshot is not None  # `wait_first_snapshot` returned
         self.presented = self._without_dismissed(
@@ -699,6 +700,30 @@ class DashboardSession:
             self._queue_frame = 0
         elif spin:
             self._queue_frame = (self._queue_frame + 1) % 4
+
+    def _sync_shared_actions(self) -> None:
+        from jailbee.dashboard.notifications import QueueEntry
+
+        action_entries = getattr(self.client, "action_entries", None)
+        if action_entries is None:
+            return
+        entries = []
+        for item in action_entries().values():
+            entries.append(
+                QueueEntry(
+                    item.entry_id,
+                    "jailbee " + " ".join(item.argv),
+                    item.target,
+                    state=(
+                        "running" if not item.finished else "done" if item.status == 0 else "failed"
+                    ),
+                    status=item.status,
+                    output=item.output,
+                    critical=item.critical,
+                )
+            )
+        self.queue.sync_shared(entries)
+        self.queue_changed()
 
     def _without_dismissed(self, groups: list[RepoGroup]) -> list[RepoGroup]:
         """``groups`` minus the advisories dismissed since the snapshot was gathered.
@@ -1227,7 +1252,11 @@ class DashboardSession:
             if entry.value.startswith(QUEUE_JOB_PREFIX):
                 return self.queue_job_picker(entry.value.removeprefix(QUEUE_JOB_PREFIX))
             if entry.value == QUEUE_DISMISS_FINISHED:
-                self.queue.dismiss_finished()
+                for queued in list(self.queue):
+                    if queued.finished and self.queue.dismiss(queued.id):
+                        dismiss = getattr(self.client, "dismiss_action", None)
+                        if dismiss is not None and queued.id in self.client.action_entries():
+                            dismiss(queued.id)
                 return self.queue_picker()
             if entry.value == "close" or not entry.value.isdigit():
                 return None
@@ -1251,6 +1280,9 @@ class DashboardSession:
             if not self.queue.dismiss(entry_id):
                 self.set_notice("A running action cannot be dismissed")
                 return self.queue_entry_picker(entry_id)
+            dismiss = getattr(self.client, "dismiss_action", None)
+            if dismiss is not None and entry_id in self.client.action_entries():
+                dismiss(entry_id)
             return self.queue_picker()
         return None
 

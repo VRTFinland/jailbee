@@ -24,11 +24,13 @@ from jailbee.state_service.paths import ensure_runtime_dir, lock_path, socket_pa
 from jailbee.state_service.protocol import (
     MAX_WIRE_LINE_BYTES,
     PROTOCOL,
+    ActionDismissed,
     ActionEntry,
     ActionFinish,
     ActionOutput,
     ActionRejected,
     Active,
+    DismissAction,
     Hello,
     ProtocolError,
     Refresh,
@@ -77,6 +79,7 @@ class _Client:
     writer: asyncio.StreamWriter
     cwd_root: Path | None
     dashboard_id: str | None = None
+    excluded_prefixes: frozenset[str] = frozenset()
     active: bool = True
 
 
@@ -165,15 +168,35 @@ class StateServer:
             # A client of another version only gets to ask us to go away.
             if hello.protocol == PROTOCOL and hello.version == self._version:
                 client = _Client(
-                    writer, Path(hello.cwd_root) if hello.cwd_root else None, hello.dashboard_id
+                    writer,
+                    Path(hello.cwd_root) if hello.cwd_root else None,
+                    hello.dashboard_id,
+                    frozenset(hello.excluded_prefixes),
                 )
                 self._clients.add(client)
-                if client.dashboard_id is not None:
-                    for entry in self._actions.values():
-                        if entry.origin == client.dashboard_id:
-                            if not self._send_action(client, entry):
-                                return
-                    await writer.drain()
+                for entry in self._actions.values():
+                    if self._in_scope(entry, client):
+                        if not self._send_action(client, replace(entry, output="")):
+                            return
+                    if self._in_scope(entry, client) and entry.output:
+                        if not self._send_action(
+                            client, ActionOutput(entry.entry_id, entry.output)
+                        ):
+                            return
+                    if self._in_scope(entry, client) and entry.finished:
+                        if not self._send_action(
+                            client,
+                            ActionFinish(
+                                entry.entry_id,
+                                entry.status,
+                                entry.refused,
+                                entry.error,
+                                entry.cancelled,
+                                entry.declined,
+                            ),
+                        ):
+                            return
+                await writer.drain()
                 if self._latest is not None:
                     writer.write(encode(self._latest))
                     await writer.drain()
@@ -186,6 +209,8 @@ class StateServer:
                     continue
                 elif isinstance(message, RunAction):
                     self._start_action(client, message)
+                elif isinstance(message, DismissAction):
+                    self._dismiss_action(client, message.entry_id)
                 elif isinstance(message, Active):
                     client.active = message.value
                 elif isinstance(message, Refresh):
@@ -227,8 +252,14 @@ class StateServer:
             request.repo_root,
             request.prefix,
         )
+        entry = replace(
+            entry,
+            cwd_root=request.cwd_root or request.repo_root,
+            excluded_prefixes=list(request.excluded_prefixes),
+        )
         self._actions[entry.entry_id] = entry
-        self._send_action(client, entry)
+        self._action_changed(entry)
+        self._broadcast_action(entry)
         loop = asyncio.get_running_loop()
 
         def send_output(chunk: str) -> None:
@@ -262,6 +293,40 @@ class StateServer:
         self._action_tasks.add(task)
         task.add_done_callback(self._action_tasks.discard)
 
+    def _in_scope(self, entry: ActionEntry, client: _Client) -> bool:
+        if entry.prefix in client.excluded_prefixes:
+            return False
+        if client.cwd_root is None or entry.cwd_root is None:
+            return True
+        try:
+            Path(entry.cwd_root).resolve().relative_to(client.cwd_root.resolve())
+        except ValueError:
+            return False
+        return True
+
+    def _broadcast_action(self, message: ActionEntry | ActionOutput | ActionFinish) -> None:
+        entry = self._actions[message.entry_id] if not isinstance(message, ActionEntry) else message
+        for recipient in list(self._clients):
+            if self._in_scope(entry, recipient):
+                self._send_action(recipient, message)
+
+    def _action_changed(self, entry: ActionEntry) -> None:
+        """Persistence seam called whenever an action entry changes."""
+
+    def _action_dismissed(self, entry_id: int) -> None:
+        """Persistence seam called after a shared action is dismissed."""
+
+    def _dismiss_action(self, client: _Client, entry_id: int) -> None:
+        entry = self._actions.get(entry_id)
+        if entry is None or not entry.finished or not self._in_scope(entry, client):
+            return
+        del self._actions[entry_id]
+        self._action_dismissed(entry_id)
+        message = ActionDismissed(entry_id)
+        for recipient in list(self._clients):
+            if self._in_scope(entry, recipient):
+                self._send_action(recipient, message)
+
     def _action_output(self, entry_id: int, chunk: str) -> None:
         from jailbee.dashboard.runner import OUTPUT_DROPPED_MARKER, OUTPUT_KEEP_CHARS
 
@@ -269,13 +334,13 @@ class StateServer:
         output = entry.output + chunk
         if len(output) > OUTPUT_KEEP_CHARS:
             output = OUTPUT_DROPPED_MARKER + output[-OUTPUT_KEEP_CHARS:]
-        self._actions[entry_id] = replace(entry, output=output)
-        for recipient in list(self._clients):
-            if recipient.dashboard_id == entry.origin:
-                self._send_action(recipient, ActionOutput(entry_id, chunk))
+        entry = replace(entry, output=output)
+        self._actions[entry_id] = entry
+        self._action_changed(entry)
+        self._broadcast_action(ActionOutput(entry_id, chunk))
 
     def _action_finish(self, finish: ActionFinish) -> None:
-        self._actions[finish.entry_id] = replace(
+        entry = replace(
             self._actions[finish.entry_id],
             finished=True,
             status=finish.status,
@@ -284,12 +349,14 @@ class StateServer:
             cancelled=finish.cancelled,
             declined=finish.declined,
         )
-        for recipient in list(self._clients):
-            if recipient.dashboard_id == self._actions[finish.entry_id].origin:
-                self._send_action(recipient, finish)
+        self._actions[finish.entry_id] = entry
+        self._action_changed(entry)
+        self._broadcast_action(finish)
 
     def _send_action(
-        self, client: _Client, message: ActionEntry | ActionOutput | ActionFinish | ActionRejected
+        self,
+        client: _Client,
+        message: ActionEntry | ActionOutput | ActionFinish | ActionRejected | ActionDismissed,
     ) -> bool:
         transport = client.writer.transport
         if client not in self._clients or transport is None or transport.is_closing():
