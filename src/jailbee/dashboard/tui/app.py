@@ -444,7 +444,7 @@ class DashboardApp(App[int], inherit_bindings=False):
         modal = modal_for(entry.pending_question, entry=entry)
 
         def close_resolved(_future: asyncio.Future[Any]) -> None:
-            if entry_id in self._shown_questions and self.screen is modal:
+            if self.screen_stack and entry_id in self._shown_questions and self.screen is modal:
                 modal.dismiss(None)
 
         answer.add_done_callback(close_resolved)

@@ -99,7 +99,7 @@ def test_quit_driver_waits_for_mounted_question_before_exiting(mocker, tmp_path)
 
 
 @pytest.mark.parametrize("kind", ["confirm", "choose_one", "choose_many", "text", "secret"])
-def test_exit_while_prompt_is_mounting_does_not_report_an_exception(mocker, tmp_path, kind):
+def test_exit_while_prompt_is_mounting_does_not_report_an_exception(mocker, tmp_path, kind, caplog):
     app = make_app(mocker, [_group(tmp_path)])
     app.threaded_actions = True
     app.action_runner = drunner.run_action
@@ -131,7 +131,7 @@ def test_exit_while_prompt_is_mounting_does_not_report_an_exception(mocker, tmp_
 
         mocker.patch.object(modal_type, "on_mount", held_mount)
         async with app.run_test():
-            app.run_actions([drunner.ActionRun(["merge", "alpha-x"], tmp_path)], lambda _: None)
+            app.session.run_dashboard_command("alpha-x", "container", ["start", "alpha-x"])
             await mounting.wait()
             try:
                 app.exit()
@@ -145,6 +145,7 @@ def test_exit_while_prompt_is_mounting_does_not_report_an_exception(mocker, tmp_
 
     asyncio.run(asyncio.wait_for(main(), _RUN_SECONDS))
     errors.assert_not_called()
+    assert not [record for record in caplog.records if record.levelno >= 40]
     assert isinstance(spawn.child.answers[0], Cancel)
     spawn.child._thread.join(_JOIN_SECONDS)
     assert not spawn.child._thread.is_alive()
@@ -429,6 +430,24 @@ def test_secret_is_masked_in_the_dashboard(mocker, tmp_path):
     _drive(mocker, tmp_path, spawn, script)
     assert seen["masked"] is True
     assert spawn.child.answers[0].value == "s3cret"
+
+
+def test_teardown_with_contextual_question_does_not_log_callback_error(mocker, tmp_path, caplog):
+    spawn = Spawns([_prompt()])
+    app = make_app(mocker, [_group(tmp_path)])
+    app.threaded_actions = True
+    app.action_runner = drunner.run_action
+    app.action_spawn = spawn
+
+    async def main():
+        async with app.run_test() as pilot:
+            app.session.run_dashboard_command("alpha-x", "container", ["start", "alpha-x"])
+            await _confirm_modal(pilot, app)
+        # run_test tears down the screens before resolving the pending answer.
+        await asyncio.sleep(0)
+
+    asyncio.run(asyncio.wait_for(main(), 20))
+    assert not [record for record in caplog.records if record.levelno >= 40]
 
 
 def test_quitting_with_a_question_pending_cancels_it_and_the_app_exits(mocker, tmp_path):

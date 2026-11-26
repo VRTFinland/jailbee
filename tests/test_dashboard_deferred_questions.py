@@ -193,7 +193,7 @@ def test_critical_question_still_opens_after_another_live_output_was_closed(mock
     asyncio.run(scenario())
 
 
-def test_dead_child_clears_pending_question(mocker, tmp_path):
+def test_dead_child_clears_pending_question(mocker, tmp_path, caplog):
     import threading
 
     from jailbee.prompt_channel import CommandEnd
@@ -249,6 +249,7 @@ def test_dead_child_clears_pending_question(mocker, tmp_path):
                 app.exit()
 
     asyncio.run(scenario())
+    assert not [record for record in caplog.records if record.levelno >= 40]
 
 
 def test_critical_question_waits_when_another_screen_is_on_top(mocker, tmp_path):
