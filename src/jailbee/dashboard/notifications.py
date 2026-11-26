@@ -150,6 +150,7 @@ class NotificationQueue:
 
     def __init__(self) -> None:
         self._entries: dict[int, QueueEntry] = {}
+        self._shared_ids: set[int] = set()
         self.jobs: tuple[JobRow, ...] = ()
 
     def job(self, target: str) -> JobRow | None:
@@ -171,6 +172,20 @@ class NotificationQueue:
 
     def get(self, entry_id: int) -> QueueEntry | None:
         return self._entries.get(entry_id)
+
+    def sync_shared(self, entries: Iterable[QueueEntry]) -> None:
+        """Replace entries mirrored from the state service, preserving local foreground state."""
+        shared = {entry.id: entry for entry in entries}
+        for entry_id in self._shared_ids - shared.keys():
+            self._entries.pop(entry_id, None)
+        for entry_id, entry in shared.items():
+            local = self._entries.get(entry_id)
+            self._entries[entry_id] = replace(
+                entry,
+                foreground=(local.foreground if local is not None else False),
+                pending_question=local.pending_question if local is not None else None,
+            )
+        self._shared_ids = set(shared)
 
     def start(self, command: str, target: str, *, critical: bool = False) -> int:
         """A new running entry; returns its id. A critical one starts in the foreground."""

@@ -71,6 +71,117 @@ def test_action_streams_output_and_result(runtime_dir, tmp_path):
         client.close()
 
 
+def test_action_events_are_broadcast_to_same_scope_clients(runtime_dir, tmp_path):
+    class Child:
+        stdout = None
+
+        def __init__(self, sock):
+            sock.close()
+
+        def wait(self):
+            return 0
+
+        def kill(self):
+            pass
+
+    from jailbee.state_service import paths
+
+    paths.ensure_runtime_dir()
+    server = StateServer(
+        FakeGatherer(), version="v1", action_spawn=lambda *a, **kw: Child(kw["prompt_sock"])
+    )
+    thread = threading.Thread(
+        target=lambda: asyncio.run(server.serve(paths.socket_path())), daemon=True
+    )
+    thread.start()
+    track_server(server, thread)
+    _until(paths.socket_path().exists)
+
+    def connect(identity):
+        client = StateClient(
+            tmp_path, dashboard_id=identity, version="v1", spawn=lambda: None, backoff=(0.05,)
+        )
+        client.start()
+        client.wait_first_snapshot(3)
+        return client
+
+    first, second = connect("one"), connect("two")
+    try:
+        first.run_action(
+            RunAction(
+                123,
+                ["ls"],
+                str(tmp_path),
+                "target",
+                False,
+                "one",
+                "none",
+                str(tmp_path),
+                "repo",
+            )
+        )
+        _until(lambda: 123 in first.action_entries() and 123 in second.action_entries())
+        _until(
+            lambda: first.action_entries()[123].finished and second.action_entries()[123].finished
+        )
+        assert first.action_entries()[123].output == second.action_entries()[123].output
+    finally:
+        first.close()
+        second.close()
+
+
+def test_late_client_gets_finished_action_and_can_dismiss_for_all(runtime_dir, tmp_path):
+    class Child:
+        stdout = None
+
+        def __init__(self, sock):
+            sock.close()
+
+        def wait(self):
+            return 0
+
+        def kill(self):
+            pass
+
+    from jailbee.state_service import paths
+
+    paths.ensure_runtime_dir()
+    server = StateServer(
+        FakeGatherer(), version="v1", action_spawn=lambda *a, **kw: Child(kw["prompt_sock"])
+    )
+    thread = threading.Thread(
+        target=lambda: asyncio.run(server.serve(paths.socket_path())), daemon=True
+    )
+    thread.start()
+    track_server(server, thread)
+    _until(paths.socket_path().exists)
+
+    def connect(identity):
+        client = StateClient(
+            tmp_path, dashboard_id=identity, version="v1", spawn=lambda: None, backoff=(0.05,)
+        )
+        client.start()
+        client.wait_first_snapshot(3)
+        return client
+
+    first = connect("one")
+    first.run_action(
+        RunAction(321, ["ls"], str(tmp_path), "target", False, "one", "none", str(tmp_path), "repo")
+    )
+    _until(
+        lambda: first.action_entries().get(321) is not None and first.action_entries()[321].finished
+    )
+    late = connect("late")
+    try:
+        _until(lambda: 321 in late.action_entries() and late.action_entries()[321].finished)
+        assert late.action_entries()[321].output == first.action_entries()[321].output
+        late.dismiss_action(321)
+        _until(lambda: 321 not in first.action_entries() and 321 not in late.action_entries())
+    finally:
+        first.close()
+        late.close()
+
+
 def test_wire_action_messages_round_trip():
     from jailbee.state_service.protocol import (
         ActionEntry,
@@ -158,7 +269,7 @@ def test_question_is_cancelled_over_real_prompt_channel(runtime_dir, tmp_path):
         client.close()
 
 
-def test_reconnect_replays_only_origin_entries_and_rejects_duplicate(runtime_dir, tmp_path):
+def test_reconnect_replays_entries_in_repository_scope_and_rejects_duplicate(runtime_dir, tmp_path):
     from jailbee.state_service import paths
     from jailbee.state_service.protocol import ActionRejected
 
@@ -185,9 +296,9 @@ def test_reconnect_replays_only_origin_entries_and_rejects_duplicate(runtime_dir
     track_server(server, thread)
     _until(paths.socket_path().exists)
 
-    def connect(identity):
+    def connect(identity, cwd_root=None):
         client = StateClient(
-            None, dashboard_id=identity, version="v1", spawn=lambda: None, backoff=(0.05,)
+            cwd_root, dashboard_id=identity, version="v1", spawn=lambda: None, backoff=(0.05,)
         )
         client.start()
         client.wait_first_snapshot(3)
@@ -202,7 +313,7 @@ def test_reconnect_replays_only_origin_entries_and_rejects_duplicate(runtime_dir
         lambda: first.action_entries().get(55) is not None and first.action_entries()[55].finished
     )
     first.close()
-    other = connect("other")
+    other = connect("other", tmp_path / "another-repo")
     again = connect("one")
     try:
         _until(lambda: 55 in again.action_entries())

@@ -27,11 +27,13 @@ from jailbee.state_service.paths import ensure_runtime_dir, log_path, socket_pat
 from jailbee.state_service.protocol import (
     MAX_WIRE_LINE_BYTES,
     PROTOCOL,
+    ActionDismissed,
     ActionEntry,
     ActionFinish,
     ActionOutput,
     ActionRejected,
     Active,
+    DismissAction,
     GatherError,
     Hello,
     Message,
@@ -106,6 +108,7 @@ class StateClient:
         *,
         on_update: Callable[[], None] | None = None,
         dashboard_id: str | None = None,
+        excluded_prefixes: Sequence[str] = (),
         spawn: Callable[[], None] = spawn_server,
         version: str = __version__,
         connect_timeout: float = CONNECT_TIMEOUT_SECONDS,
@@ -113,6 +116,7 @@ class StateClient:
     ) -> None:
         self._dashboard_id = dashboard_id
         self._cwd_root = cwd_root
+        self._excluded_prefixes = list(excluded_prefixes)
         self._on_update = on_update
         self._spawn = spawn
         self._version = version
@@ -123,7 +127,9 @@ class StateClient:
         self._latest: Snapshot | None = None
         self._action_entries: dict[int, ActionEntry] = {}
         self._action_rejections: dict[int, str] = {}
-        self._action_events: list[ActionEntry | ActionOutput | ActionFinish | ActionRejected] = []
+        self._action_events: list[
+            ActionEntry | ActionOutput | ActionFinish | ActionRejected | ActionDismissed
+        ] = []
         self._status: str | None = None
         self._active = True
         self._closed = threading.Event()
@@ -178,7 +184,7 @@ class StateClient:
 
     def drain_action_events(
         self,
-    ) -> list[ActionEntry | ActionOutput | ActionFinish | ActionRejected]:
+    ) -> list[ActionEntry | ActionOutput | ActionFinish | ActionRejected | ActionDismissed]:
         with self._lock:
             events, self._action_events = self._action_events, []
             return events
@@ -190,6 +196,10 @@ class StateClient:
     def action_entries(self) -> dict[int, ActionEntry]:
         with self._lock:
             return self._action_entries.copy()
+
+    def dismiss_action(self, entry_id: int) -> None:
+        """Dismiss a finished shared entry for every dashboard."""
+        self._send(DismissAction(entry_id))
 
     def close(self) -> None:
         self._closed.set()
@@ -285,6 +295,12 @@ class StateClient:
 
     def _dispatch(self, message: Message) -> bool:
         """Apply ``message``; True when it was a snapshot."""
+        if isinstance(message, ActionDismissed):
+            with self._lock:
+                self._action_entries.pop(message.entry_id, None)
+                self._action_events.append(message)
+            self._notify()
+            return False
         if isinstance(message, (ActionEntry, ActionOutput, ActionFinish, ActionRejected)):
             from jailbee.dashboard.runner import OUTPUT_DROPPED_MARKER, OUTPUT_KEEP_CHARS
 
@@ -351,7 +367,11 @@ class StateClient:
         reader = sock.makefile("rb")
         try:
             cwd = str(self._cwd_root) if self._cwd_root is not None else None
-            sock.sendall(encode(Hello(PROTOCOL, self._version, cwd, self._dashboard_id)))
+            sock.sendall(
+                encode(
+                    Hello(PROTOCOL, self._version, cwd, self._dashboard_id, self._excluded_prefixes)
+                )
+            )
             line = reader.readline(MAX_WIRE_LINE_BYTES + 1)
             if len(line) > MAX_WIRE_LINE_BYTES or not line.endswith(b"\n"):
                 raise ProtocolError("invalid or oversized state service hello")
