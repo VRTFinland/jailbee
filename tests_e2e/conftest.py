@@ -196,12 +196,12 @@ def browser_errors(
 
 @pytest.fixture
 def page(context: BrowserContext, make_server: Callable[..., E2EServer]) -> Iterator[Page]:
-    # Depend on make_server so the live page cannot reconnect after its server
-    # stops during teardown. Closing just the context happens too late when
-    # tests request the server after the browser context.
+    # Depend on make_server so live pages cannot reconnect after server teardown.
+    # Close through the plugin's context wrapper to retain failure screenshots
+    # and traces, rather than closing the page before the recorder sees it.
     page = context.new_page()
     yield page
-    page.close()
+    context.close()
 
 
 @pytest.fixture

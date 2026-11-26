@@ -69,9 +69,12 @@ def test_page_closes_before_fixture_servers_stop(
     """)
     monkeypatch.setenv("PYTHONPATH", str(REPO_ROOT))
 
-    result = pytester.runpytest_subprocess("-p", "no:cacheprovider", "--tb=short")
+    result = pytester.runpytest_subprocess(
+        "-p", "no:cacheprovider", "--tb=short", "--screenshot=on", "--output=artifacts"
+    )
 
     result.assert_outcomes(passed=2)
+    assert len(list((pytester.path / "artifacts").rglob("*.png"))) == 2
 
 
 def test_front_page_restart_preserves_a_stop_failure(
