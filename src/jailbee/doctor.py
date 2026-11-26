@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ipaddress
+import json
 import os
 import re
 import shutil
@@ -529,6 +530,43 @@ def _check_dismissed_notices() -> list[CheckResult]:
     return [CheckResult("dismissed notices", False, detail)]
 
 
+def _check_claude_remote_settings(cfg: Config) -> CheckResult:
+    name = "claude remote settings"
+    if not cfg.claude.enabled:
+        return CheckResult(name, True, "Claude agent disabled", skipped=True)
+
+    from jailbee.accounts import engine
+    from jailbee.accounts.adapters.claude import CLAUDE
+
+    path = engine.holder_dir(CLAUDE, cfg) / "remote-settings.json"
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return CheckResult(name, True, "no remote managed settings found")
+    except (OSError, UnicodeError):
+        return CheckResult(name, False, f"cannot read {path}; remote settings state unknown")
+    if not raw.strip():
+        return CheckResult(name, True, "no remote managed settings found")
+    try:
+        data = json.loads(raw)
+    except (ValueError, RecursionError):
+        return CheckResult(name, False, f"invalid JSON in {path}; remote settings state unknown")
+    if not isinstance(data, dict):
+        return CheckResult(name, False, f"invalid settings object in {path}; state unknown")
+    if not data:
+        return CheckResult(name, True, "no remote managed settings found")
+    return CheckResult(
+        name,
+        False,
+        "Remote managed settings were active at the last fetch. JailBee's own launches "
+        "and shell-typed claude receive its settings, but IDE extensions may not. "
+        "Organization policy can block plugins or hooks; managed-only settings such as "
+        "allowedChannelPlugins must be set by an admin. To restore drop-ins, delete "
+        "the organization's Claude Code managed settings in the admin console; "
+        "toggling a setting off is not enough.",
+    )
+
+
 def _check_claude_credentials(cfg: Config, gcfg: GlobalConfig) -> list[CheckResult]:
     """Report the shared Claude credential directory, if this repo uses one.
 
@@ -933,6 +971,7 @@ def run_checks(cfg: Config, incus: Incus, *, gcfg: GlobalConfig | None = None) -
     # Same reasoning as the check above: a dismissal hides the hint on the
     # commands the user actually runs, never the diagnosis here.
     results.extend(_check_dismissed_notices())
+    results.append(_check_claude_remote_settings(cfg))
     results.extend(_check_claude_credentials(cfg, gcfg))
     results.extend(_check_reserved_group_name(cfg, gcfg))
     results.extend(_check_pending_migrations())
