@@ -25,7 +25,7 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 
-PROTOCOL_VERSION = 8
+PROTOCOL_VERSION = 9
 
 CLOSE_UNAUTHORIZED = 4001
 """No valid session token: the browser goes back to the login page."""
@@ -185,6 +185,8 @@ class _Rendered(BaseModel):
     id: str
     """The transcript entry's id: stable across reads, unique in a session."""
     timestamp: datetime | None
+    message_id: str | None = None
+    """Original assistant record id, shared across its rendered content blocks."""
 
 
 class RenderedUser(_Rendered):

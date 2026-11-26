@@ -17,6 +17,7 @@ import json
 import os
 import re
 import stat
+from dataclasses import replace
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
@@ -295,6 +296,11 @@ def _entries(record: dict[str, object], record_id: str) -> list[Entry]:
                 call = _tool_call(block, entry_id, when, model)
                 if call is not None:
                     found.append(call)
+        found = [
+            replace(entry, message_id=record_id)
+            if isinstance(entry, (AssistantText, Thinking, ToolCall)) else entry
+            for entry in found
+        ]
     return found
 
 
