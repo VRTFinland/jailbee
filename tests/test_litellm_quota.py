@@ -406,8 +406,11 @@ def test_http_failure_is_reported_instead_of_no_quota(config, monkeypatch, capsy
 
 @pytest.mark.parametrize(
     "error",
-    [urllib.error.URLError("sk-jb-secret refused"), ConnectionRefusedError("sk-jb-secret"),
-     TimeoutError("sk-jb-secret")],
+    [
+        urllib.error.URLError("sk-jb-secret refused"),
+        ConnectionRefusedError("sk-jb-secret"),
+        TimeoutError("sk-jb-secret"),
+    ],
 )
 def test_connection_failure_stops_after_first_request(config, monkeypatch, capsys, error):
     calls = []
