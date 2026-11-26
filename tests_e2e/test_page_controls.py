@@ -96,11 +96,23 @@ def test_page_controls_preserve_readable_height_keys_taps_and_jump_clearance(
         page.keyboard.press(key)
         wait_for_scroll_settled(page)
         assert abs(before - page.evaluate("window.scrollY") - int(readable)) <= 1
+    def tap_uncovered_zone(selector: str) -> None:
+        zone = page.locator(selector)
+        point = zone.evaluate("""el => {
+            const box = el.getBoundingClientRect();
+            for (let y = 60; y < box.height; y += 10) {
+                if (document.elementFromPoint(box.x + 5, box.y + y) === el) return {x: 5, y};
+            }
+            return null;
+        }""")
+        assert point is not None, "The page-turn zone needs an uncovered hit target"
+        zone.click(position=point)
+
     before = page.evaluate("window.scrollY")
-    page.locator(".tap-zone.forward").click(position={"x": 5, "y": 160})
+    tap_uncovered_zone(".tap-zone.forward")
     wait_for_scroll_settled(page)
     assert abs(page.evaluate("window.scrollY") - before - int(readable)) <= 1
-    page.locator(".tap-zone.back").click(position={"x": 5, "y": 160})
+    tap_uncovered_zone(".tap-zone.back")
     wait_for_scroll_settled(page)
     assert abs(page.evaluate("window.scrollY") - before) <= 1
     if mode != "indicator":

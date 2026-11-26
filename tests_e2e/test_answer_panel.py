@@ -198,7 +198,8 @@ def test_compact_header_step_hit_targets(
     boxes = [steps.nth(i).bounding_box() for i in range(question_count + 1)]
     assert all(box is not None and box["width"] >= 44 and box["height"] >= 44 for box in boxes)
     title = panel.locator(".question-title")
-    assert title.bounding_box()["width"] > 0
+    title_box = title.bounding_box()
+    assert title_box is not None and title_box["width"] > 0
     expect(panel.get_by_role("button", name="Hide", exact=True)).to_be_in_viewport()
     assert title.evaluate("el => getComputedStyle(el).whiteSpace") == "nowrap"
     assert title.evaluate("el => parseFloat(getComputedStyle(el).fontSize)") == panel.evaluate(
