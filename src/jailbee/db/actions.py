@@ -84,6 +84,8 @@ def load(engine: Engine) -> list[ActionEntry]:
                 entry = _decode(row.payload)
                 if entry.entry_id != row.entry_id:
                     raise ValueError("action id mismatch")
+                if entry.finished_at is not None and entry.finished_at.utcoffset() is None:
+                    raise ValueError("action timestamp has no timezone")
             except (ValueError, TypeError) as exc:
                 log.warning("Skipping invalid persisted action %s: %s", row.entry_id, exc)
                 continue
