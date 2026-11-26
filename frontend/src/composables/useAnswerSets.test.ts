@@ -107,10 +107,28 @@ describe("session answer drafts", () => {
         } finally { get.mockRestore(); put.mockRestore(); remove.mockRestore() }
     })
 
-    it("never offers older non-drafted questions and marks an old draft stale for a plain newer reply", async () => {
+    it("follows newer questions without turning untouched recommendations into drafts", async () => {
+        const {state, sources, scope} = setup()
+        expect(createAnswerDraftStore().list(session)).toEqual([])
+        sources.value.push({id: "new", text: newer})
+        await nextTick()
+        expect(state.sets.value.map(set => set.id)).toEqual(["new"])
+        expect(state.selected.value?.id).toBe("new")
+        expect(state.hasNewer.value).toBe(false)
+        scope.stop()
+        const reloaded = setup(sources)
+        expect(reloaded.state.selected.value?.id).toBe("new")
+        reloaded.sources.value.push({id: "plain", text: "No questions."})
+        await nextTick()
+        expect(reloaded.state.selected.value).toBeNull()
+        reloaded.scope.stop()
+    })
+
+    it("never offers older non-drafted questions and marks an edited draft stale for a plain newer reply", async () => {
         const sources = ref([{id: "history", text}, {id: "old", text: newer}])
         const {state, scope} = setup(sources)
         expect(state.sets.value.map(set => set.id)).toEqual(["old"])
+        state.updateAnswers([{value: "Platform", note: ""}])
         sources.value.push({id: "plain", text: "No questions."})
         await nextTick()
         expect(state.selected.value?.id).toBe("old")

@@ -446,7 +446,7 @@ function startFollowing(view: TranscriptView) {
 
 onBeforeUnmount(() => {
     unmounted = true
-    chat.reset()
+    chat.reset({sessionChanged: true})
     unfollow?.()
     unfollow = null
 })
@@ -588,7 +588,7 @@ onMounted(() => {
 watch(() => dashboard?.state.connected, (connected, previous) => {
     if (connected !== previous) chat.reset()
 })
-watch([prefix, agent, sessionId, agentId], () => { chat.reset(); void load() })
+watch([prefix, agent, sessionId, agentId], () => { chat.reset({sessionChanged: true}); void load() })
 // Changing Agent context re-reads the transcript and resubscribes with the new mode.
 watch(
     () => settings.agentContext,

@@ -18,7 +18,9 @@ before editing `## Unreleased`.
   follows repository visibility, and records sends in the device audit log.
   Numbered questions in the latest reply open a non-modal answer panel with
   recommended choices, a final message preview, and per-message drafts that
-  survive reloads; newer replies keep older drafts available to send or discard.
+  survive reloads; newer replies keep edited drafts available to send or discard,
+  while untouched question sets follow the newest reply. In-flight sends remain
+  authoritative across reconnects and transcript reloads.
   Claude containers also default to unattended mode for both `claude` and
   `claude-jb`: bypass permissions without the acceptance dialog, no
   AskUserQuestion or EnterPlanMode tools, automatic rejection of remaining

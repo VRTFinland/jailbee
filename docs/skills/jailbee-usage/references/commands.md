@@ -452,16 +452,18 @@ transcript. Dialogs and unsent terminal input are never cleared. Repository
 visibility applies, and the audit log records the message and device name.
 `remote.ssh.agent_chat` separately gates the host command over SSH. A leading
 `/` or `!` enters Claude command or shell mode; controls except newline/tab are
-stripped before paste. Same-pane sends are serialized, not terminal typing.
-Transcript confirmation has a bounded wait and resets on reconnect/reload.
+stripped before paste and auditing; text blank after stripping is refused.
+Same-pane sends are serialized, not terminal typing. Transcript confirmation has
+a bounded wait and resets on reconnect/reload, without cancelling in-flight sends.
 
 The latest assistant reply's numbered questions open a non-modal answer panel:
 mobile bottom sheet, desktop side column, with no animation on e-ink. It offers
 recommendations, per-answer notes and a summary-only Send with the exact outgoing
-message. Answers persist in this browser per session and source message; a newer
-reply keeps the older draft with a notice and offers its own questions as a new
-set. Send or discard the older draft explicitly. Blocked storage degrades to an
-in-memory draft. Older questions remain answerable by number in free text.
+message. Edited answers persist in this browser per session and source message;
+a newer reply keeps the edited draft with a notice and offers its own questions
+as a new set. Untouched sets follow the newest questions. Send or discard the
+older draft explicitly. Storage history is bounded; blocked storage degrades to
+an in-memory draft. Older questions remain answerable by number in free text.
 
 Session lists are titled by the first typed prompt, ignoring agent wrappers and
 injected context (including task notifications, `!`-mode input/output and prompt

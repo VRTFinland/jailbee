@@ -1,5 +1,5 @@
 import {computed, ref, watch} from "vue"
-import {createAnswerDraftStore, type DraftSession} from "../answerDrafts"
+import {createAnswerDraftStore, createCompletionHistory, type DraftSession} from "../answerDrafts"
 import {initialAnswers, parseQuestionSet, type Answer, type QuestionSet} from "../questions"
 import {readItem, writeItem} from "../storage"
 
@@ -18,9 +18,11 @@ function validAnswers(set: QuestionSet, answers: Answer[]): boolean {
 /** Draft lifetime is independent of the displayed transcript (including e-ink pending entries). */
 export function useAnswerSets(session: () => DraftSession, sources: () => AnswerSource[]) {
     const store = createAnswerDraftStore()
+    const history = createCompletionHistory()
     const sets = ref<SessionAnswerSet[]>([])
     const selectedId = ref<string | null>(null)
     const dismissed = new Set<string>()
+    const edited = new Set<string>()
     let current = session()
     let stateKey = ""
     const selected = computed(() => sets.value.find(set => set.id === selectedId.value) ?? null)
@@ -39,10 +41,8 @@ export function useAnswerSets(session: () => DraftSession, sources: () => Answer
         current = {...session()}
         stateKey = "jailbee:answer-completed:" + key
         dismissed.clear()
-        try {
-            const stored: unknown = JSON.parse(readItem(stateKey) ?? "[]")
-            if (Array.isArray(stored)) stored.forEach(id => { if (typeof id === "string") dismissed.add(id) })
-        } catch { /* Corrupt completion history does not block the composer. */ }
+        edited.clear()
+        history.read(key).forEach(id => dismissed.add(id))
         sets.value = []
         for (const draft of store.list(current)) {
             const set = parseQuestionSet(draft.sourceText)
@@ -51,6 +51,7 @@ export function useAnswerSets(session: () => DraftSession, sources: () => Answer
                 continue
             }
             sets.value.push({id: draft.messageId, text: draft.sourceText, set, answers: draft.answers})
+            edited.add(draft.messageId)
         }
         const remembered = readItem(stateKey + ":selected")
         selectedId.value = sets.value.find(set => set.id === remembered)?.id ?? sets.value[0]?.id ?? null
@@ -61,16 +62,17 @@ export function useAnswerSets(session: () => DraftSession, sources: () => Answer
             const source = sources().find(source => source.id === item.id)
             if (source && source.text !== item.text) {
                 store.discard({...current, messageId: item.id})
+                edited.delete(item.id)
                 sets.value = sets.value.filter(set => set.id !== item.id)
             }
         }
         const latest = sources().at(-1)
+        sets.value = sets.value.filter(item => edited.has(item.id) || item.id === latest?.id)
         if (latest && !dismissed.has(latest.id) && !sets.value.some(set => set.id === latest.id)) {
             const set = parseQuestionSet(latest.text)
             if (set) {
                 const item = {...latest, set, answers: initialAnswers(set)}
                 sets.value.push(item)
-                save(item)
             }
         }
         if (!sets.value.some(set => set.id === selectedId.value)) selectedId.value = sets.value[0]?.id ?? null
@@ -80,12 +82,16 @@ export function useAnswerSets(session: () => DraftSession, sources: () => Answer
         const item = selected.value
         if (!item || !validAnswers(item.set, answers)) return
         item.answers = answers.map(answer => ({...answer}))
+        edited.add(item.id)
         save(item)
     }
     /** Used for both deliberate discard and a send accepted by the shared gate. */
     function dismiss(id: string) {
         dismissed.add(id)
-        writeItem(stateKey, JSON.stringify([...dismissed]))
+        edited.delete(id)
+        const retained = history.write(stateKey.slice("jailbee:answer-completed:".length), [...dismissed])
+        dismissed.clear()
+        retained.forEach(id => dismissed.add(id))
         store.discard({...current, messageId: id})
         sets.value = sets.value.filter(set => set.id !== id)
         if (selectedId.value === id) selectedId.value = sets.value[0]?.id ?? null

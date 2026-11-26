@@ -26,12 +26,26 @@ describe("agent chat", () => {
         expect(chat.draft.value).toBe("")
         expect(deliver).toHaveBeenCalledTimes(1)
     })
-    it("retains drafts on refusal and ignores replies after reset", async () => {
+    it("keeps an in-flight delivery authoritative across same-session resets", async () => {
         let resolve!: (value: {code: "delivered", message: string}) => void
         const chat = useAgentChat(() => true, () => new Promise(r => { resolve = r }))
         chat.draft.value = "keep"
         const sending = chat.send("keep")
         chat.reset()
+        expect(chat.sending.value).toBe(true)
+        expect(await chat.send("keep")).toBe(false)
+        resolve({code: "delivered", message: ""})
+        expect(await sending).toBe(true)
+        expect(chat.draft.value).toBe("")
+        expect(chat.busy.value).toBe(false)
+        expect(chat.status.value).toBe("Pasted; transcript confirmation unavailable")
+    })
+    it("ignores replies from a previous session and retains drafts on refusal", async () => {
+        let resolve!: (value: {code: "delivered", message: string}) => void
+        const chat = useAgentChat(() => true, () => new Promise(r => { resolve = r }))
+        chat.draft.value = "keep"
+        const sending = chat.send("keep")
+        chat.reset({sessionChanged: true})
         resolve({code: "delivered", message: ""})
         expect(await sending).toBe(false)
         expect(chat.draft.value).toBe("keep")
