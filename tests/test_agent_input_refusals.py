@@ -62,10 +62,7 @@ def test_successful_delivery_survives_buffer_cleanup_failure(monkeypatch):
         "42 10 123 S 42 42 34816\n10 1 20 S 10 42 34816\n",
         "%1 10 1",
         "────\n> \n────",
-        "",
-        "",
-        IncusError("cleanup"),
-    ]
+    ] * 2 + ["", "", IncusError("cleanup")]
     assert agent_input.send(Mock(), incus, "box", "id", "text").code == "delivered"
 
 
