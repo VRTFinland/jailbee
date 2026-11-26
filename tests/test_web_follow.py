@@ -482,3 +482,19 @@ def test_follow_reports_chat_changes_without_transcript_writes(started, monkeypa
             pass
         assert message["entries"] == []
         assert message["chat"]["code"] == "no_live_session"
+
+
+def test_user_raw_text_matches_in_rest_and_live_follow(started, transcript, watches):
+    client, token = started
+    text = "**Bold** line\nsecond line  \nthird & <literal>"
+    offset = rest_offset(client)
+    with connect(client, token) as ws:
+        subscribe(ws, offset)
+        wait_until(lambda: len(watches.open) == 1)
+        append(transcript, record(2, "user", text))
+        watches.open[0].fire()
+        while (message := ws.receive_json())["type"] != "append":
+            pass
+        assert message["entries"][0]["text"] == text
+    response = client.get(f"/api/repos/alpha/sessions/claude/{SESSION}")
+    assert response.json()["entries"][-1]["text"] == text

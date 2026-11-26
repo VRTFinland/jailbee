@@ -199,6 +199,7 @@ class RenderedUser(_Rendered):
 
     kind: Literal["user"] = "user"
     html: str
+    text: str | None = None
     meta: bool = False
     label: str | None = None
     expandable: bool = False
