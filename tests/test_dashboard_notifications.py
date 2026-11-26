@@ -1521,10 +1521,21 @@ def test_pilot_replays_interrupted_action_in_failure_colour(mocker, tmp_path):
     from tests.dashboard_pilot import make_app
 
     app = make_app(mocker, [_pilot_group(tmp_path)])
-    app.session.client.action_entries = lambda: {123: ActionEntry(
-        123, ["doctor"], str(tmp_path), "alpha", False, "origin", "none",
-        str(tmp_path), "repo", finished=True, state="interrupted"
-    )}
+    app.session.client.action_entries = lambda: {
+        123: ActionEntry(
+            123,
+            ["doctor"],
+            str(tmp_path),
+            "alpha",
+            False,
+            "origin",
+            "none",
+            str(tmp_path),
+            "repo",
+            finished=True,
+            state="interrupted",
+        )
+    }
 
     async def main():
         async with app.run_test(size=(100, 25)) as pilot:
