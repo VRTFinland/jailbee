@@ -629,6 +629,7 @@ watch(
                     </template>
                 </article>
                 <AgentComposer v-if="agentId === null" ref="composerEl" class="agent-composer"
+                    :class="{'beside-nav': eink && settings.pageControls !== 'bar'}"
                     :available="transcript.chat?.available ?? false"
                     :reason="transcript.chat?.message || 'Messaging is unavailable.'"
                     :sending="sending" :awaiting="sendStatus === 'Waiting for transcript'" :error="sendError" :status="sendStatus" @send="sendMessage" />
@@ -673,7 +674,13 @@ watch(
     padding: var(--md-space-8);
 }
 [data-profile="eink"] .agent-composer {
-    bottom: calc(var(--guard-bottom) + var(--composer-nav-height) + var(--md-space-8));
+    left: max(var(--md-layout-page-tap-zone), var(--md-space-16));
+    right: max(var(--md-layout-page-tap-zone), var(--md-space-16));
+    bottom: calc(var(--guard-bottom) + var(--composer-nav-height) + var(--md-space-24));
+}
+[data-profile="eink"] .agent-composer.beside-nav {
+    right: calc(var(--page-controls-width) + var(--md-space-16));
+    bottom: var(--guard-bottom);
 }
 .muted {
     color: var(--md-on-surface-variant);
@@ -797,6 +804,11 @@ watch(
 /* In e-ink the bar owns the bottom edge: the buttons sit above it. */
 [data-profile="eink"] .jump-latest,
 [data-profile="eink"] .new-messages {
-    bottom: calc(var(--guard-bottom) + var(--composer-nav-height) + var(--md-space-8) + var(--composer-height) + var(--md-space-16));
+    bottom: calc(var(--guard-bottom) + var(--composer-nav-height) + var(--composer-height) + var(--md-space-32));
+    max-width: calc(100vw - var(--md-space-32));
+}
+[data-profile="eink"] .beside-nav ~ .jump-latest {
+    right: calc(var(--page-controls-width) + var(--md-space-16));
+    bottom: calc(var(--guard-bottom) + var(--composer-height) + var(--md-space-16));
 }
 </style>

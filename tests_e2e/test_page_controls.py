@@ -81,7 +81,9 @@ def test_page_controls_preserve_readable_height_keys_taps_and_jump_clearance(
         }""")
 
     top = page.locator(".title-bar").evaluate("el => el.getBoundingClientRect().bottom")
-    readable = guard["y"] - top - (26 if mode == "bar" else 0)
+    composer = page.locator(".agent-composer").bounding_box()
+    assert composer is not None
+    readable = composer["y"] - top
     assert readable > 0
     for key in ["m", "PageDown", "m", "PageDown"]:
         before = page.evaluate("window.scrollY")

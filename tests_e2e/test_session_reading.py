@@ -231,12 +231,12 @@ def test_manual_wheel_to_transcript_end_arms_follow_without_a_jump(
     server, transcript = open_transcript(page, make_server, tmp_path)
     distance = page.locator(".transcript").evaluate(
         "el => Math.ceil(el.getBoundingClientRect().bottom - "
-        "document.querySelector('.bottom-guard').getBoundingClientRect().top)"
+        "document.querySelector('.agent-composer').getBoundingClientRect().top)"
     )
     page.mouse.wheel(0, distance)
     page.wait_for_function("""() =>
         document.querySelector('.transcript').getBoundingClientRect().bottom <=
-        document.querySelector('.bottom-guard').getBoundingClientRect().top + 1
+        document.querySelector('.agent-composer').getBoundingClientRect().top + 1
     """)
     wait_for_scroll_settled(page)
     # The trailing answer spacer is not part of the transcript end.
@@ -249,7 +249,7 @@ def test_manual_wheel_to_transcript_end_arms_follow_without_a_jump(
     page.wait_for_function("""() => {
         const entries = document.querySelectorAll('.entry.assistant');
         return entries.length === 25 && entries[24].getBoundingClientRect().bottom <=
-            document.querySelector('.bottom-guard').getBoundingClientRect().top + 1;
+            document.querySelector('.agent-composer').getBoundingClientRect().top + 1;
     }""")
 
 
@@ -280,7 +280,7 @@ def test_keyboard_momentum_leaves_follow_off_after_end(
         window.addEventListener('scroll', () => window.scrollFrames.push({
             y: window.scrollY,
             end: document.querySelector('.transcript').getBoundingClientRect().bottom <=
-                document.querySelector('.bottom-guard').getBoundingClientRect().top + 1,
+                document.querySelector('.agent-composer').getBoundingClientRect().top + 1,
         }));
     }""")
     page.keyboard.press("PageUp")
@@ -358,7 +358,7 @@ def test_partial_keyboard_scroll_keeps_the_current_eink_page(
     page.evaluate("window.scrollTo(0, 0)")
     wait_for_scroll_settled(page)
     expect(page.locator(".page-indicator")).to_contain_text("1 /")
-    readable = page.locator(".page-nav").evaluate(
+    readable = page.locator(".agent-composer").evaluate(
         "el => el.getBoundingClientRect().top - "
         "document.querySelector('.title-bar').getBoundingClientRect().bottom"
     )
@@ -375,7 +375,7 @@ def test_partial_keyboard_scroll_keeps_the_current_eink_page(
         readable,
     )
     expect(page.locator(".page-indicator")).to_contain_text("1 /")
-    readable = page.locator(".page-nav").evaluate(
+    readable = page.locator(".agent-composer").evaluate(
         "el => Math.floor(el.getBoundingClientRect().top - "
         "document.querySelector('.title-bar').getBoundingClientRect().bottom)"
     )

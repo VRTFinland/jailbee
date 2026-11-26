@@ -27,8 +27,7 @@ def reading_area(page: Page) -> ReadingArea:
         page.evaluate("""() => ({
         top: Number.parseFloat(getComputedStyle(document.querySelector('.page'))
             .getPropertyValue('--session-readable-top')),
-        bottom: (document.querySelector('.page-nav[data-mode="bar"]') ??
-            document.querySelector('.bottom-guard')).getBoundingClientRect().top,
+        bottom: document.querySelector('.agent-composer').getBoundingClientRect().top,
         y: window.scrollY,
     })"""),
     )
