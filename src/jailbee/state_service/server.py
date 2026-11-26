@@ -23,6 +23,7 @@ from jailbee import __version__
 from jailbee.state_service.paths import ensure_runtime_dir, lock_path, socket_path
 from jailbee.state_service.protocol import (
     PROTOCOL,
+    MAX_WIRE_LINE_BYTES,
     ActionEntry,
     ActionFinish,
     ActionOutput,
@@ -112,7 +113,7 @@ class StateServer:
 
     async def serve(self, path: Path) -> None:
         """Serve on ``path`` until shut down or idle for ``idle_timeout``."""
-        server = await asyncio.start_unix_server(self._handle, path=str(path))
+        server = await asyncio.start_unix_server(self._handle, path=str(path), limit=MAX_WIRE_LINE_BYTES)
         os.chmod(path, 0o600)
         try:
             await self._schedule()

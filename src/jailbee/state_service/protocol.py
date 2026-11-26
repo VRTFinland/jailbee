@@ -72,6 +72,9 @@ from jailbee.update_check import UpdateNotice
 # 45 adds action hosting messages.
 PROTOCOL = 45
 
+# Allows escaped output tails and ordinary snapshots while bounding incoming lines.
+MAX_WIRE_LINE_BYTES = 16 * 1024 * 1024
+
 
 class ProtocolError(ValueError):
     """A line that is not a valid message."""

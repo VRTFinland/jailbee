@@ -221,3 +221,59 @@ def test_reconnect_replays_only_origin_entries_and_rejects_duplicate(runtime_dir
     finally:
         other.close()
         again.close()
+
+
+def test_large_escaped_output_is_bounded_and_replayed(runtime_dir, tmp_path):
+    from jailbee.dashboard.runner import OUTPUT_DROPPED_MARKER, OUTPUT_KEEP_CHARS
+    from jailbee.state_service import paths
+
+    text = ("\x01\n\\\"" * (OUTPUT_KEEP_CHARS // 2)) + "THE END"
+    output_file = tmp_path / "output"
+    output_file.write_bytes(text.encode())
+
+    class Child:
+        def __init__(self, sock):
+            sock.close()
+            self.stdout = output_file.open("rb")
+
+        def wait(self):
+            return 0
+
+        def kill(self):
+            pass
+
+    paths.ensure_runtime_dir()
+    server = StateServer(
+        FakeGatherer(), version="v1", action_spawn=lambda *a, **kw: Child(kw["prompt_sock"])
+    )
+    thread = threading.Thread(
+        target=lambda: asyncio.run(server.serve(paths.socket_path())), daemon=True
+    )
+    thread.start()
+    track_server(server, thread)
+    _until(paths.socket_path().exists)
+
+    def connect():
+        client = StateClient(
+            None, dashboard_id="large", version="v1", spawn=lambda: None, backoff=(0.05,)
+        )
+        client.start()
+        client.wait_first_snapshot(3)
+        return client
+
+    client = connect()
+    try:
+        client.run_action(
+            RunAction(99, ["ls", "\x01" * 12000], str(tmp_path), "target", False, "large", "none", str(tmp_path), "repo")
+        )
+        _until(lambda: client.action_entries().get(99) is not None and client.action_entries()[99].finished)
+        expected = OUTPUT_DROPPED_MARKER + text[-OUTPUT_KEEP_CHARS:]
+        assert client.action_entries()[99].output == expected
+    finally:
+        client.close()
+    again = connect()
+    try:
+        _until(lambda: 99 in again.action_entries())
+        assert again.action_entries()[99].output == expected
+    finally:
+        again.close()

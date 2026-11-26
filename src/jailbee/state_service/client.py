@@ -26,6 +26,7 @@ from jailbee.state_service import StaleDashboard, StateServiceError, StateServic
 from jailbee.state_service.paths import ensure_runtime_dir, log_path, socket_path, spawn_lock_path
 from jailbee.state_service.protocol import (
     PROTOCOL,
+    MAX_WIRE_LINE_BYTES,
     ActionEntry,
     ActionFinish,
     ActionOutput,
@@ -249,7 +250,9 @@ class StateClient:
                         sock.sendall(encode(Active(False)))
             got_snapshot = False
             try:
-                for line in reader:
+                while line := reader.readline(MAX_WIRE_LINE_BYTES + 1):
+                    if len(line) > MAX_WIRE_LINE_BYTES or not line.endswith(b"\n"):
+                        raise ProtocolError("state service message exceeds wire line limit")
                     if self._dispatch(decode(line)):
                         got_snapshot = True
             except (OSError, ProtocolError):
@@ -337,7 +340,10 @@ class StateClient:
         try:
             cwd = str(self._cwd_root) if self._cwd_root is not None else None
             sock.sendall(encode(Hello(PROTOCOL, self._version, cwd, self._dashboard_id)))
-            reply = decode(reader.readline())
+            line = reader.readline(MAX_WIRE_LINE_BYTES + 1)
+            if len(line) > MAX_WIRE_LINE_BYTES or not line.endswith(b"\n"):
+                raise ProtocolError("invalid or oversized state service hello")
+            reply = decode(line)
             if not isinstance(reply, Hello):
                 raise ProtocolError(f"expected hello, got {type(reply).__name__}")
             if (reply.protocol, reply.version) != (PROTOCOL, self._version):
