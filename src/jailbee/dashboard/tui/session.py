@@ -205,7 +205,7 @@ from jailbee.remote_ssh.repo_scope import RemoteRepoScope
 from jailbee.remote_ssh.router import RouteError
 from jailbee.remote_ssh.session import host_restricted
 from jailbee.state_service import StateServiceUnavailable
-from jailbee.tui import console, error
+from jailbee.tui import error
 from jailbee.update_check import dismiss as dismiss_update
 
 if TYPE_CHECKING:
@@ -493,8 +493,7 @@ def open_dashboard(cwd_root: Path | None, *, scope: RemoteRepoScope | None = Non
 
     client = open_state_client(cwd_root, excluded_prefixes=sorted(scope.excluded) if scope else ())
     try:
-        with console.status("⏳ Surveying containers…"):
-            client.wait_first_snapshot(STARTUP_TIMEOUT_SECONDS)
+        client.wait_first_snapshot(STARTUP_TIMEOUT_SECONDS)
     except StateServiceUnavailable as exc:
         client.close()
         error(f"dashboard refresh failed: {exc}")
