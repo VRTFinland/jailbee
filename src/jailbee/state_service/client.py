@@ -18,6 +18,7 @@ import sys
 import threading
 import time
 from collections.abc import Callable, Iterator, Sequence
+from dataclasses import replace
 from typing import IO, TYPE_CHECKING
 
 from jailbee import __version__
@@ -26,6 +27,7 @@ from jailbee.state_service.paths import ensure_runtime_dir, log_path, socket_pat
 from jailbee.state_service.protocol import (
     PROTOCOL,
     Active,
+    RunAction, ActionEntry, ActionOutput, ActionFinish, ActionRejected,
     GatherError,
     Hello,
     Message,
@@ -98,11 +100,13 @@ class StateClient:
         cwd_root: Path | None,
         *,
         on_update: Callable[[], None] | None = None,
+        dashboard_id: str | None = None,
         spawn: Callable[[], None] = spawn_server,
         version: str = __version__,
         connect_timeout: float = CONNECT_TIMEOUT_SECONDS,
         backoff: Sequence[float] = BACKOFF_SECONDS,
     ) -> None:
+        self._dashboard_id = dashboard_id
         self._cwd_root = cwd_root
         self._on_update = on_update
         self._spawn = spawn
@@ -112,6 +116,8 @@ class StateClient:
         self._lock = threading.Lock()
         self._sock: socket.socket | None = None
         self._latest: Snapshot | None = None
+        self._action_entries: dict[int, ActionEntry] = {}
+        self._action_events: list[ActionEntry | ActionOutput | ActionFinish | ActionRejected] = []
         self._status: str | None = None
         self._active = True
         self._closed = threading.Event()
@@ -151,6 +157,22 @@ class StateClient:
         with self._lock:
             self._active = value
         self._send(Active(value))
+
+    def run_action(self, request: RunAction) -> None:
+        """Send an action request; raise when disconnected instead of dropping it."""
+        with self._lock:
+            if self._sock is None:
+                raise StateServiceUnavailable("state service disconnected")
+            self._sock.sendall(encode(request))
+
+    def drain_action_events(self) -> list[ActionEntry | ActionOutput | ActionFinish | ActionRejected]:
+        with self._lock:
+            events, self._action_events = self._action_events, []
+            return events
+
+    def action_entries(self) -> dict[int, ActionEntry]:
+        with self._lock:
+            return self._action_entries.copy()
 
     def close(self) -> None:
         self._closed.set()
@@ -244,6 +266,26 @@ class StateClient:
 
     def _dispatch(self, message: Message) -> bool:
         """Apply ``message``; True when it was a snapshot."""
+        if isinstance(message, (ActionEntry, ActionOutput, ActionFinish, ActionRejected)):
+            from jailbee.dashboard.runner import OUTPUT_KEEP_CHARS, OUTPUT_DROPPED_MARKER
+
+            with self._lock:
+                self._action_events.append(message)
+                if isinstance(message, ActionEntry):
+                    self._action_entries[message.entry_id] = message
+                elif not isinstance(message, ActionRejected) and message.entry_id in self._action_entries:
+                    entry = self._action_entries[message.entry_id]
+                    if isinstance(message, ActionOutput):
+                        output = entry.output + message.chunk
+                        if len(output) > OUTPUT_KEEP_CHARS:
+                            output = OUTPUT_DROPPED_MARKER + output[-OUTPUT_KEEP_CHARS:]
+                        self._action_entries[message.entry_id] = replace(entry, output=output)
+                    else:
+                        self._action_entries[message.entry_id] = replace(
+                            entry, finished=True, status=message.status, refused=message.refused,
+                            error=message.error, cancelled=message.cancelled, declined=message.declined)
+            self._notify()
+            return False
         if isinstance(message, Snapshot):
             with self._lock:
                 self._latest = message
@@ -279,7 +321,7 @@ class StateClient:
         reader = sock.makefile("rb")
         try:
             cwd = str(self._cwd_root) if self._cwd_root is not None else None
-            sock.sendall(encode(Hello(PROTOCOL, self._version, cwd)))
+            sock.sendall(encode(Hello(PROTOCOL, self._version, cwd, self._dashboard_id)))
             reply = decode(reader.readline())
             if not isinstance(reply, Hello):
                 raise ProtocolError(f"expected hello, got {type(reply).__name__}")

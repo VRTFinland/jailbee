@@ -13,7 +13,7 @@ import json
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import TypeAdapter, ValidationError
 
@@ -69,7 +69,8 @@ from jailbee.update_check import UpdateNotice
 # 42 adds None entries for local-only config/journal error recovery in resumable_repos.
 # 43 adds ContainerInfo.start_identity for precise host-side boot recovery.
 # 44 distinguishes registered repos with unloadable configs from true orphans.
-PROTOCOL = 44
+# 45 adds action hosting messages.
+PROTOCOL = 45
 
 
 class ProtocolError(ValueError):
@@ -83,6 +84,7 @@ class Hello:
     protocol: int
     version: str
     cwd_root: str | None = None
+    dashboard_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -134,9 +136,70 @@ class GatherError:
     message: str
 
 
-Message = Hello | Active | Refresh | Shutdown | Snapshot | GatherError
+@dataclass(frozen=True)
+class RunAction:
+    entry_id: int
+    argv: list[str]
+    cwd: str
+    target: str
+    critical: bool
+    origin: str
+    transport: Literal["none", "ssh", "web"]
+    repo_root: str
+    prefix: str
+    address_flags: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class ActionEntry:
+    entry_id: int
+    argv: list[str]
+    cwd: str
+    target: str
+    critical: bool
+    origin: str
+    transport: Literal["none", "ssh", "web"]
+    repo_root: str
+    prefix: str
+    output: str = ""
+    status: int | None = None
+    finished: bool = False
+    refused: str | None = None
+    error: str | None = None
+    cancelled: bool = False
+    declined: bool = False
+
+
+@dataclass(frozen=True)
+class ActionOutput:
+    entry_id: int
+    chunk: str
+
+
+@dataclass(frozen=True)
+class ActionRejected:
+    entry_id: int
+    reason: str
+
+
+@dataclass(frozen=True)
+class ActionFinish:
+    entry_id: int
+    status: int | None = None
+    refused: str | None = None
+    error: str | None = None
+    cancelled: bool = False
+    declined: bool = False
+
+
+Message = Hello | Active | Refresh | Shutdown | Snapshot | GatherError | RunAction | ActionEntry | ActionOutput | ActionFinish | ActionRejected
 
 _NAMES: dict[type[Any], str] = {
+    RunAction: "run_action",
+    ActionEntry: "action_entry",
+    ActionOutput: "action_output",
+    ActionFinish: "action_finish",
+    ActionRejected: "action_rejected",
     Hello: "hello",
     Active: "active",
     Refresh: "refresh",

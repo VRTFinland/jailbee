@@ -15,7 +15,7 @@ import logging
 import os
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -24,6 +24,7 @@ from jailbee.state_service.paths import ensure_runtime_dir, lock_path, socket_pa
 from jailbee.state_service.protocol import (
     PROTOCOL,
     Active,
+    RunAction, ActionEntry, ActionOutput, ActionFinish, ActionRejected,
     Hello,
     ProtocolError,
     Refresh,
@@ -34,6 +35,7 @@ from jailbee.state_service.protocol import (
 )
 
 if TYPE_CHECKING:
+    from jailbee.dashboard.runner import Spawner
     from jailbee.incus import Incus
     from jailbee.state_service.gatherer import Gatherer
     from jailbee.state_service.service_probe import ServiceProbe
@@ -67,7 +69,13 @@ def _abort(writer: asyncio.StreamWriter) -> None:
 class _Client:
     writer: asyncio.StreamWriter
     cwd_root: Path | None
+    dashboard_id: str | None = None
     active: bool = True
+
+
+def cancel_action_question(prompt: object) -> None:
+    """Cancel questions until service-side question routing is implemented."""
+    return None
 
 
 class StateServer:
@@ -78,7 +86,10 @@ class StateServer:
         version: str = __version__,
         idle_timeout: float = IDLE_TIMEOUT_SECONDS,
         clock: Callable[[], float] = time.monotonic,
+        action_spawn: Spawner | None = None,
     ) -> None:
+        self._action_spawn = action_spawn
+        self._actions: dict[int, ActionEntry] = {}
         self._gatherer = gatherer
         self._version = version
         self._idle_timeout = idle_timeout
@@ -143,8 +154,13 @@ class StateServer:
             await writer.drain()
             # A client of another version only gets to ask us to go away.
             if hello.protocol == PROTOCOL and hello.version == self._version:
-                client = _Client(writer, Path(hello.cwd_root) if hello.cwd_root else None)
+                client = _Client(writer, Path(hello.cwd_root) if hello.cwd_root else None, hello.dashboard_id)
                 self._clients.add(client)
+                if client.dashboard_id is not None:
+                    for entry in self._actions.values():
+                        if entry.origin == client.dashboard_id:
+                            writer.write(encode(entry))
+                    await writer.drain()
                 if self._latest is not None:
                     writer.write(encode(self._latest))
                     await writer.drain()
@@ -155,6 +171,8 @@ class StateServer:
                     self._stopping = True
                 elif client is None:
                     continue
+                elif isinstance(message, RunAction):
+                    self._start_action(client, message)
                 elif isinstance(message, Active):
                     client.active = message.value
                 elif isinstance(message, Refresh):
@@ -171,6 +189,61 @@ class StateServer:
                 self._drop(client)
             else:
                 writer.close()
+
+    def _start_action(self, client: _Client, request: RunAction) -> None:
+        from jailbee.dashboard.runner import popen_spawn, run_action
+
+        if not client.dashboard_id or request.origin != client.dashboard_id:
+            client.writer.write(encode(ActionRejected(request.entry_id, "dashboard identity mismatch")))
+            return
+        if request.entry_id <= 0 or request.entry_id >= 2**63 or request.entry_id in self._actions:
+            client.writer.write(encode(ActionRejected(request.entry_id, "invalid or duplicate action id")))
+            return
+        entry = ActionEntry(request.entry_id, request.argv, request.cwd, request.target,
+                            request.critical, request.origin, request.transport,
+                            request.repo_root, request.prefix)
+        self._actions[entry.entry_id] = entry
+        client.writer.write(encode(entry))
+        loop = asyncio.get_running_loop()
+
+        def send_output(chunk: str) -> None:
+            loop.call_soon_threadsafe(self._action_output, client, request.entry_id, chunk)
+
+        def run() -> None:
+            try:
+                result = run_action(request.argv, cwd=Path(request.cwd), transport=request.transport,
+                                    policy=None, on_prompt=cancel_action_question, spawn=self._action_spawn or popen_spawn,
+                                    on_output=send_output, address_flags=request.address_flags)
+                finish = ActionFinish(request.entry_id, result.status, result.refused, result.error,
+                                      result.cancelled, result.declined)
+            except Exception as exc:
+                finish = ActionFinish(request.entry_id, error=str(exc))
+            loop.call_soon_threadsafe(self._action_finish, client, finish)
+
+        asyncio.create_task(asyncio.to_thread(run))
+
+    def _action_output(self, client: _Client, entry_id: int, chunk: str) -> None:
+        from jailbee.dashboard.runner import OUTPUT_KEEP_CHARS, OUTPUT_DROPPED_MARKER
+
+        entry = self._actions[entry_id]
+        output = entry.output + chunk
+        if len(output) > OUTPUT_KEEP_CHARS:
+            output = OUTPUT_DROPPED_MARKER + output[-OUTPUT_KEEP_CHARS:]
+        self._actions[entry_id] = replace(entry, output=output)
+        for recipient in self._clients:
+            if recipient.dashboard_id == entry.origin:
+                recipient.writer.write(encode(ActionOutput(entry_id, chunk)))
+
+    def _action_finish(self, client: _Client, finish: ActionFinish) -> None:
+        self._actions[finish.entry_id] = replace(
+            self._actions[finish.entry_id], finished=True, status=finish.status,
+            refused=finish.refused, error=finish.error, cancelled=finish.cancelled,
+            declined=finish.declined,
+        )
+        for recipient in self._clients:
+            if recipient.dashboard_id == self._actions[finish.entry_id].origin:
+                recipient.writer.write(encode(finish))
+
 
     async def _broadcast(self, line: bytes) -> None:
         clients = list(self._clients)
