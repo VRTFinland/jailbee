@@ -247,7 +247,9 @@ def test_service_action_uses_request_environment_not_server_environment(
     thread.start()
     track_server(server, thread)
     _until(paths.socket_path().exists)
-    client = StateClient(None, dashboard_id="dashboard", version="v1", spawn=lambda: None)
+    client = StateClient(
+        None, dashboard_id="dashboard", transport="none", version="v1", spawn=lambda: None
+    )
     client.start()
     try:
         client.wait_first_snapshot(3)
@@ -278,6 +280,356 @@ def test_service_action_uses_request_environment_not_server_environment(
         assert "JAILBEE_REMOTE_SESSION" not in captured
         assert "JAILBEE_REMOTE_TRANSPORT" not in captured
         assert client.action_entries()[777].excluded_prefixes == ["secret-repo"]
+    finally:
+        client.close()
+
+
+def test_remote_refusal_precedes_spawn_and_local_is_unaffected(runtime_dir, tmp_path, monkeypatch):
+    from jailbee import global_config
+    from jailbee.config.models_remote import RemoteCommandPolicy
+    from jailbee.state_service import paths
+
+    config = global_config.GlobalConfig()
+    config.remote.ssh.commands = RemoteCommandPolicy(mode="disabled")
+    monkeypatch.setattr(global_config, "load_global_config", lambda path: (config, []))
+    spawned = []
+
+    class Child:
+        stdout = None
+
+        def __init__(self, sock):
+            sock.close()
+
+        def wait(self):
+            return 0
+
+        def kill(self):
+            pass
+
+    def spawn(*args, **kwargs):
+        spawned.append(True)
+        return Child(kwargs["prompt_sock"])
+
+    paths.ensure_runtime_dir()
+    server = StateServer(FakeGatherer(), version="v1", action_spawn=spawn)
+    thread = threading.Thread(
+        target=lambda: asyncio.run(server.serve(paths.socket_path())), daemon=True
+    )
+    thread.start()
+    track_server(server, thread)
+    _until(paths.socket_path().exists)
+    remote = StateClient(
+        None, dashboard_id="remote", transport="ssh", version="v1", spawn=lambda: None
+    )
+    local = StateClient(
+        None, dashboard_id="local", transport="none", version="v1", spawn=lambda: None
+    )
+    remote.start()
+    local.start()
+    try:
+        remote.wait_first_snapshot(3)
+        local.wait_first_snapshot(3)
+        remote.run_action(
+            RunAction(
+                111,
+                ["destroy", "x"],
+                str(tmp_path),
+                "x",
+                False,
+                "remote",
+                "none",
+                str(tmp_path),
+                "repo",
+            )
+        )
+        _until(lambda: remote.action_rejection(111) is not None)
+        assert not spawned
+        assert 111 not in remote.action_entries()
+        local.run_action(
+            RunAction(
+                112,
+                ["destroy", "x"],
+                str(tmp_path),
+                "x",
+                False,
+                "local",
+                "ssh",
+                str(tmp_path),
+                "repo",
+            )
+        )
+        _until(
+            lambda: (
+                local.action_entries().get(112) is not None and local.action_entries()[112].finished
+            )
+        )
+        assert spawned == [True]
+    finally:
+        remote.close()
+        local.close()
+
+
+@pytest.mark.parametrize("answer", [True, None])
+def test_remote_cannot_answer_or_abort_local_question(runtime_dir, tmp_path, monkeypatch, answer):
+    from jailbee import global_config
+    from jailbee.config.models_remote import RemoteCommandPolicy
+    from jailbee.prompt_channel import CommandEnd, Prompt
+    from jailbee.state_service import paths
+
+    config = global_config.GlobalConfig()
+    config.remote.ssh.commands = RemoteCommandPolicy(mode="disabled")
+    monkeypatch.setattr(global_config, "load_global_config", lambda path: (config, []))
+    from jailbee.remote_ssh import repo_scope
+
+    monkeypatch.setattr(
+        repo_scope, "registered_repos", lambda **kwargs: [repo_scope.RepoChoice("repo", tmp_path)]
+    )
+    answers = []
+
+    class Child:
+        stdout = None
+
+        def __init__(self, sock):
+            def ask():
+                channel = CommandEnd(sock)
+                answers.append(channel.ask(lambda n: Prompt(n, "confirm", "Proceed?")))
+                channel.close()
+
+            self.thread = threading.Thread(target=ask, daemon=True)
+            self.thread.start()
+
+        def wait(self):
+            self.thread.join(5)
+            return 0
+
+        def kill(self):
+            pass
+
+    paths.ensure_runtime_dir()
+    server = StateServer(
+        FakeGatherer(), version="v1", action_spawn=lambda *a, **kw: Child(kw["prompt_sock"])
+    )
+    thread = threading.Thread(
+        target=lambda: asyncio.run(server.serve(paths.socket_path())), daemon=True
+    )
+    thread.start()
+    track_server(server, thread)
+    _until(paths.socket_path().exists)
+    local = StateClient(
+        None, dashboard_id="local", transport="none", version="v1", spawn=lambda: None
+    )
+    remote = StateClient(
+        None, dashboard_id="remote", transport="ssh", version="v1", spawn=lambda: None
+    )
+    local.start()
+    remote.start()
+    try:
+        local.wait_first_snapshot(3)
+        remote.wait_first_snapshot(3)
+        local.run_action(
+            RunAction(
+                113,
+                ["destroy", "x"],
+                str(tmp_path),
+                "x",
+                False,
+                "local",
+                "none",
+                str(tmp_path),
+                "repo",
+            )
+        )
+        _until(lambda: 113 in remote.action_questions())
+        question = remote.action_questions()[113]
+        assert not question.can_answer
+        assert question.reason == "answer in a local dashboard"
+        remote.answer_action_question(113, question.question_id, answer)
+        _until(lambda: remote.action_rejection(113) is not None)
+        assert not answers
+        assert 113 in local.action_questions()
+        local.answer_action_question(113, question.question_id, True)
+        _until(lambda: bool(answers))
+        assert answers[0].value is True
+    finally:
+        local.close()
+        remote.close()
+
+
+def test_allowed_ssh_action_ignores_service_environment(runtime_dir, tmp_path, monkeypatch):
+    from jailbee import global_config
+    from jailbee.config.models_remote import RemoteCommandPolicy
+    from jailbee.state_service import paths
+
+    config = global_config.GlobalConfig()
+    config.remote.ssh.commands = RemoteCommandPolicy(mode="allowlist", allow=["ls"])
+    monkeypatch.setattr(global_config, "load_global_config", lambda path: (config, []))
+    from jailbee.remote_ssh import repo_scope
+
+    monkeypatch.setattr(
+        repo_scope, "registered_repos", lambda **kwargs: [repo_scope.RepoChoice("repo", tmp_path)]
+    )
+    monkeypatch.setenv("JAILBEE_REMOTE_SESSION", "1")
+    monkeypatch.setenv("JAILBEE_REMOTE_TRANSPORT", "ssh")
+    monkeypatch.delenv("JAILBEE_REMOTE_EXCLUDED_REPOS", raising=False)
+    spawned = []
+
+    class Child:
+        stdout = None
+
+        def __init__(self, sock):
+            sock.close()
+
+        def wait(self):
+            return 0
+
+        def kill(self):
+            pass
+
+    def spawn(*args, **kwargs):
+        spawned.append(kwargs["env"])
+        return Child(kwargs["prompt_sock"])
+
+    paths.ensure_runtime_dir()
+    server = StateServer(FakeGatherer(), version="v1", action_spawn=spawn)
+    thread = threading.Thread(
+        target=lambda: asyncio.run(server.serve(paths.socket_path())), daemon=True
+    )
+    thread.start()
+    track_server(server, thread)
+    _until(paths.socket_path().exists)
+    client = StateClient(
+        None, dashboard_id="remote", transport="ssh", version="v1", spawn=lambda: None
+    )
+    client.start()
+    try:
+        client.wait_first_snapshot(3)
+        client.run_action(
+            RunAction(
+                114,
+                ["ls"],
+                str(tmp_path),
+                "x",
+                False,
+                "remote",
+                "none",
+                str(tmp_path),
+                "repo",
+                environment={"PATH": "/bin"},
+            )
+        )
+        _until(lambda: 114 in client.action_entries() and client.action_entries()[114].finished)
+        assert client.action_entries()[114].status == 0
+        assert len(spawned) == 1
+    finally:
+        client.close()
+
+
+def test_remote_orphan_policy_is_checked_before_repo_scope(runtime_dir, tmp_path, monkeypatch):
+    from jailbee import global_config
+    from jailbee.config.models_remote import RemoteCommandPolicy
+    from jailbee.remote_ssh import repo_scope
+    from jailbee.state_service import paths
+
+    config = global_config.GlobalConfig()
+    config.remote.ssh.commands = RemoteCommandPolicy(mode="allowlist", allow=["orphan destroy"])
+    config.remote.ssh.restrict_host = True
+    monkeypatch.setattr(global_config, "load_global_config", lambda path: (config, []))
+    monkeypatch.setattr(
+        repo_scope, "registered_repos", lambda **kwargs: [repo_scope.RepoChoice("repo", tmp_path)]
+    )
+    spawned = []
+    paths.ensure_runtime_dir()
+    server = StateServer(
+        FakeGatherer(), version="v1", action_spawn=lambda *a, **kw: spawned.append(True)
+    )
+    thread = threading.Thread(
+        target=lambda: asyncio.run(server.serve(paths.socket_path())), daemon=True
+    )
+    thread.start()
+    track_server(server, thread)
+    _until(paths.socket_path().exists)
+    client = StateClient(
+        None, dashboard_id="remote", transport="ssh", version="v1", spawn=lambda: None
+    )
+    client.start()
+    try:
+        client.wait_first_snapshot(3)
+        client.run_action(
+            RunAction(
+                116,
+                ["orphan", "destroy", "x"],
+                str(tmp_path),
+                "x",
+                False,
+                "remote",
+                "none",
+                str(tmp_path),
+                "repo",
+            )
+        )
+        _until(lambda: client.action_rejection(116) is not None)
+        assert not spawned
+        assert 116 not in client.action_entries()
+    finally:
+        client.close()
+
+
+def test_remote_cannot_spoof_registered_repo_scope(runtime_dir, tmp_path, monkeypatch):
+    from jailbee import global_config
+    from jailbee.config.models_remote import RemoteCommandPolicy
+    from jailbee.remote_ssh import repo_scope
+    from jailbee.state_service import paths
+
+    public = tmp_path / "public"
+    private = tmp_path / "private"
+    public.mkdir()
+    private.mkdir()
+    config = global_config.GlobalConfig()
+    config.remote.ssh.commands = RemoteCommandPolicy(mode="allowlist", allow=["ls"])
+    config.remote.ssh.excluded_repos = ["private"]
+    monkeypatch.setattr(global_config, "load_global_config", lambda path: (config, []))
+    monkeypatch.setattr(
+        repo_scope,
+        "registered_repos",
+        lambda **kwargs: [
+            repo_scope.RepoChoice("public", public),
+            repo_scope.RepoChoice("private", private),
+        ],
+    )
+    spawned = []
+    paths.ensure_runtime_dir()
+    server = StateServer(
+        FakeGatherer(), version="v1", action_spawn=lambda *a, **kw: spawned.append(True)
+    )
+    thread = threading.Thread(
+        target=lambda: asyncio.run(server.serve(paths.socket_path())), daemon=True
+    )
+    thread.start()
+    track_server(server, thread)
+    _until(paths.socket_path().exists)
+    client = StateClient(
+        None, dashboard_id="remote", transport="ssh", version="v1", spawn=lambda: None
+    )
+    client.start()
+    try:
+        client.wait_first_snapshot(3)
+        client.run_action(
+            RunAction(
+                115,
+                ["ls"],
+                str(private),
+                "x",
+                False,
+                "remote",
+                "none",
+                str(public),
+                "public",
+                environment={"PATH": "/bin"},
+            )
+        )
+        _until(lambda: client.action_rejection(115) is not None)
+        assert not spawned
+        assert 115 not in client.action_entries()
     finally:
         client.close()
 

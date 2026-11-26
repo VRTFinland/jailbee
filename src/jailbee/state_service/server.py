@@ -19,7 +19,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from jailbee import __version__
 from jailbee.prompt_channel import Prompt
@@ -90,6 +90,7 @@ class _Client:
     cwd_root: Path | None
     dashboard_id: str | None = None
     excluded_prefixes: frozenset[str] = frozenset()
+    transport: Literal["none", "ssh", "web"] = "none"
     active: bool = True
     replaying: bool = False
     pending: list[bytes] = field(default_factory=list)
@@ -212,6 +213,7 @@ class StateServer:
                     Path(hello.cwd_root) if hello.cwd_root else None,
                     hello.dashboard_id,
                     frozenset(hello.excluded_prefixes),
+                    hello.transport,
                 )
                 client.replaying = True
                 self._clients.add(client)
@@ -246,7 +248,7 @@ class StateServer:
                         return
                     question = self._questions.get(entry.entry_id)
                     if question is not None and not self._send_action(
-                        client, question[0], replay=True
+                        client, self._question_for_client(client, question[0]), replay=True
                     ):
                         return
                     await asyncio.wait_for(writer.drain(), DRAIN_TIMEOUT_SECONDS)
@@ -292,6 +294,47 @@ class StateServer:
             else:
                 writer.close()
 
+    def _check_policy(self, client: _Client, argv: list[str]) -> Any:
+        from jailbee.dashboard.commands import check_dashboard_command
+        from jailbee.global_config import default_global_config_path, load_global_config
+
+        policy = None
+        if client.transport != "none":
+            config, _ = load_global_config(default_global_config_path())
+            policy = getattr(config.remote, client.transport)
+        check_dashboard_command(
+            argv, policy, transport=client.transport, excluded_prefixes=client.excluded_prefixes
+        )
+        return policy
+
+    def _remote_repo(self, client: _Client, root: str, cwd: str) -> tuple[str, str]:
+        from jailbee.global_config import default_global_config_path, load_global_config
+        from jailbee.remote_ssh.repo_scope import registered_repos
+
+        config, _ = load_global_config(default_global_config_path())
+        policy = getattr(config.remote, client.transport)
+        root_path, cwd_path = Path(root).resolve(), Path(cwd).resolve()
+        matches = [
+            repo
+            for repo in registered_repos(engine=self._engine)
+            if repo.root.resolve() == root_path
+        ]
+        if not matches or matches[0].prefix in policy.excluded_repos:
+            raise ValueError("repository is not visible to this remote dashboard")
+        if not cwd_path.is_relative_to(root_path):
+            raise ValueError("action directory is outside the registered repository")
+        if client.cwd_root is not None and not root_path.is_relative_to(client.cwd_root.resolve()):
+            raise ValueError("repository is outside the dashboard scope")
+        return str(root_path), matches[0].prefix
+
+    def _question_for_client(self, client: _Client, question: ActionQuestion) -> ActionQuestion:
+        entry = self._actions[question.entry_id]
+        try:
+            self._check_policy(client, entry.argv)
+        except (ValueError, OSError):
+            return replace(question, can_answer=False, reason="answer in a local dashboard")
+        return question
+
     def _start_action(self, client: _Client, request: RunAction) -> None:
         from jailbee.dashboard.runner import ActionCancellation, popen_spawn, run_action
 
@@ -305,6 +348,14 @@ class StateServer:
                 client, ActionRejected(request.entry_id, "invalid or duplicate action id")
             )
             return
+        try:
+            policy = self._check_policy(client, request.argv)
+            root, prefix = request.repo_root, request.prefix
+            if client.transport != "none":
+                root, prefix = self._remote_repo(client, request.repo_root, request.cwd)
+        except (ValueError, OSError) as exc:
+            self._send_action(client, ActionRejected(request.entry_id, str(exc)))
+            return
         entry = ActionEntry(
             request.entry_id,
             request.argv,
@@ -312,14 +363,18 @@ class StateServer:
             request.target,
             request.critical,
             request.origin,
-            request.transport,
-            request.repo_root,
-            request.prefix,
+            client.transport,
+            root,
+            prefix,
         )
         entry = replace(
             entry,
-            cwd_root=request.cwd_root or request.repo_root,
-            excluded_prefixes=list(request.excluded_prefixes),
+            cwd_root=(root if client.transport != "none" else request.cwd_root or root),
+            excluded_prefixes=(
+                list(client.excluded_prefixes)
+                if client.transport != "none"
+                else list(request.excluded_prefixes)
+            ),
         )
         self._actions[entry.entry_id] = entry
         self._broadcast_action(entry)
@@ -349,8 +404,8 @@ class StateServer:
                 result = run_action(
                     request.argv,
                     cwd=Path(request.cwd),
-                    transport=request.transport,
-                    policy=None,
+                    transport=client.transport,
+                    policy=policy,
                     on_prompt=ask,
                     on_disconnect=disconnect,
                     spawn=self._action_spawn or popen_spawn,
@@ -428,6 +483,11 @@ class StateServer:
             or pending[0].question_id != answer.question_id
         ):
             return
+        try:
+            self._check_policy(client, entry.argv)
+        except (ValueError, OSError) as exc:
+            self._send_action(client, ActionRejected(answer.entry_id, str(exc)))
+            return
         self._resolve_question(answer.entry_id, answer.value, client.dashboard_id)
 
     def _resolve_question(self, entry_id: int, value: Any, answered_by: str | None) -> None:
@@ -444,6 +504,13 @@ class StateServer:
         self._broadcast_action(ActionQuestionResolved(entry_id, question.question_id, answered_by))
 
     def _in_scope(self, entry: ActionEntry, client: _Client) -> bool:
+        if client.transport != "none":
+            try:
+                root, prefix = self._remote_repo(client, entry.repo_root, entry.cwd)
+            except (ValueError, OSError):
+                return False
+            if root != str(Path(entry.repo_root).resolve()) or prefix != entry.prefix:
+                return False
         if entry.prefix in client.excluded_prefixes:
             return False
         if client.cwd_root is None or entry.cwd_root is None:
@@ -465,7 +532,12 @@ class StateServer:
         entry = self._actions[message.entry_id] if not isinstance(message, ActionEntry) else message
         for recipient in list(self._clients):
             if self._in_scope(entry, recipient):
-                self._send_action(recipient, message)
+                outgoing = (
+                    self._question_for_client(recipient, message)
+                    if isinstance(message, ActionQuestion)
+                    else message
+                )
+                self._send_action(recipient, outgoing)
 
     def _dismiss_action(self, client: _Client, entry_id: int) -> None:
         entry = self._actions.get(entry_id)

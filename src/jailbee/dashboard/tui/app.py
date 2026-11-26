@@ -46,7 +46,7 @@ from jailbee.dashboard.tui.native import (
 )
 from jailbee.dashboard.tui.outbox_box import OutboxBox
 from jailbee.dashboard.tui.overlay import overlay_key
-from jailbee.dashboard.tui.prompt_modals import LATER, OutputScreen, modal_for
+from jailbee.dashboard.tui.prompt_modals import LATER, OutputScreen, ReadOnlyQuestion, modal_for
 from jailbee.dashboard.tui.session import (
     DOUBLE_CLICK_KINDS,
     OVERLAY_GLOBAL_TOKENS,
@@ -500,6 +500,9 @@ class DashboardApp(App[int], inherit_bindings=False):
         answer = self._answers.get(entry_id)
         if entry is None or entry.pending_question is None or answer is None:
             return
+        questions = self.session.client.action_questions()
+        shared = questions.get(entry_id)
+        readonly = shared is not None and not shared.can_answer
         if not self._answers.show(entry_id):
             return
 
@@ -507,7 +510,7 @@ class DashboardApp(App[int], inherit_bindings=False):
             if self._question_modals.get(entry_id) is modal:
                 self._question_modals.pop(entry_id, None)
                 self._answers.hide(entry_id)
-            if value is not LATER:
+            if not readonly and value is not LATER:
                 if not answer.done():
                     self.session.question_answered(entry_id)
                 question_id = self._shared_questions.get(entry_id)
@@ -517,7 +520,13 @@ class DashboardApp(App[int], inherit_bindings=False):
                     self.session.queue_changed()
                 self._resolve_answer(answer, value)
 
-        modal = modal_for(entry.pending_question, entry=entry)
+        modal = (
+            ReadOnlyQuestion(
+                entry.pending_question, entry, shared.reason or "answer in a local dashboard"
+            )
+            if readonly and shared is not None
+            else modal_for(entry.pending_question, entry=entry)
+        )
 
         def close_resolved(_future: asyncio.Future[Any]) -> None:
             if self._prompts_closed or not self.screen_stack:

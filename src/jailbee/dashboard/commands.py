@@ -44,7 +44,11 @@ def remote_unlocks(policy: RemotePolicy | None, transport: Transport) -> router.
 
 
 def check_dashboard_command(
-    argv: Sequence[str], policy: RemotePolicy | None, *, transport: Transport
+    argv: Sequence[str],
+    policy: RemotePolicy | None,
+    *,
+    transport: Transport,
+    excluded_prefixes: frozenset[str] | None = None,
 ) -> None:
     """Refuse dashboard-launched remote commands outside the transport's policy.
 
@@ -57,12 +61,12 @@ def check_dashboard_command(
         raise RouteError(f"remote {transport} dashboard has no server policy")
     from jailbee.remote_ssh.repo_scope import RemoteRepoScope, scope_for_session
 
-    snapshot_scope = scope_for_session()
+    excluded = scope_for_session().excluded if excluded_prefixes is None else excluded_prefixes
     router.policy_allows(
         argv,
         policy.commands,
         restrict_host=policy.restrict_host,
-        scope=RemoteRepoScope(snapshot_scope.excluded | frozenset(policy.excluded_repos)),
+        scope=RemoteRepoScope(excluded | frozenset(policy.excluded_repos)),
         unlocks=remote_unlocks(policy, transport),
     )
 

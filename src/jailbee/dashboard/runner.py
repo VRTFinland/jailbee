@@ -424,7 +424,10 @@ def run_action(
         record("refused")
         return RunResult(refused=reason)
     try:
-        check_dashboard_command(argv, policy, transport=transport)
+        from jailbee.remote_ssh.repo_scope import scope_for_session
+
+        excluded = scope_for_session(environment).excluded if environment is not None else None
+        check_dashboard_command(argv, policy, transport=transport, excluded_prefixes=excluded)
     except (RouteError, ValueError) as exc:  # ValueError: unreadable repo scope snapshot
         record("refused")
         return RunResult(refused=str(exc))
