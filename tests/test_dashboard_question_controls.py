@@ -13,6 +13,13 @@ from tests.dashboard_fixtures import ci
 from tests.dashboard_pilot import make_app
 
 
+async def mounted_question(app, pilot, kind):
+    async with asyncio.timeout(5):
+        while not (isinstance(app.screen, kind) and app.screen.is_mounted):
+            await pilot.pause(0.01)
+    await pilot.pause()
+
+
 @pytest.mark.parametrize("control", ["escape", "button"])
 def test_escape_defers_a_question_and_it_can_be_reopened(mocker, tmp_path, control):
     answers = []
@@ -28,18 +35,28 @@ def test_escape_defers_a_question_and_it_can_be_reopened(mocker, tmp_path, contr
     async def scenario():
         async with app.run_test() as pilot:
             app.session.run_dashboard_command("alpha-a", "container", ["merge", "alpha-a"])
-            async with asyncio.timeout(5):
-                while not isinstance(app.screen, pm.TextModal):
-                    await pilot.pause(0.01)
+            await mounted_question(app, pilot, pm.TextModal)
             if control == "button":
                 await pilot.click("#later")
             else:
                 await pilot.press("escape")
+            async with asyncio.timeout(5):
+                while not (isinstance(app.screen, pm.OutputScreen) and app.screen.is_mounted):
+                    await pilot.pause(0.01)
+            await pilot.pause()
             assert answers == []
             assert next(iter(app.session.queue)).state == "awaiting"
             await pilot.press("escape")  # close the foreground output
-            await pilot.press("Q", "enter")
-            assert isinstance(app.screen, pm.TextModal)
+            async with asyncio.timeout(5):
+                while app.modal_open:
+                    await pilot.pause(0.01)
+            await pilot.press("Q")
+            async with asyncio.timeout(5):
+                while app.session.overlay is None or app.session.overlay.purpose != "queue":
+                    await pilot.pause(0.01)
+            await pilot.pause()
+            await pilot.press("enter")
+            await mounted_question(app, pilot, pm.TextModal)
             await pilot.press(*"main", "enter")
             async with asyncio.timeout(5):
                 while not answers:
@@ -84,9 +101,7 @@ def test_disconnect_closes_the_displayed_question(mocker, tmp_path):
         async with app.run_test() as pilot:
             try:
                 app.session.run_dashboard_command("alpha-a", "container", ["merge", "alpha-a"])
-                async with asyncio.timeout(5):
-                    while not isinstance(app.screen, pm.TextModal):
-                        await pilot.pause(0.01)
+                await mounted_question(app, pilot, pm.TextModal)
                 close.set()
                 async with asyncio.timeout(5):
                     while isinstance(app.screen, pm.TextModal):
@@ -113,9 +128,7 @@ def test_abort_command_cancels_the_waiting_command(mocker, tmp_path, control):
     async def scenario():
         async with app.run_test() as pilot:
             app.session.run_dashboard_command("alpha-a", "container", ["merge", "alpha-a"])
-            async with asyncio.timeout(5):
-                while not isinstance(app.screen, pm.ConfirmModal):
-                    await pilot.pause(0.01)
+            await mounted_question(app, pilot, pm.ConfirmModal)
             if control == "button":
                 await pilot.click("#abort-command")
             else:
