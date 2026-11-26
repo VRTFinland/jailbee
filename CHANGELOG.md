@@ -10,6 +10,10 @@ before editing `## Unreleased`.
 
 ### Added
 
+- `jailbee litellm quota [-P PROFILE] [--json]` inside a container shows the
+  ChatGPT subscription's usage limits (plan, used percent and reset time per
+  window) for a `claude-jb` profile routed through the LiteLLM proxy. Profiles
+  without a ChatGPT-subscription route (xAI, API keys) report none and exit 1.
 - Background commands in the terminal dashboard leave questions in Notifications
   (`Q`) instead of interrupting another task. Select an awaiting entry to answer
   it; several commands can wait independently. A critical action whose modal
