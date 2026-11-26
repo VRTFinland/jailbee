@@ -52,6 +52,12 @@ async function mountRepo(fetchMock: ReturnType<typeof vi.fn<typeof fetch>>, dash
 }
 
 describe("RepoView", () => {
+    it("keeps the root breadcrumb before the current repository", async () => {
+        const {wrapper} = await mountRepo(vi.fn().mockResolvedValue(jsonResponse(200, {sessions})))
+        expect(wrapper.findAll('nav[aria-label="Breadcrumb"] a').map(link => link.text())).toEqual(["JailBee"])
+        expect(wrapper.get('nav h1').text()).toBe('alpha')
+        wrapper.unmount()
+    })
     beforeEach(() => updateSettings({liveSessionsOnly: false, openOnlyLiveSession: false}))
 
     it("shows only live sessions by default and allows all sessions for this visit", async () => {

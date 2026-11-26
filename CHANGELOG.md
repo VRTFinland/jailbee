@@ -47,7 +47,10 @@ before editing `## Unreleased`.
   dialogs and buttons, vector page controls with full-size upward hit areas behind
   compact chrome, and preserves page steps, guide lines and reading positions. Settings, quick preferences and prompt
   navigation share the same dialog and control primitives, with history,
-  reading position and measured menu paging preserved
+  reading position and measured menu paging preserved, edge-to-edge title bars
+  with complete, ellipsized navigation paths, padded menu surfaces with e-ink-safe
+  elevation, 16px drawer corners and reduced-motion-aware sheet entry, and centred
+  arrow controls for list pagination
   ([#167](https://github.com/VRTFinland/jailbee/issues/167)).
 - Web dashboard reader improvements: compact breadcrumb title bars and session details,
   an in-context settings overlay, configurable e-ink page controls and page step,

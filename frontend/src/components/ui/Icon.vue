@@ -3,7 +3,7 @@ import {ICON_PATHS, type IconName} from "./material-symbols/paths"
 
 withDefaults(defineProps<{
     name: IconName
-    size?: "small" | "medium" | "large"
+    size?: "extra-small" | "small" | "medium" | "large"
     label?: string
 }>(), {size: "medium"})
 </script>

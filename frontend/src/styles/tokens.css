@@ -52,12 +52,14 @@
     --md-context-opacity: 0.5;
 
     /* Icon sizes: Material Symbols use a 24px optical size at the medium step. */
+    --md-icon-extra-small: 0.75rem;
     --md-icon-small: 1rem;
     --md-icon-medium: 1.5rem;
     --md-icon-large: 2rem;
 
     /* Shape scale. */
     --md-shape-none: 0;
+    --md-shape-extra-small: 4px;
     --md-shape-small: 8px;
     --md-shape-medium: 12px;
     --md-shape-large: 16px;
@@ -107,6 +109,7 @@
 
     /* Motion: brief state transitions; zero under reduced motion and e-ink. */
     --md-motion-duration: 150ms;
+    --md-motion-sheet-duration: 280ms;
     --md-motion-easing: cubic-bezier(0.2, 0, 0, 1);
 }
 @media (pointer: coarse) {
@@ -132,6 +135,7 @@
     /* A border only e-ink draws: it has no tints to tell surfaces apart. */
     --md-hairline: transparent;
     --md-scrim: rgb(0 0 0 / 32%);
+    --md-elevation-level-2: 0 3px 6px rgb(0 0 0 / 15%), 0 2px 4px rgb(0 0 0 / 30%);
     --md-primary: #3a5f94;
     --md-on-primary: #ffffff;
     --md-primary-container: #d5e3ff;
@@ -170,6 +174,7 @@
     --md-outline-variant: #43474e;
     --md-hairline: transparent;
     --md-scrim: rgb(0 0 0 / 32%);
+    --md-elevation-level-2: 0 3px 6px rgb(0 0 0 / 15%), 0 2px 4px rgb(0 0 0 / 30%);
     --md-primary: #a7c8ff;
     --md-on-primary: #04305f;
     --md-primary-container: #224876;
@@ -208,6 +213,7 @@
     --md-outline-variant: #000000;
     --md-hairline: #000000;
     --md-scrim: transparent;
+    --md-elevation-level-2: none;
     --md-primary: #000000;
     --md-on-primary: #ffffff;
     --md-primary-container: #ffffff;
@@ -268,13 +274,16 @@
    anything under reduced motion (base.css stops every transition too). */
 [data-profile="eink"] {
     --md-motion-duration: 0ms;
+    --md-motion-sheet-duration: 0ms;
 }
 [data-profile="normal"] {
     --md-motion-duration: 150ms;
+    --md-motion-sheet-duration: 280ms;
 }
 @media (prefers-reduced-motion: reduce) {
     :root,
     [data-profile] {
         --md-motion-duration: 0ms;
+        --md-motion-sheet-duration: 0ms;
     }
 }

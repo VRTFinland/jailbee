@@ -74,44 +74,46 @@ watch(prefix, async (selected, _previous, onCleanup) => {
 </script>
 
 <template>
-    <div class="page">
+    <div>
         <TitleBar @readable-top="readableTop = $event" :title="prefix" :crumbs="[{label: 'JailBee', to: {name: 'front'}}]" context="containers" />
-        <section v-if="containers && containers.repos.length" aria-label="Containers">
-            <h2>Containers</h2>
-            <RepoList :view="containers" :show-headings="false" :listed-containers="listedContainers" />
-        </section>
-        <h2>Sessions</h2>
-        <label class="session-filter">
-            <Switch v-model="liveOnly" label="Live only" />
-            <span>Live only</span>
-        </label>
-        <p v-if="error" class="notice ui-notice">{{ error }}</p>
-        <p v-else-if="sessions === null" class="muted">Loading…</p>
-        <div v-else-if="liveOnly && filteredSessions.length === 0">
-            <p class="muted">No live sessions.</p>
-            <Button variant="tonal" @click="liveOnly = false">Show all sessions</Button>
+        <div class="page">
+            <section v-if="containers && containers.repos.length" aria-label="Containers">
+                <h2>Containers</h2>
+                <RepoList :view="containers" :show-headings="false" :listed-containers="listedContainers" />
+            </section>
+            <h2>Sessions</h2>
+            <label class="session-filter">
+                <Switch v-model="liveOnly" label="Live only" />
+                <span>Live only</span>
+            </label>
+            <p v-if="error" class="notice ui-notice">{{ error }}</p>
+            <p v-else-if="sessions === null" class="muted">Loading…</p>
+            <div v-else-if="liveOnly && filteredSessions.length === 0">
+                <p class="muted">No live sessions.</p>
+                <Button variant="tonal" @click="liveOnly = false">Show all sessions</Button>
+            </div>
+            <p v-else-if="sessions.length === 0" class="muted">No sessions.</p>
+            <ul v-else class="sessions">
+                <ListRow v-for="s in filteredSessions" :key="`${s.agent}/${s.session_id}`" class="session" wrap
+                    :link-label="sessionLinkLabel(s)" :title="s.title || 'Untitled session'"
+                    :to="{name: 'session', params: {prefix, agent: s.agent, sessionId: s.session_id}}">
+                    <template #trailing v-if="sessionStatus(s)"><StatusChip v-bind="sessionStatus(s)!" /></template>
+                    <template #secondary>
+                        <span class="meta">
+                            <span class="agent">{{ s.agent }}</span>
+                            <span class="container" :class="{unattributed: !s.container}">{{
+                                s.container ?? "unattributed"
+                            }}</span>
+                            <time v-if="s.last_activity" :datetime="s.last_activity">{{
+                                when(s.last_activity)
+                            }}</time>
+                            <span v-if="s.models.length" class="models">{{ s.models.join(", ") }}</span>
+                        </span>
+                    </template>
+                </ListRow>
+            </ul>
+            <PageNav :pager="pager" />
         </div>
-        <p v-else-if="sessions.length === 0" class="muted">No sessions.</p>
-        <ul v-else class="sessions">
-            <ListRow v-for="s in filteredSessions" :key="`${s.agent}/${s.session_id}`" class="session" wrap
-                :link-label="sessionLinkLabel(s)" :title="s.title || 'Untitled session'"
-                :to="{name: 'session', params: {prefix, agent: s.agent, sessionId: s.session_id}}">
-                <template #trailing v-if="sessionStatus(s)"><StatusChip v-bind="sessionStatus(s)!" /></template>
-                <template #secondary>
-                    <span class="meta">
-                        <span class="agent">{{ s.agent }}</span>
-                        <span class="container" :class="{unattributed: !s.container}">{{
-                            s.container ?? "unattributed"
-                        }}</span>
-                        <time v-if="s.last_activity" :datetime="s.last_activity">{{
-                            when(s.last_activity)
-                        }}</time>
-                        <span v-if="s.models.length" class="models">{{ s.models.join(", ") }}</span>
-                    </span>
-                </template>
-            </ListRow>
-        </ul>
-        <PageNav :pager="pager" />
     </div>
 </template>
 

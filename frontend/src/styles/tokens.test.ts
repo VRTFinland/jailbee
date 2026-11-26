@@ -155,10 +155,11 @@ describe("design tokens", () => {
         const eink = RULES.filter((r) => r.selectors.includes('[data-theme="eink"]')).flatMap((r) => r.decls)
         const OPACITIES = /^--md-(state|disabled|context)-/
         for (const [name] of eink) {
-            if (!name.startsWith("--md-") || OPACITIES.test(name) || name === "--md-scrim") continue
+            if (!name.startsWith("--md-") || OPACITIES.test(name) || ["--md-scrim", "--md-elevation-level-2"].includes(name)) continue
             expect(["#000000", "#ffffff"], name).toContain(resolve("eink", name).toLowerCase())
         }
         expect(resolve("eink", "--md-scrim")).toBe("transparent")
+        expect(resolve("eink", "--md-elevation-level-2")).toBe("none")
         // No tinted state layers and no greyed-out disabled controls.
         expect(resolve("eink", "--md-state-hover-opacity")).toBe("0")
         expect(resolve("eink", "--md-state-pressed-opacity")).toBe("0")
@@ -190,6 +191,7 @@ describe("design tokens", () => {
     })
 
     it("has the Material 3 shape scale", () => {
+        expect(resolve("light", "--md-shape-extra-small")).toBe("4px")
         expect(resolve("light", "--md-shape-small")).toBe("8px")
         expect(resolve("light", "--md-shape-medium")).toBe("12px")
         expect(resolve("light", "--md-shape-large")).toBe("16px")

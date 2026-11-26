@@ -80,7 +80,7 @@ describe("TitleBar breadcrumbs", () => {
     it("keeps session details on the current title without making them breadcrumb levels", async () => {
         const {wrapper} = await titleBar()
         await wrapper.setProps({session: {agent: "codex", models: ["model-a", "model-b"], id: "session-123"}})
-        expect(wrapper.get("nav h1").attributes("title")).toBe("Agent: codex\nModels: model-a, model-b\nSession ID: session-123")
+        expect(wrapper.get("nav h1").attributes("title")).toBe("Subagent\nAgent: codex\nModels: model-a, model-b\nSession ID: session-123")
         await wrapper.setProps({crumbs: []})
         expect(wrapper.findAll("nav a")).toHaveLength(0)
         expect(wrapper.get("nav h1").text()).toBe("Subagent")

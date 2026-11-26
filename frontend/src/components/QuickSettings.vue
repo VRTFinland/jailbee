@@ -3,7 +3,7 @@ import {computed, inject, nextTick, onBeforeUnmount, onMounted, ref, useId, watc
 import {useRoute, type RouteLocationRaw} from "vue-router"
 import {FONT_SIZE_RANGE, settings, THEMES, THEME_LABELS, updateSettings} from "../settings"
 import IconButton from "./ui/IconButton.vue"
-import Button from "./ui/Button.vue"
+import MenuRow from "./ui/MenuRow.vue"
 import Dialog from "./ui/Dialog.vue"
 import Select from "./ui/Select.vue"
 import Switch from "./ui/Switch.vue"
@@ -130,11 +130,11 @@ onBeforeUnmount(() => {
         <template #trigger><IconButton ref="triggerButton" icon="menu" label="Quick settings" class="quick-trigger"
             :variant="settings.showTitleBar ? 'text' : 'tonal'" aria-haspopup="dialog" :aria-expanded="open" :aria-describedby="filtered ? 'filter-description' : undefined" /></template>
 
-            <router-link v-if="!settings.showTitleBar && parent" class="menu-row" :to="parent.to" @click="close(false)">Back to {{ parent.label }}</router-link>
-            <div v-if="session" class="menu-row session-info" aria-label="Session">
+            <MenuRow v-if="!settings.showTitleBar && parent" class="menu-row" :to="parent.to" @click="close(false)">Back to {{ parent.label }}</MenuRow>
+            <MenuRow v-if="session" class="menu-row session-info" aria-label="Session">
                 <strong>Session</strong><span>Agent: {{ session.agent }}</span><span>Models: {{ session.models.join(", ") || "—" }}</span><span>Session ID: {{ session.id }}</span>
-            </div>
-            <div v-for="font in fonts" :key="font.field" class="menu-row font-row">
+            </MenuRow>
+            <MenuRow v-for="font in fonts" :key="font.field" class="menu-row font-row">
                 <span>{{ font.label }}: {{ settings[font.field] }}px</span>
                 <IconButton :label="`Decrease ${font.name} font size`"
                     :disabled="settings[font.field] <= FONT_SIZE_RANGE.min"
@@ -142,25 +142,25 @@ onBeforeUnmount(() => {
                 <IconButton :label="`Increase ${font.name} font size`"
                     :disabled="settings[font.field] >= FONT_SIZE_RANGE.max"
                     @click="updateSettings({[font.field]: settings[font.field] + 1})" icon="add" />
-            </div>
-            <Button type="button" class="menu-row theme-cycle" :aria-label="`Theme: ${THEME_LABELS[settings.theme]}`" @click="cycleTheme">Theme: {{ THEME_LABELS[settings.theme] }}</Button>
+            </MenuRow>
+            <MenuRow action type="button" class="menu-row theme-cycle" :aria-label="`Theme: ${THEME_LABELS[settings.theme]}`" @click="cycleTheme">Theme: {{ THEME_LABELS[settings.theme] }}</MenuRow>
             <template v-if="context">
-                <div class="menu-row view-heading">View</div>
+                <MenuRow section-start class="menu-row view-heading">View</MenuRow>
                 <div v-if="context === 'containers'" role="group" aria-label="Container filter">
-                    <Button v-for="filter in filters" :key="filter.mode" type="button" class="menu-row" :variant="settings.containerFilter === filter.mode ? 'tonal' : 'text'"
+                    <MenuRow action v-for="filter in filters" :key="filter.mode" type="button" class="menu-row" :selected="settings.containerFilter === filter.mode"
                         :aria-label="filter.label" :title="filter.label" :aria-pressed="settings.containerFilter === filter.mode"
-                        @click="updateSettings({containerFilter: filter.mode})">{{ filter.label }}</Button>
+                        @click="updateSettings({containerFilter: filter.mode})">{{ filter.label }}</MenuRow>
                 </div>
                 <template v-else>
-                    <Button type="button" class="menu-row" data-action="jump" @click="showJump">Jump to…</Button>
-                    <label class="menu-row toggle-row"><span>Follow new messages</span><Switch label="Follow new messages" :model-value="follow" @update:model-value="setFollow" /></label>
-                    <label class="menu-row toggle-row"><span>Show thinking</span><Switch label="Show thinking" :model-value="settings.showThinking" @update:model-value="updateSettings({showThinking: $event})" /></label>
-                    <Select native class="menu-row context-row" label="Agent context" aria-label="Agent context" :model-value="settings.agentContext"
+                    <MenuRow action type="button" class="menu-row" data-action="jump" @click="showJump">Jump to…</MenuRow>
+                    <MenuRow as="label" class="menu-row toggle-row"><span>Follow new messages</span><Switch label="Follow new messages" :model-value="follow" @update:model-value="setFollow" /></MenuRow>
+                    <MenuRow as="label" class="menu-row toggle-row"><span>Show thinking</span><Switch label="Show thinking" :model-value="settings.showThinking" @update:model-value="updateSettings({showThinking: $event})" /></MenuRow>
+                    <MenuRow class="menu-row context-row"><Select native label="Agent context" aria-label="Agent context" :model-value="settings.agentContext"
                         :options="[{value: 'hidden', label: 'Hidden'}, {value: 'collapsed', label: 'Collapsed'}, {value: 'shown', label: 'Shown'}]"
-                        @update:model-value="updateSettings({agentContext: $event as 'hidden' | 'collapsed' | 'shown'})" />
+                        @update:model-value="updateSettings({agentContext: $event as 'hidden' | 'collapsed' | 'shown'})" /></MenuRow>
                 </template>
             </template>
-            <Button type="button" class="menu-row settings-action" @click="showSettings">Settings</Button>
+            <MenuRow action type="button" section-start class="menu-row settings-action" @click="showSettings">Settings</MenuRow>
             <nav class="menu-pages" hidden aria-label="Settings pages">
                 <IconButton label="Previous settings page" :disabled="page === 0" @click="turn(-1)" icon="page-up" />
                 <span role="status">{{ page + 1 }} / {{ pageCount }}</span>
@@ -176,14 +176,12 @@ onBeforeUnmount(() => {
 .quick-settings { position: relative; flex: none; z-index: var(--md-layer-sticky); margin-left: auto; }
 .quick-settings:not(.title-menu) { position: fixed; top: calc(var(--app-banner-height, 0) + var(--quick-trigger-top)); right: var(--md-space-12); }
 .session-info { flex-direction: column; align-items: flex-start; overflow-wrap: anywhere; user-select: text; }
-.menu-row { display: flex; align-items: center; gap: var(--md-space-8); width: 100%; margin: 0; }
 .menu-row[hidden], .menu-pages[hidden] { display: none; }
 .font-row { flex-wrap: wrap; }
 .font-row > span { flex: 1 1 5rem; }
 .font-row button { flex-shrink: 0; }
 .toggle-row { justify-content: space-between; }
-.context-row { display: block; }
-.view-heading { padding-block: var(--md-space-8); }
+.context-row > * { flex: 1; min-width: 0; }
 .menu-pages { display: flex; align-items: center; justify-content: space-between; padding-top: var(--md-space-8); }
 .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
 .filter-marker { pointer-events: none; position: absolute; top: var(--md-space-4); right: var(--md-space-4); width: var(--md-space-8); height: var(--md-space-8); border-radius: var(--md-shape-full); background: var(--md-primary); border: 1px solid var(--md-on-surface); }

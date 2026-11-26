@@ -68,6 +68,13 @@ async function mountContainer(fetchMock: ReturnType<typeof vi.fn<typeof fetch>>,
 }
 
 describe("ContainerView", () => {
+    it("includes the known repository between the root and container", async () => {
+        const {wrapper} = await mountContainer(serve())
+        expect(wrapper.findAll('nav[aria-label="Breadcrumb"] a').map(link => [link.text(), link.attributes('href')])).toEqual([
+            ["JailBee", "/"], ["alpha", "/repos/alpha"],
+        ])
+        wrapper.unmount()
+    })
     // Existing history cases explicitly choose the all-sessions preference.
     beforeEach(() => updateSettings({liveSessionsOnly: false, openOnlyLiveSession: false}))
 
@@ -206,6 +213,8 @@ describe("ContainerView", () => {
         const {wrapper} = await mountContainer(fetchMock)
         expect(wrapper.text()).toContain("Page 1 of 2")
         expect(wrapper.get('button[aria-label="Previous earlier sessions"]').attributes("disabled")).toBeDefined()
+        expect(wrapper.get('button[aria-label="Previous earlier sessions"]').text()).toBe('')
+        expect(wrapper.get('button[aria-label="Next earlier sessions"]').text()).toBe('')
         await wrapper.get('button[aria-label="Next earlier sessions"]').trigger("click")
         await flushPromises()
         expect(String(fetchMock.mock.calls.at(-1)![0])).toContain("limit=20&offset=20")

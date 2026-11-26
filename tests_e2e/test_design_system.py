@@ -214,7 +214,11 @@ def test_transitions_stay_brief_and_stop_under_reduced_motion_and_eink(logged_in
     _open_gallery(page)
     declared = page.evaluate(_DECLARED_MOTION_MS)
     assert declared, "no stylesheet declares any motion: the scan found nothing"
-    too_long = [(where, ms) for where, ms in declared if ms > 150]
+    # Sheet travel and its scrim use the explicitly longer M3 entry duration;
+    # ordinary state transitions retain their 150ms ceiling.
+    sheet = [(where, ms) for where, ms in declared if "drawer" in where]
+    assert sheet and all(250 <= ms <= 300 for _, ms in sheet)
+    too_long = [(where, ms) for where, ms in declared if "drawer" not in where and ms > 150]
     assert too_long == []
     longest = page.evaluate(_MAX_TRANSITION_MS)
     assert 0 < longest <= 150
@@ -233,10 +237,10 @@ def test_transitions_stay_brief_and_stop_under_reduced_motion_and_eink(logged_in
     expect(page.get_by_role("button", name="Log out")).to_be_visible()
     assert page.evaluate(_MAX_TRANSITION_MS) == 0
     _open_gallery(page)
-    eink_panels = page.locator('section[data-profile="eink"] .shape')  # 3 panels x 5 shapes
+    eink_panels = page.locator('section[data-profile="eink"] .shape')  # 3 panels x 6 shapes
     assert (
         eink_panels.evaluate_all("(els) => els.map((e) => getComputedStyle(e).transitionDuration)")
-        == ["0s"] * 15
+        == ["0s"] * 18
     )
 
 

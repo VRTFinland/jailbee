@@ -131,12 +131,16 @@ async def session_summary(
     row = rows.get((agent, session_id))
     if row is None:
         raise HTTPException(status_code=404, detail="Unknown session")
+    containers = await run_in_threadpool(
+        session_containers, ctx.hub.latest(), prefix, ctx.deps.engine, [row]
+    )
     return SessionView(
         session_id=row.session_id,
         agent=row.agent,
         title=row.title,
         last_activity=row.last_activity,
         models=list(row.models),
+        container=containers.get((agent, session_id)),
     )
 
 
