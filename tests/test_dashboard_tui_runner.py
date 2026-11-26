@@ -246,6 +246,7 @@ def test_outbox_publish_uses_runner_modal_and_keeps_queue_result(mocker, tmp_pat
         ssh_policy=RemoteSSHConfig(),
     )
     app.threaded_actions = True
+
     def host_runner(argv, **kwargs):
         # The service resolves SSH policy on the host, not from the dashboard.
         if transport == "ssh":
