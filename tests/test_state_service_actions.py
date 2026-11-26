@@ -538,11 +538,23 @@ def test_finished_action_survives_server_restart(runtime_dir, tmp_path):
     thread.join(timeout=5)
     assert not thread.is_alive()
     paths.socket_path().unlink(missing_ok=True)
-    start_server()
+    server, thread = start_server()
     client = start_client()
     try:
         _until(lambda: 123 in client.action_entries())
         assert client.action_entries()[123].status == 7
+        client.dismiss_action(123)
+        _until(lambda: 123 not in client.action_entries())
+    finally:
+        client.close()
+    server._stopping = True
+    thread.join(timeout=5)
+    assert not thread.is_alive()
+    paths.socket_path().unlink(missing_ok=True)
+    start_server()
+    client = start_client()
+    try:
+        assert 123 not in client.action_entries()
     finally:
         client.close()
 
