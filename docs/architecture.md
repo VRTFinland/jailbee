@@ -460,8 +460,9 @@ request, not the service's startup shell.
 
 Version replacement queries live work first. Waiting drains the old service:
 new actions are refused while existing actions and questions finish. Explicit
-replacement sends SIGTERM to each action's isolated process group, allows two
-seconds for cleanup, then uses SIGKILL if needed, reaps the child and
+replacement sends SIGINT to each action's isolated process group so the CLI's
+Python cleanup handlers run, allows two seconds for cleanup, then uses SIGKILL
+if needed, reaps the child and
 persists interrupted entries before releasing the service lifetime lock. Global
 shutdown and draining are local-client controls; a remote dashboard asks for
 replacement from a local dashboard instead. Upgrade questions use `prompting`;
