@@ -20,6 +20,12 @@ withDefaults(defineProps<{kind?: "user" | "assistant" | "thinking" | "orphan"; m
     border-color: var(--md-outline-variant);
     font-size: var(--md-type-body-small-size);
 }
+.entry :deep(.question-highlight) {
+    outline: var(--md-focus-ring-width) solid var(--md-primary);
+    outline-offset: var(--md-space-4);
+    background: var(--md-primary-container);
+    color: var(--md-on-primary-container);
+}
 .orphan { color: var(--md-on-surface-variant); }
 .thinking {
     padding-left: var(--md-space-16);

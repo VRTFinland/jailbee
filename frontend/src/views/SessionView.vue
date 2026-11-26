@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import Button from "../components/ui/Button.vue"
+import AnswerPanel from "../components/ui/AnswerPanel.vue"
+import {parseQuestionSet} from "../questions"
 import AgentComposer from "../components/AgentComposer.vue"
 import TranscriptEntry from "../components/ui/TranscriptEntry.vue"
 import TitleBar from "../components/TitleBar.vue"
@@ -34,9 +36,17 @@ const transcriptEl = ref<HTMLElement | null>(null)
 const composerEl = ref<InstanceType<typeof AgentComposer> | null>(null)
 const composerHeight = ref(0)
 const navHeight = ref(0)
+const panelBottom = ref(0)
+const panelHeight = ref(0)
 function measureComposer() {
-    composerHeight.value = composerEl.value?.$el?.getBoundingClientRect().height ?? 0
-    navHeight.value = document.querySelector(".page-nav")?.getBoundingClientRect().height ?? 0
+    const composer = composerEl.value?.$el?.getBoundingClientRect() as DOMRect | undefined
+    const nav = document.querySelector(".page-nav")?.getBoundingClientRect()
+    composerHeight.value = composer?.height ?? 0
+    navHeight.value = nav?.height ?? 0
+    panelHeight.value = panelEl.value?.$el?.getBoundingClientRect().height ?? 0
+    // Reserve both input surfaces and all PageNav variants, including the
+    // compact bar's enlarged hit targets above its drawn edge.
+    panelBottom.value = window.innerHeight - Math.min(composer?.top ?? window.innerHeight, nav?.top ?? window.innerHeight)
 }
 const pager = usePager(
     () => readableTop.value,
@@ -140,6 +150,44 @@ const latestAnswer = computed(() => {
     return null
 })
 
+const answerSource = computed(() => [...transcript.value?.entries ?? []].reverse().find(e => e.kind === "assistant"))
+const answerSet = computed(() => {
+    const entry = answerSource.value
+    return agentId.value === null && entry?.kind === "assistant" && entry.text ? parseQuestionSet(entry.text) : null
+})
+const panelEl = ref<InstanceType<typeof AnswerPanel> | null>(null)
+let highlighted: HTMLElement[] = []
+function clearQuestionHighlight() {
+    highlighted.forEach(el => el.classList.remove("question-highlight"))
+    highlighted = []
+}
+async function showQuestion(index: number) {
+    const source = answerSource.value
+    const set = answerSet.value
+    const question = set?.questions[index]
+    if (!source || !question || !set) return
+    const prose = document.getElementById(entryDomId(source.id))?.querySelector(".prose")
+    // Match the actual Markdown header, not a mention, a prefix (Q1/Q12),
+    // or an example inside a code fence. Keep the server's sanitised HTML.
+    const blocks = Array.from(prose?.children ?? []) as HTMLElement[]
+    const isHeader = (el: HTMLElement, number: number) => el.tagName === "P" &&
+        el.textContent?.trimStart().startsWith(`❓ Q${number} - `) &&
+        el.firstElementChild?.tagName === "STRONG" && el.firstElementChild.textContent === `Q${number}`
+    const start = blocks.findIndex(el => isHeader(el, question.number))
+    if (start < 0) return
+    const next = blocks.findIndex((el, i) => i > start && set.questions.some(q => isHeader(el, q.number)))
+    clearQuestionHighlight()
+    highlighted = blocks.slice(start, next < 0 ? undefined : next)
+    highlighted.forEach(el => el.classList.add("question-highlight"))
+    following.value = false
+    await nextTick()
+    const target = blocks[start]!
+    scrollProgrammatically(() => {
+        if (eink.value) pager.goToElement(target)
+        else window.scrollTo(0, target.getBoundingClientRect().top + window.scrollY - readableTop.value)
+    })
+}
+
 const atTranscriptEnd = ref(false)
 const following = ref(false)
 let lastScrollY = window.scrollY
@@ -242,6 +290,15 @@ function markScrollKey(event: KeyboardEvent) {
     if (["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key)) markScrollIntent()
 }
 
+watch(answerSource, () => {
+    clearQuestionHighlight()
+    void nextTick(() => {
+        if (panelEl.value?.$el) layoutObserver?.observe(panelEl.value.$el as Element)
+        measureComposer()
+        pager.measure()
+        measureVisibility()
+    })
+})
 watch(shown, () => void nextTick(measureVisibility))
 watch([eink, () => settings.pageControls], () => void nextTick(() => {
     const nav = document.querySelector(".page-nav")
@@ -523,7 +580,7 @@ watch(
 </script>
 
 <template>
-    <div :style="{'--session-readable-top': `${readableTop}px`, '--composer-height': `${composerHeight}px`, '--composer-nav-height': `${navHeight}px`}">
+    <div :class="{'has-answer-panel': !!answerSet}" :style="{'--session-readable-top': `${readableTop}px`, '--composer-height': `${composerHeight}px`, '--composer-nav-height': `${navHeight}px`, '--answer-panel-bottom': `${panelBottom}px`, '--answer-panel-height': `${panelHeight}px`}">
         <TitleBar @readable-top="readableTop = $event" :title="title" :crumbs="crumbs" context="session" :session="transcript ? {agent: transcript.agent, models: transcript.models, id: transcript.session_id} : null" />
         <div class="page">
             <p v-if="dashboard && !dashboard.state.connected" class="notice ui-notice">Connecting…</p>
@@ -606,6 +663,10 @@ watch(
                         </TranscriptEntry>
                     </template>
                 </article>
+                <AnswerPanel v-if="answerSet" :key="answerSource?.id" ref="panelEl" class="answer-panel-layout"
+                    :set="answerSet" :available="transcript.chat?.available ?? false" :busy="sending || awaiting"
+                    :reason="transcript.chat?.message || 'Messaging is unavailable.'" :error="sendError" :status="sendStatus"
+                    @send="sendMessage" @show="showQuestion" />
                 <AgentComposer v-if="agentId === null" v-model:draft="draft" ref="composerEl" class="agent-composer"
                     :class="{'beside-nav': eink && settings.pageControls !== 'bar'}"
                     :available="transcript.chat?.available ?? false"
@@ -640,8 +701,34 @@ watch(
     display: block;
     height: max(calc(var(--md-target-min) + var(--md-space-32)), calc(100dvh - var(--session-readable-top)));
 }
-/* SessionView owns the input layout: a future panel reserves space here,
-   below on mobile and beside the transcript on desktop, rather than covering it. */
+.answer-panel-layout {
+    position: fixed;
+    left: var(--md-space-16);
+    right: var(--md-space-16);
+    bottom: calc(var(--answer-panel-bottom) + var(--md-space-8));
+    max-height: calc(100dvh - var(--session-readable-top) - var(--answer-panel-bottom) - var(--md-space-8) - var(--md-layout-reader-min));
+    z-index: var(--md-layer-sticky);
+}
+[data-profile="eink"] .answer-panel-layout {
+    left: max(var(--md-layout-page-tap-zone), var(--md-space-16));
+    right: max(var(--md-layout-page-tap-zone), var(--md-space-16));
+}
+@media (min-width: 900px) {
+    .has-answer-panel .page {
+        max-width: calc(var(--md-layout-content-max) + var(--md-space-32));
+        margin-inline: auto calc(var(--md-layout-answer-column) + var(--md-space-32));
+    }
+    .answer-panel-layout {
+        left: auto;
+        right: var(--md-space-16);
+        width: var(--md-layout-answer-column);
+        top: var(--session-readable-top);
+        bottom: auto;
+        max-height: calc(100dvh - var(--session-readable-top) - var(--answer-panel-bottom) - var(--md-space-8));
+    }
+    [data-profile="eink"] .answer-panel-layout { left: auto; right: var(--md-space-16); }
+    .has-answer-panel .agent-composer { right: calc(var(--md-layout-answer-column) + var(--md-space-32)); }
+}
 .agent-composer {
     position: fixed;
     left: var(--md-space-16);
@@ -790,5 +877,15 @@ watch(
 [data-profile="eink"] .beside-nav ~ .jump-latest {
     right: calc(var(--page-controls-width) + var(--md-space-16));
     bottom: calc(var(--guard-bottom) + var(--composer-height) + var(--md-space-16));
+}
+.has-answer-panel .jump-latest {
+    bottom: calc(var(--answer-panel-bottom) + var(--answer-panel-height) + var(--md-space-16));
+}
+@media (min-width: 900px) {
+    .has-answer-panel .jump-latest {
+        right: calc(var(--md-layout-answer-column) + var(--md-space-32));
+        bottom: calc(var(--guard-bottom) + var(--composer-nav-height) + var(--composer-height) + var(--md-space-32));
+        max-width: calc(100vw - var(--md-layout-answer-column) - var(--md-space-32));
+    }
 }
 </style>

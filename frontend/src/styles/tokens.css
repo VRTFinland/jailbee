@@ -18,6 +18,8 @@
 /* Theme-independent scales. */
 :root {
     --md-layout-content-max: 48rem;
+    --md-layout-answer-column: 23rem;
+    --md-layout-reader-min: 10rem;
     --md-layout-answer-half: 42dvh;
     --md-layout-answer-full: 60dvh;
     --md-layout-page-tap-zone: 8vw;

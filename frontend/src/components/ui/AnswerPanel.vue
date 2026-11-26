@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import {computed, ref, watch} from "vue"
 import Button from "./Button.vue"
+import IconButton from "./IconButton.vue"
 import Field from "./Field.vue"
 import {buildAnswerMessage, initialAnswers} from "../../questions"
 import type {Answer, QuestionSet} from "../../questions"
@@ -26,11 +27,11 @@ const preview = computed(() => buildAnswerMessage(props.set, answers.value))
     <aside class="answer-panel" :data-height="height" aria-label="Answer questions">
         <header class="panel-header">
             <strong>❓ {{ set.questions.length }} {{ set.questions.length === 1 ? 'question' : 'questions' }}</strong>
-            <Button v-if="height === 'bar'" aria-label="Expand answers" @click="height = 'half'">Answer</Button>
+            <Button v-if="height === 'bar'" variant="text" aria-label="Expand answers" @click="height = 'half'">Answer</Button>
             <template v-else>
-                <Button v-if="height === 'half'" aria-label="Expand answer panel" @click="height = 'full'">Expand</Button>
-                <Button v-else aria-label="Reduce answer panel" @click="height = 'half'">Reduce</Button>
-                <Button aria-label="Collapse answers" @click="height = 'bar'">Collapse</Button>
+                <IconButton v-if="height === 'half'" icon="expand" label="Expand answer panel" @click="height = 'full'" />
+                <IconButton v-else icon="collapse" label="Reduce answer panel" @click="height = 'half'" />
+                <IconButton icon="close" label="Collapse answers" @click="height = 'bar'" />
             </template>
         </header>
         <div v-if="height !== 'bar'" class="panel-content">
@@ -64,8 +65,8 @@ const preview = computed(() => buildAnswerMessage(props.set, answers.value))
             <p v-if="error" role="alert">{{ error }}</p>
             <p v-if="status" role="status">{{ status }}</p>
             <footer>
-                <Button v-if="step > 0" aria-label="Previous step" @click="step--">Back</Button>
-                <Button v-if="question" aria-label="Next step" @click="step++">Next</Button>
+                <Button v-if="step > 0" variant="text" aria-label="Previous step" @click="step--">Back</Button>
+                <Button v-if="question" variant="tonal" aria-label="Next step" @click="step++">Next</Button>
                 <Button v-else variant="primary" aria-label="Send answers" :disabled="!available || busy || answers.some(answer => !answer.value.trim())" @click="emit('send', preview)">Send</Button>
             </footer>
         </div>
@@ -73,9 +74,14 @@ const preview = computed(() => buildAnswerMessage(props.set, answers.value))
 </template>
 
 <style scoped>
-.answer-panel { background: var(--md-surface-container-low); color: var(--md-on-surface); border: 1px solid var(--md-outline-variant); border-radius: var(--md-shape-medium); overflow: hidden; }
+.answer-panel { display: flex; flex-direction: column; background: var(--md-surface-container-low); color: var(--md-on-surface); border: 1px solid var(--md-outline-variant); border-radius: var(--md-shape-medium); overflow: hidden; min-height: 0; }
 .panel-header, footer, .steps { display: flex; align-items: center; gap: var(--md-space-8); }
-.panel-header { justify-content: space-between; padding: var(--md-space-8); }
+.panel-header { flex: none; padding: var(--md-space-8); }
+.panel-header > strong { margin-right: auto; }
+.option input { accent-color: var(--md-primary); }
+.option strong { display: inline-block; padding: 0 var(--md-space-8); border: 1px solid var(--md-outline-variant); border-radius: var(--md-shape-small); font-size: var(--md-type-label-small-size); }
+.option span { overflow-wrap: anywhere; }
+[data-profile="eink"] .answer-panel { border-color: var(--md-on-surface); }
 .panel-content { overflow: auto; padding: var(--md-space-16); max-height: var(--md-layout-answer-half); }
 [data-height="full"] .panel-content { max-height: var(--md-layout-answer-full); }
 .steps { flex-wrap: wrap; }
