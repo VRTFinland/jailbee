@@ -156,7 +156,7 @@ const latestAnswer = computed(() => {
 
 const answerSources = computed(() => agentId.value !== null || loadedAnswerSession.value !== answerSessionKey.value ? [] :
     [...transcript.value?.entries ?? [], ...pending.value].flatMap(entry =>
-        entry.kind === "assistant" && typeof entry.text === "string" ? [{id: entry.id, text: entry.text}] : []))
+        entry.kind === "assistant" ? [{id: entry.id, text: entry.text ?? ""}] : []))
 const answerSets = useAnswerSets(
     () => ({prefix: prefix.value, agent: agent.value, session: sessionId.value}),
     () => answerSources.value,
