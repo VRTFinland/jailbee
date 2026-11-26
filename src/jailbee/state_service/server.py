@@ -52,6 +52,8 @@ TICK_SECONDS = 0.1
 # A client that cannot take a snapshot within this long is dropped, so one
 # wedged dashboard never stalls the others.
 DRAIN_TIMEOUT_SECONDS = 5.0
+# Larger than a worst-case escaped output tail, but bounded per action recipient.
+MAX_ACTION_BUFFER_BYTES = 1024 * 1024
 # How long a starting server waits for the previous one to let go of the
 # lifetime lock — the gap between that server unlinking its socket and exiting.
 LOCK_WAIT_SECONDS = 2.0
@@ -169,7 +171,8 @@ class StateServer:
                 if client.dashboard_id is not None:
                     for entry in self._actions.values():
                         if entry.origin == client.dashboard_id:
-                            writer.write(encode(entry))
+                            if not self._send_action(client, entry):
+                                return
                     await writer.drain()
                 if self._latest is not None:
                     writer.write(encode(self._latest))
@@ -204,13 +207,13 @@ class StateServer:
         from jailbee.dashboard.runner import popen_spawn, run_action
 
         if not client.dashboard_id or request.origin != client.dashboard_id:
-            client.writer.write(
-                encode(ActionRejected(request.entry_id, "dashboard identity mismatch"))
+            self._send_action(
+                client, ActionRejected(request.entry_id, "dashboard identity mismatch")
             )
             return
         if request.entry_id <= 0 or request.entry_id >= 2**63 or request.entry_id in self._actions:
-            client.writer.write(
-                encode(ActionRejected(request.entry_id, "invalid or duplicate action id"))
+            self._send_action(
+                client, ActionRejected(request.entry_id, "invalid or duplicate action id")
             )
             return
         entry = ActionEntry(
@@ -225,11 +228,11 @@ class StateServer:
             request.prefix,
         )
         self._actions[entry.entry_id] = entry
-        client.writer.write(encode(entry))
+        self._send_action(client, entry)
         loop = asyncio.get_running_loop()
 
         def send_output(chunk: str) -> None:
-            loop.call_soon_threadsafe(self._action_output, client, request.entry_id, chunk)
+            loop.call_soon_threadsafe(self._action_output, request.entry_id, chunk)
 
         def run() -> None:
             try:
@@ -253,13 +256,13 @@ class StateServer:
                 )
             except Exception as exc:
                 finish = ActionFinish(request.entry_id, error=str(exc))
-            loop.call_soon_threadsafe(self._action_finish, client, finish)
+            loop.call_soon_threadsafe(self._action_finish, finish)
 
         task = asyncio.create_task(asyncio.to_thread(run))
         self._action_tasks.add(task)
         task.add_done_callback(self._action_tasks.discard)
 
-    def _action_output(self, client: _Client, entry_id: int, chunk: str) -> None:
+    def _action_output(self, entry_id: int, chunk: str) -> None:
         from jailbee.dashboard.runner import OUTPUT_DROPPED_MARKER, OUTPUT_KEEP_CHARS
 
         entry = self._actions[entry_id]
@@ -267,11 +270,11 @@ class StateServer:
         if len(output) > OUTPUT_KEEP_CHARS:
             output = OUTPUT_DROPPED_MARKER + output[-OUTPUT_KEEP_CHARS:]
         self._actions[entry_id] = replace(entry, output=output)
-        for recipient in self._clients:
+        for recipient in list(self._clients):
             if recipient.dashboard_id == entry.origin:
-                recipient.writer.write(encode(ActionOutput(entry_id, chunk)))
+                self._send_action(recipient, ActionOutput(entry_id, chunk))
 
-    def _action_finish(self, client: _Client, finish: ActionFinish) -> None:
+    def _action_finish(self, finish: ActionFinish) -> None:
         self._actions[finish.entry_id] = replace(
             self._actions[finish.entry_id],
             finished=True,
@@ -281,9 +284,28 @@ class StateServer:
             cancelled=finish.cancelled,
             declined=finish.declined,
         )
-        for recipient in self._clients:
+        for recipient in list(self._clients):
             if recipient.dashboard_id == self._actions[finish.entry_id].origin:
-                recipient.writer.write(encode(finish))
+                self._send_action(recipient, finish)
+
+    def _send_action(
+        self, client: _Client, message: ActionEntry | ActionOutput | ActionFinish | ActionRejected
+    ) -> bool:
+        transport = client.writer.transport
+        if client not in self._clients or transport is None or transport.is_closing():
+            self._drop(client)
+            return False
+        line = encode(message)
+        if transport.get_write_buffer_size() + len(line) > MAX_ACTION_BUFFER_BYTES:
+            log.info("dropping action client that cannot keep up")
+            self._drop(client)
+            return False
+        try:
+            client.writer.write(line)
+        except (ConnectionError, OSError, RuntimeError):
+            self._drop(client)
+            return False
+        return True
 
     async def _broadcast(self, line: bytes) -> None:
         clients = list(self._clients)
