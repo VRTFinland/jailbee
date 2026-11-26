@@ -275,9 +275,15 @@ function typeStyle(token: string): Record<string, string> {
                     </div>
 
                     <div class="group">
-                        <h3 class="group-title">Answer panel</h3>
+                        <h3 class="group-title">Answer bar</h3>
                         <AnswerPanel :set="sampleQuestions" :available="true" />
+                    </div>
+                    <div class="group">
+                        <h3 class="group-title">Answer half</h3>
                         <AnswerPanel :set="sampleQuestions" :available="true" initial-height="half" />
+                    </div>
+                    <div class="group">
+                        <h3 class="group-title">Answer full</h3>
                         <AnswerPanel :set="sampleQuestions" :available="false" reason="Messaging is unavailable." initial-height="full" />
                     </div>
 
