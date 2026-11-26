@@ -144,7 +144,9 @@ watch([name, historyPage, historyQuery], async ([selected, page, query], previou
             <p v-if="!children.length" class="muted">No children.</p>
             <ul v-else>
                 <ListRow v-for="child in children" :key="child.name" wrap
-                    :to="{name: 'container', params: {name: child.name}}" :link-label="child.cells[0] || child.name">
+                    :to="{name: 'container', params: {name: child.name}}"
+                    :link-label="[child.cells[0] || child.name, child.child?.state ? `State: ${child.child.state}` : null,
+                        child.child?.runner ? `Runner: ${child.child.runner}` : null].filter(Boolean).join(' ')">
                     <template #title>{{ child.cells[0] || child.name }}</template>
                     <template #secondary>
                         State: {{ child.child?.state }}<template v-if="child.child?.runner"> · Runner: {{ child.child.runner }}</template>

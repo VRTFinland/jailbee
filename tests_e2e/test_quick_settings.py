@@ -100,9 +100,9 @@ def test_menu_context_paging_and_live_preferences(
     panel.get_by_role("switch", name="Show thinking").check()
     reveal_setting(page, "combobox", "Agent context")
     context = panel.get_by_role("combobox", name="Agent context")
-    context.select_option("collapsed")
     assert context.evaluate("""el => Math.abs(el.getBoundingClientRect().width
         - el.closest('.context-row').getBoundingClientRect().width) <= 1""")
+    context.select_option("collapsed")
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
     assert panel.evaluate("el => el.getBoundingClientRect().bottom <= innerHeight - 32")
     if profile == "eink":

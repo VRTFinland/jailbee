@@ -95,6 +95,8 @@ def test_settings_preserves_reader_and_live_updates(
     dialog = page.get_by_role("dialog", name="Settings", exact=True)
     box = dialog.bounding_box()
     assert box is not None
+    # The drawer supplies the inset; the embedded settings body adds none.
+    expect(dialog.locator(".settings-panel")).to_have_css("padding", "0px")
     if width == 390:
         assert box["y"] > 0 and box["width"] == width
     else:

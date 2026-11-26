@@ -229,7 +229,7 @@ describe("ContainerView", () => {
         ])
         expect(wrapper.get(".children").text()).toContain("working · Runner: codex/opus")
         const childLink = wrapper.get(".children a")
-        expect(childLink.attributes("aria-label")).toBe("task-a")
+        expect(childLink.attributes("aria-label")).toBe("task-a State: working Runner: codex/opus")
         expect(childLink.text()).toBe("task-a")
         expect(wrapper.get(".children li.list-row .list-row-secondary").text()).toContain("working · Runner: codex/opus")
         dashboard.state.view = {...orchestrationView(), repos: [{prefix: "alpha", containers: []}]}
