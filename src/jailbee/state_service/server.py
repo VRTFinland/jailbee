@@ -207,10 +207,14 @@ class StateServer:
         from jailbee.dashboard.runner import popen_spawn, run_action
 
         if not client.dashboard_id or request.origin != client.dashboard_id:
-            self._send_action(client, ActionRejected(request.entry_id, "dashboard identity mismatch"))
+            self._send_action(
+                client, ActionRejected(request.entry_id, "dashboard identity mismatch")
+            )
             return
         if request.entry_id <= 0 or request.entry_id >= 2**63 or request.entry_id in self._actions:
-            self._send_action(client, ActionRejected(request.entry_id, "invalid or duplicate action id"))
+            self._send_action(
+                client, ActionRejected(request.entry_id, "invalid or duplicate action id")
+            )
             return
         entry = ActionEntry(
             request.entry_id,
