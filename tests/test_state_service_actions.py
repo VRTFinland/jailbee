@@ -3,6 +3,7 @@
 import asyncio
 import os
 import threading
+import time
 
 import pytest
 
@@ -11,6 +12,170 @@ from jailbee.state_service.protocol import RunAction
 from jailbee.state_service.server import StateServer
 from tests.test_state_client import _until
 from tests.test_state_server import FakeGatherer, reap_servers, track_server  # noqa: F401
+
+
+def test_running_action_keeps_server_alive_until_idle_after_completion(runtime_dir, tmp_path):
+    from jailbee.state_service import paths
+
+    started = threading.Event()
+    finish = threading.Event()
+
+    class Child:
+        stdout = None
+
+        def __init__(self, sock):
+            sock.close()
+            started.set()
+
+        def wait(self):
+            finish.wait(3)
+            return 0
+
+        def kill(self):
+            finish.set()
+
+    paths.ensure_runtime_dir()
+    server = StateServer(FakeGatherer(), version="v1", idle_timeout=0.3,
+                         action_spawn=lambda *a, **kw: Child(kw["prompt_sock"]))
+    thread = threading.Thread(target=lambda: asyncio.run(server.serve(paths.socket_path())), daemon=True)
+    thread.start()
+    track_server(server, thread)
+    _until(paths.socket_path().exists)
+    client = StateClient(None, dashboard_id="one", version="v1", spawn=lambda: None, backoff=(0.05,))
+    client.start()
+    client.wait_first_snapshot(3)
+    try:
+        client.run_action(RunAction(42, ["ls"], str(tmp_path), "t", False, "one", "none", str(tmp_path), "repo"))
+        assert started.wait(2)
+        client.close()
+        time.sleep(0.6)
+        assert thread.is_alive()
+        finish.set()
+        time.sleep(0.1)
+        assert thread.is_alive()
+        thread.join(2)
+        assert not thread.is_alive()
+    finally:
+        finish.set()
+        client.close()
+
+
+def test_question_survives_last_disconnect(runtime_dir, tmp_path):
+    from jailbee.prompt_channel import CommandEnd, Prompt
+    from jailbee.state_service import paths
+
+    answers = []
+
+    class Child:
+        stdout = None
+
+        def __init__(self, sock):
+            def ask():
+                command = CommandEnd(sock)
+                answers.append(command.ask(lambda n: Prompt(n, "confirm", "Proceed?")))
+                command.close()
+            self.thread = threading.Thread(target=ask)
+            self.thread.start()
+
+        def wait(self):
+            self.thread.join(timeout=3)
+            return 0
+
+        def kill(self):
+            pass
+
+    paths.ensure_runtime_dir()
+    server = StateServer(FakeGatherer(), version="v1", idle_timeout=0.3,
+                         action_spawn=lambda *a, **kw: Child(kw["prompt_sock"]))
+    thread = threading.Thread(target=lambda: asyncio.run(server.serve(paths.socket_path())), daemon=True)
+    thread.start()
+    track_server(server, thread)
+    _until(paths.socket_path().exists)
+    first = StateClient(None, dashboard_id="one", version="v1", spawn=lambda: None, backoff=(0.05,))
+    first.start()
+    first.wait_first_snapshot(3)
+    first.run_action(RunAction(43, ["ls"], str(tmp_path), "t", False, "one", "none", str(tmp_path), "repo"))
+    _until(lambda: 43 in first.action_questions())
+    first.close()
+    time.sleep(0.6)
+    assert thread.is_alive()
+    second = StateClient(None, dashboard_id="two", version="v1", spawn=lambda: None, backoff=(0.05,))
+    second.start()
+    try:
+        second.wait_first_snapshot(3)
+        _until(lambda: 43 in second.action_questions())
+        second.answer_action_question(43, second.action_questions()[43].question_id, True)
+        _until(lambda: bool(answers))
+        assert answers[0].value is True
+    finally:
+        second.close()
+
+
+def test_shutdown_kills_verbose_child_and_persists_interrupted(runtime_dir, tmp_path):
+    from sqlalchemy import create_engine
+
+    from jailbee.db import _ensure_schema
+    from jailbee.db.actions import load
+    from jailbee.prompt_channel import CommandEnd, Prompt
+    from jailbee.state_service import paths
+    from jailbee.state_service.protocol import Shutdown
+    from tests.test_state_server import Conn
+
+    children = []
+
+    class Child:
+        def __init__(self, sock):
+            self.sock = sock
+            self.stopped = threading.Event()
+            read, self.write = os.pipe()
+            self.stdout = os.fdopen(read, "rb")
+            def work():
+                try:
+                    os.write(self.write, b"x" * 4096)
+                    command = CommandEnd(sock)
+                    command.ask(lambda n: Prompt(n, "confirm", "Proceed?"))
+                    command.close()
+                except (OSError, EOFError):
+                    pass
+                finally:
+                    os.close(self.write)
+                    self.stopped.set()
+            self.thread = threading.Thread(target=work)
+            self.thread.start()
+            children.append(self)
+
+        def wait(self):
+            self.thread.join(3)
+            return -9
+
+        def kill(self):
+            self.sock.shutdown(2)
+
+    paths.ensure_runtime_dir()
+    engine = create_engine(f"sqlite:///{tmp_path / 'state.db'}")
+    _ensure_schema(engine)
+    server = StateServer(FakeGatherer(), version="v1", engine=engine,
+                         action_spawn=lambda *a, **kw: Child(kw["prompt_sock"]))
+    thread = threading.Thread(target=lambda: asyncio.run(server.serve(paths.socket_path())), daemon=True)
+    thread.start()
+    track_server(server, thread)
+    _until(paths.socket_path().exists)
+    client = StateClient(None, dashboard_id="one", version="v1", spawn=lambda: None, backoff=(0.05,))
+    client.start()
+    client.wait_first_snapshot(3)
+    try:
+        client.run_action(RunAction(44, ["ls"], str(tmp_path), "t", False, "one", "none", str(tmp_path), "repo"))
+        _until(lambda: 44 in client.action_questions())
+        conn = Conn(paths.socket_path(), version="v0")
+        conn.send(Shutdown())
+        thread.join(4)
+        assert not thread.is_alive()
+        assert children[0].stopped.is_set()
+        assert load(engine)[0].state == "interrupted"
+        conn.sock.close()
+    finally:
+        client.close()
+        engine.dispose()
 
 
 def test_action_streams_output_and_result(runtime_dir, tmp_path):

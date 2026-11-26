@@ -57,6 +57,48 @@ class ChildProcess(Protocol):
     def kill(self) -> None: ...
 
 
+class ActionCancellation:
+    """Thread-safe force-stop handle for a running action."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._cancelled = False
+        self._child: ChildProcess | None = None
+        self._socket: socket.socket | None = None
+
+    @property
+    def cancelled(self) -> bool:
+        with self._lock:
+            return self._cancelled
+
+    def attach(self, child: ChildProcess, sock: socket.socket) -> None:
+        with self._lock:
+            self._child, self._socket = child, sock
+            if self._cancelled:
+                self._stop()
+
+    def cancel(self) -> None:
+        with self._lock:
+            self._cancelled = True
+            self._stop()
+
+    def detach(self) -> None:
+        with self._lock:
+            self._child, self._socket = None, None
+
+    def _stop(self) -> None:
+        if self._child is not None:
+            try:
+                self._child.kill()
+            except (OSError, ProcessLookupError):
+                pass
+        if self._socket is not None:
+            try:
+                self._socket.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+
+
 # spawn(argv, cwd=, env=, prompt_sock=) -> child. The spawner owns `prompt_sock`
 # (the child's end of the channel) from the call on and must close this
 # process's copy once the child has its own.
@@ -337,6 +379,7 @@ def run_action(
     spawn: Spawner = popen_spawn,
     audit: AuditSink | None = None,
     on_disconnect: Callable[[], None] | None = None,
+    cancellation: ActionCancellation | None = None,
 ) -> RunResult:
     """Run ``jailbee <argv>`` and return how it ended; blocks until it exits.
 
@@ -394,6 +437,8 @@ def run_action(
         record("error")
         return RunResult(error=str(exc))
 
+    if cancellation is not None:
+        cancellation.attach(child, ui_sock)
     reader = threading.Thread(target=_pump, args=(child, on_output), daemon=True)
     reader.start()
     ui = UiEnd(ui_sock)
@@ -442,19 +487,25 @@ def run_action(
     except ConnectionAbortedError:
         ui.close()
         status = child.wait()
-        reader.join()
+        reader.join(timeout=2)
+        if cancellation is not None:
+            cancellation.detach()
         record(f"exit:{status}")
         return RunResult(status=status or 1, cancelled=True)
     except BaseException:
         child.kill()
         child.wait()
-        reader.join()
+        reader.join(timeout=2)
         ui.close()
+        if cancellation is not None:
+            cancellation.detach()
         record("error")
         raise
     ui.close()
     status = child.wait()
-    reader.join()
+    reader.join(timeout=2)
+    if cancellation is not None:
+        cancellation.detach()
     record(f"exit:{status}")
     return RunResult(status=status, cancelled=cancelled, declined=declined)
 
