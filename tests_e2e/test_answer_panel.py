@@ -186,15 +186,17 @@ def test_answers_share_composer_send_gate_and_confirm_in_transcript(
     composer = page.get_by_role("textbox", name="Message agent")
     composer.fill("Keep my free-text draft")
     panel.get_by_role("button", name="Send answers").click()
-    expect(panel.get_by_role("status")).to_have_text("Waiting for transcript")
+    expect(page.locator(".agent-composer").get_by_role("status")).to_have_text(
+        "Waiting for transcript"
+    )
     expect(composer).to_be_disabled()
-    expect(panel.get_by_role("button", name="Send answers")).to_be_disabled()
+    expect(panel).to_have_count(0)
     assert incus.exec_with_input.call_count == 1
     assert incus.exec_with_input.call_args.args[2] == message
     with transcript.open("a") as stream:
         stream.write(record(3, "user", message))
     server.watches.open[-1].fire()
-    expect(panel.get_by_role("status")).to_have_text("Delivered")
+    expect(page.locator(".agent-composer").get_by_role("status")).to_have_text("Delivered")
     expect(composer).to_be_enabled()
     expect(composer).to_have_value("Keep my free-text draft")
     if profile == "eink":
@@ -202,8 +204,11 @@ def test_answers_share_composer_send_gate_and_confirm_in_transcript(
     expect(page.locator(".entry.user").last).to_contain_text(message)
     composer.fill("From composer")
     page.get_by_role("button", name="Send message").click()
-    expect(panel.get_by_role("button", name="Send answers")).to_be_disabled()
+    expect(panel).to_have_count(0)
     wait_until(lambda: incus.exec_with_input.call_count == 2)
+    page.reload()
+    expect(page.get_by_role("textbox", name="Message agent")).to_be_enabled()
+    expect(panel).to_have_count(0)
 
 
 @pytest.mark.parametrize("profile", ["normal", "eink"])
@@ -245,8 +250,17 @@ def test_panel_refusal_keeps_answers_and_latest_message_controls_scope(
         expect(
             page.get_by_text("A newer plain answer; no question set.", exact=True)
         ).to_be_attached()
+    expect(panel.get_by_role("status")).to_contain_text("A newer message arrived")
+    expect(panel.locator("pre")).to_contain_text("Q1: Keep this answer")
+    page.reload()
+    panel.get_by_role("button", name="Expand answers", exact=True).click()
+    panel.get_by_role("button", name="Summary", exact=True).click()
+    expect(panel.locator("pre")).to_contain_text("Q1: Keep this answer")
+    panel.get_by_role("button", name="Discard answers").click()
     expect(panel).to_have_count(0)
+    page.reload()
     expect(page.get_by_role("textbox", name="Message agent")).to_be_visible()
+    expect(panel).to_have_count(0)
 
 
 @pytest.mark.parametrize("latest", ["No questions in this answer.", "❓ **Q99** wrong format"])
@@ -279,3 +293,60 @@ def test_question_jump_handles_markdown_soft_breaks(
     panel.get_by_role("button", name="Show in conversation").click()
     expect(page.locator(".question-highlight")).to_have_text("❓ Q1 - Owner: Who?")
     expect(page.locator(".question-highlight")).to_be_in_viewport()
+
+
+@pytest.mark.parametrize("profile", ["normal", "eink"])
+def test_drafts_restore_switch_newer_sets_and_send_old_source(
+    page: Page,
+    make_server: Callable[..., E2EServer],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    profile: str,
+) -> None:
+    page.set_viewport_size({"width": 390, "height": 800})
+    server, transcript, incus = open_questions(
+        page, make_server, tmp_path, monkeypatch, profile=profile
+    )
+    panel = page.get_by_role("complementary", name="Answer questions")
+    panel.get_by_role("button", name="Expand answers", exact=True).click()
+    panel.get_by_role("radio", name="b) All at once", exact=True).check()
+    panel.get_by_role("textbox", name="Optional note").fill("original draft")
+    panel.get_by_role("button", name="Question 1", exact=True).click()
+    panel.get_by_role("textbox", name="Answer", exact=True).fill("Old owner")
+    page.reload()
+    panel.get_by_role("button", name="Expand answers", exact=True).click()
+    expect(panel.get_by_role("radio", name="b) All at once", exact=True)).to_be_checked()
+    expect(panel.get_by_role("textbox", name="Optional note")).to_have_value("original draft")
+    wait_until(lambda: len(server.watches.open) == 1)
+    with transcript.open("a") as stream:
+        stream.write(record(3, "assistant", "❓ **Q20** - **New owner**: Name a team."))
+    server.watches.open[-1].fire()
+    expect(panel.get_by_role("status")).to_contain_text("A newer message arrived")
+    expect(panel.get_by_role("heading", name="Q12: Deployment")).to_be_visible()
+    panel.get_by_role("combobox", name="Question set").select_option("entry-3:0")
+    panel.get_by_role("button", name="Expand answers", exact=True).click()
+    expect(panel.get_by_role("heading", name="Q20: New owner")).to_be_visible()
+    panel.get_by_role("textbox", name="Answer", exact=True).fill("New owner")
+    panel.get_by_role("button", name="Show in conversation").click()
+    expect(page.locator(".question-highlight")).to_contain_text("Name a team.")
+    panel.get_by_role("combobox", name="Question set").select_option("entry-2:0")
+    panel.get_by_role("button", name="Expand answers", exact=True).click()
+    panel.get_by_role("button", name="Summary", exact=True).click()
+    expect(panel.locator("pre")).to_contain_text("Q1: Old owner")
+    panel.get_by_role("button", name="Send answers").click()
+    expect(page.locator(".agent-composer").get_by_role("status")).to_have_text(
+        "Waiting for transcript"
+    )
+    assert incus.exec_with_input.call_args.args[2] == "Q12: b – original draft\nQ1: Old owner"  # noqa: RUF001 - Spec separator.
+    panel.get_by_role("button", name="Expand answers", exact=True).click()
+    expect(panel.get_by_role("heading", name="Q20: New owner")).to_be_visible()
+    expect(panel.get_by_role("textbox", name="Answer", exact=True)).to_have_value("New owner")
+    page.reload()
+    panel.get_by_role("button", name="Expand answers", exact=True).click()
+    expect(panel.get_by_role("heading", name="Q20: New owner")).to_be_visible()
+    expect(panel.get_by_role("combobox", name="Question set")).to_have_count(0)
+    panel.get_by_role("button", name="Discard answers").click()
+    expect(panel).to_have_count(0)
+    page.reload()
+    expect(page.get_by_role("textbox", name="Message agent")).to_be_enabled()
+    expect(panel).to_have_count(0)

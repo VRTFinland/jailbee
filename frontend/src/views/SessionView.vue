@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import Button from "../components/ui/Button.vue"
 import AnswerPanel from "../components/ui/AnswerPanel.vue"
-import {parseQuestionSet} from "../questions"
+import Select from "../components/ui/Select.vue"
+import {useAnswerSets} from "../composables/useAnswerSets"
 import AgentComposer from "../components/AgentComposer.vue"
 import TranscriptEntry from "../components/ui/TranscriptEntry.vue"
 import TitleBar from "../components/TitleBar.vue"
@@ -93,6 +94,8 @@ const sessionRef = computed(() => ({
 }))
 
 const transcript = ref<TranscriptView | null>(null)
+const answerSessionKey = computed(() => JSON.stringify([prefix.value, agent.value, sessionId.value, agentId.value]))
+const loadedAnswerSession = ref("")
 const error = ref<string | null>(null)
 const chat = useAgentChat(
     () => !!transcript.value?.chat?.available && agentId.value === null,
@@ -151,15 +154,30 @@ const latestAnswer = computed(() => {
     return null
 })
 
-const answerSource = computed(() => [...transcript.value?.entries ?? []].reverse().find(e => e.kind === "assistant"))
-const pendingAssistant = computed(() => pending.value.some(e => e.kind === "assistant"))
-const answerSet = computed(() => {
-    const entry = answerSource.value
-    // E-ink holds new document entries until explicitly revealed. Do not offer
-    // an older set as the latest while a newer assistant reply waits there.
-    return agentId.value === null && !pendingAssistant.value &&
-        entry?.kind === "assistant" && entry.text ? parseQuestionSet(entry.text) : null
-})
+const answerSources = computed(() => agentId.value !== null || loadedAnswerSession.value !== answerSessionKey.value ? [] :
+    [...transcript.value?.entries ?? [], ...pending.value].flatMap(entry =>
+        entry.kind === "assistant" ? [{id: entry.id, text: entry.text ?? ""}] : []))
+const answerSets = useAnswerSets(
+    () => ({prefix: prefix.value, agent: agent.value, session: sessionId.value}),
+    () => answerSources.value,
+)
+const {selected: answerSource, hasNewer: newerAnswerMessage} = answerSets
+const answerSet = computed(() => agentId.value === null && loadedAnswerSession.value === answerSessionKey.value ? answerSource.value?.set ?? null : null)
+const answerSetOptions = computed(() => answerSets.sets.value.map(item => ({
+    value: item.id,
+    label: `${item.set.questions.map(question => `Q${question.number}`).join(", ")}${item.id === answerSources.value.at(-1)?.id ? ' · Latest' : ''}`,
+})))
+async function selectAnswerSet(id: string) {
+    // Choosing a set is an explicit request to reveal its source, even when
+    // e-ink has deferred the new transcript entries.
+    if (pending.value.some(entry => entry.id === id)) await applyPending()
+    answerSets.select(id)
+}
+async function sendAnswers(text: string) {
+    const id = answerSource.value?.id
+    const sourceSession = answerSessionKey.value
+    if (id && await sendMessage(text) && sourceSession === answerSessionKey.value) answerSets.dismiss(id)
+}
 const panelEl = ref<InstanceType<typeof AnswerPanel> | null>(null)
 let highlighted: HTMLElement[] = []
 function clearQuestionHighlight() {
@@ -168,6 +186,7 @@ function clearQuestionHighlight() {
 }
 async function showQuestion(index: number) {
     const source = answerSource.value
+    if (source && pending.value.some(entry => entry.id === source.id)) await applyPending()
     const set = answerSet.value
     const question = set?.questions[index]
     if (!source || !question || !set) return
@@ -502,12 +521,13 @@ async function expandMeta(id: string, event: Event) {
 
 async function load() {
     chat.reset()
+    const sourceSession = answerSessionKey.value
     try {
         const mode = settings.agentContext
         const view = await apiFetch<TranscriptView>(
             `/api/repos/${transcriptPath.value}?meta=${mode}`,
         )
-        if (mode !== settings.agentContext) return // the setting changed meanwhile: a newer load runs
+        if (mode !== settings.agentContext || sourceSession !== answerSessionKey.value) return // superseded load
         unfollow?.()
         unfollow = null
         loadedContent.value = {}
@@ -515,6 +535,7 @@ async function load() {
         pending.value = []
         unseen.value = null
         transcript.value = view
+        loadedAnswerSession.value = sourceSession
         startFollowing(view)
         await nextTick()
         if (composerEl.value?.$el) layoutObserver?.observe(composerEl.value.$el as Element)
@@ -661,10 +682,18 @@ watch(
                         </TranscriptEntry>
                     </template>
                 </article>
-                <AnswerPanel v-if="answerSet" :key="answerSource?.id" ref="panelEl" class="answer-panel-layout"
-                    :set="answerSet" :available="transcript.chat?.available ?? false" :busy="sending || awaiting"
+                <AnswerPanel v-if="answerSet && answerSource" :key="answerSource.id" ref="panelEl" class="answer-panel-layout"
+                    :set="answerSet" :answers="answerSource.answers" :available="transcript.chat?.available ?? false" :busy="sending || awaiting"
                     :reason="transcript.chat?.message || 'Messaging is unavailable.'" :error="sendError" :status="sendStatus"
-                    @send="sendMessage" @show="showQuestion" />
+                    @update:answers="answerSets.updateAnswers" @send="sendAnswers" @show="showQuestion">
+                    <template #sets>
+                        <p v-if="newerAnswerMessage" role="status" class="ui-notice">A newer message arrived. These answers still belong to their original questions.</p>
+                        <Select v-if="answerSetOptions.length > 1" label="Question set" native :model-value="answerSource.id" :options="answerSetOptions" :disabled="sending || awaiting" @update:model-value="selectAnswerSet" />
+                    </template>
+                    <template #draft-actions>
+                        <Button variant="text" :disabled="sending || awaiting" @click="answerSets.dismiss(answerSource.id)">Discard answers</Button>
+                    </template>
+                </AnswerPanel>
                 <AgentComposer v-if="agentId === null" v-model:draft="draft" ref="composerEl" class="agent-composer"
                     :class="{'beside-nav': eink && settings.pageControls !== 'bar'}"
                     :available="transcript.chat?.available ?? false"
