@@ -78,6 +78,11 @@ watch(() => settings.pageControls, async () => {
     outline-offset: -1px;
 }
 .page-nav[data-mode="side"] .page-indicator { flex: none; }
+.page-nav[data-mode="side"] span.page-indicator {
+    width: 100%;
+    height: var(--md-target-min);
+    border-block: 1px solid var(--md-outline-variant);
+}
 .page-nav[data-mode="bar"] {
     left: 0;
     right: 0;
@@ -92,7 +97,7 @@ watch(() => settings.pageControls, async () => {
     top: 0;
     bottom: calc(var(--guard-bottom) + var(--page-nav-height));
     width: 8vw;
-    z-index: var(--md-layer-raised);
+    z-index: calc(var(--md-layer-raised) - 1);
     padding: 0;
     background: none;
     border: none;

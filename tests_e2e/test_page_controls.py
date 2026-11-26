@@ -72,7 +72,8 @@ def test_page_controls_preserve_readable_height_keys_taps_and_jump_clearance(
     for button in nav.locator("button:not(:disabled)").all():
         assert button.evaluate("""el => {
             const r = el.getBoundingClientRect();
-            const target = Number.parseFloat(getComputedStyle(el).getPropertyValue('--md-target-min'));
+            const size = getComputedStyle(el).getPropertyValue('--md-target-min');
+            const target = Number.parseFloat(size);
             return el.contains(document.elementFromPoint(r.x + r.width / 2, r.bottom - target + 1));
         }""")
 
@@ -108,6 +109,10 @@ def test_page_controls_preserve_readable_height_keys_taps_and_jump_clearance(
     def assert_jump_clear(selector: str) -> None:
         button = page.locator(selector)
         expect(button).to_be_visible()
+        assert button.evaluate("""el => {
+            const r = el.getBoundingClientRect();
+            return el.contains(document.elementFromPoint(r.right - 4, r.y + r.height / 2));
+        }""")
         assert button.evaluate(
             """el => {
                 const a = el.getBoundingClientRect();
@@ -139,6 +144,19 @@ def test_page_control_choice_is_available_in_settings_and_survives_reload(
         control.select_option(value)
         page.reload()
         expect(control).to_have_value(value)
+
+
+def test_non_reader_side_controls_keep_the_same_geometry(server: E2EServer, logged_in: Page) -> None:
+    page = logged_in
+    page.evaluate("""() => {
+        localStorage.setItem('jailbee.displayProfile', 'eink');
+        localStorage.setItem('jailbee.pageControls', 'side');
+    }""")
+    page.reload()
+    nav = page.get_by_role("navigation", name="Pages", exact=True)
+    expect(nav).to_be_visible()
+    box = nav.bounding_box()
+    assert box is not None and box["height"] == 132
 
 
 def test_normal_profile_does_not_render_page_controls(

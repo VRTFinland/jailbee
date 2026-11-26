@@ -26,7 +26,7 @@ onBeforeUnmount(() => restoreFocus())
             <Button variant="text" icon="start" @click="emit('select', 'start')">Start</Button>
             <Button variant="text" icon="page-down" @click="emit('select', 'latest')">Latest answer</Button>
             <Button variant="text" icon="end" @click="emit('select', 'end')">End</Button>
-            <Button v-for="prompt in prompts" :key="prompt.id" variant="text"
+            <Button v-for="prompt in prompts" :key="prompt.id" variant="text" truncate
                 @click="emit('select', `entry:${prompt.id}`)">{{ prompt.text }}</Button>
         </div>
     </Dialog>

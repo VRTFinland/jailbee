@@ -267,6 +267,8 @@ function typeStyle(token: string): Record<string, string> {
                         <TranscriptEntry>I'll update the reader and run the suite.</TranscriptEntry>
                         <TranscriptEntry kind="user" meta>Agent context</TranscriptEntry>
                         <TranscriptEntry kind="thinking">Considering the next step.</TranscriptEntry>
+                        <TranscriptEntry kind="orphan">An unattached tool result.</TranscriptEntry>
+                        <Button variant="text" truncate>A long prompt excerpt that stays on one line instead of expanding the jump navigation</Button>
                         <Disclosure label="Bash: make web-e2e" />
                         <Disclosure label="Bash: failed command" error />
                         <Disclosure label="Bash: expanded command" :open="true" />
