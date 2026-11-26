@@ -393,6 +393,37 @@ def test_restart_refuses_while_a_supervisor_is_live(tmp_path, mocker) -> None:
     boot.assert_not_called()
 
 
+@pytest.mark.parametrize("background", ["--background", "--no-background"])
+def test_restart_refuses_while_a_stop_job_is_live(tmp_path, mocker, background) -> None:
+    from jailbee.db.models import JOB_STOP
+
+    _setup(tmp_path, mocker)
+    boot = _restart_env(mocker)
+    spawn = mocker.patch("jailbee.cli._spawn_boot_worker")
+    _insert_job(os.getpid(), "stopping", str(tmp_path / "x.log"), kind=JOB_STOP)
+
+    result = runner.invoke(app, ["restart", "feat-a", background])
+
+    assert result.exit_code == 1, _out(result)
+    assert "stop operation is still running" in _out(result)
+    boot.assert_not_called()
+    spawn.assert_not_called()
+
+
+def test_restart_proceeds_when_the_stop_worker_is_gone(tmp_path, mocker) -> None:
+    from jailbee.db.models import JOB_STOP
+
+    _setup(tmp_path, mocker)
+    boot = _restart_env(mocker)
+    _insert_job(DEAD_PID, "stopping", str(tmp_path / "x.log"), kind=JOB_STOP)
+    mocker.patch("jailbee.background.worker_alive", return_value=False)
+
+    result = runner.invoke(app, ["restart", "feat-a", "--no-background"])
+
+    assert result.exit_code == 0, _out(result)
+    boot.assert_called_once()
+
+
 def test_restart_proceeds_when_the_autostart_worker_is_gone(tmp_path, mocker) -> None:
     """Mutation: guard on "an autostart row exists" and this fails."""
     _setup(tmp_path, mocker)

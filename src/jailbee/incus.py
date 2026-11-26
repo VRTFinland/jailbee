@@ -32,6 +32,11 @@ class IncusError(Exception):
     """Raised when an `incus` CLI invocation fails."""
 
 
+def is_busy_operation(exc: IncusError) -> bool:
+    """Whether Incus rejected a request because an instance operation owns it."""
+    return re.search(r'Instance is busy running a "[^"]+" operation', str(exc)) is not None
+
+
 class IncusTimeoutError(IncusError):
     """Raised when an `incus` CLI invocation exceeded its ``timeout``.
 
@@ -389,6 +394,48 @@ class Incus:
         # Unreachable: the loop either returns or raises on the final attempt.
         raise AssertionError("unreachable")
 
+    def _run_retrying_on_busy(
+        self,
+        args: list[str],
+        *,
+        budget: float = 120,
+        stopped_ok: bool = False,
+    ) -> subprocess.CompletedProcess[str]:
+        """Wait out an instance operation, never extending the caller's deadline.
+
+        Only a rejected busy request is replayed; errors after an accepted
+        operation (including a shutdown timeout) are not retried.
+        """
+        deadline = time.monotonic() + budget
+        if self._deadline is not None:
+            deadline = min(deadline, self._deadline)
+        runner = self
+        busy_error: IncusError | None = None
+        while True:
+            try:
+                return runner._run_retrying_on_etag(args)
+            except IncusError as exc:
+                if busy_error is not None and isinstance(exc, IncusTimeoutError):
+                    raise IncusError(
+                        f"Instance is still busy after waiting up to {budget:g}s: "
+                        f"{busy_error}; {exc}"
+                    ) from exc
+                if stopped_ok and "The instance is already stopped" in str(exc):
+                    return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+                if not is_busy_operation(exc):
+                    raise
+                busy_error = exc
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise IncusError(
+                        f"Instance is still busy after waiting up to {budget:g}s: {exc}"
+                    ) from exc
+                runner = self.with_deadline(deadline)
+                # Sleep is capped by the same deadline above. Let the next
+                # attempt report expiry inside the try block, retaining busy
+                # context even when the deadline passes just before sleep.
+                time.sleep(min(1.0, remaining))
+
     # ---- Client version -----------------------------------------------------
 
     # `incus --version` prints the client version and nothing else (e.g. `7.3`).
@@ -562,7 +609,7 @@ class Incus:
         self._run(["rename", old, new])
 
     def start(self, name: str) -> None:
-        self._run(["start", name])
+        self._run_retrying_on_busy(["start", name])
 
     def stop(self, name: str, force: bool = False, timeout: int | None = None) -> None:
         """Stop a container; ``timeout`` bounds the clean shutdown, in seconds.
@@ -583,7 +630,11 @@ class Incus:
             args.append("--force")
         elif timeout is not None:
             args += ["--timeout", str(timeout)]
-        self._run(args)
+        self._run_retrying_on_busy(
+            args,
+            budget=min(timeout, 120) if timeout is not None and not force else 120,
+            stopped_ok=True,
+        )
 
     def delete(self, name: str, force: bool = False) -> None:
         args = ["delete", name]
@@ -1193,7 +1244,7 @@ class Incus:
         args = ["config", "device", "add", name, device_name, device_type]
         for k, v in properties.items():
             args.append(f"{k}={v}")
-        self._run_retrying_on_etag(args)
+        self._run_retrying_on_busy(args)
 
     def config_device_override(
         self,
@@ -1241,27 +1292,16 @@ class Incus:
         if project is not None:
             args += ["--project", project]
         if missing_ok:
-            # `_run_retrying_on_etag(args)`, not `_run(args, check=False)`: a
-            # container that just booted churns `volatile.*` keys, which can
-            # bounce this removal off a transient ETag mismatch. Swallowing
-            # that immediately — as a bare `check=False` would — leaves the
-            # device in place while the caller believes teardown succeeded.
-            # Retry the transient case first; only a genuine failure (no such
-            # local device, or the ETag race never resolves) is swallowed.
-            #
-            # Passing `check=False` down into `_run_retrying_on_etag` would
-            # defeat this: `_run` only raises `IncusError` on a bad exit code
-            # when `check=True`, so with `check=False` the retry loop's
-            # `except IncusError` would never fire and an ETag race would go
-            # unretried — the same bug this replaces. So this calls it with
-            # its default `check=True` and catches the resulting
-            # `IncusError` here instead.
+            # Keep check=True so busy/ETag failures are retried before the
+            # legacy best-effort removal suppresses other failures. Busy
+            # expiry is never success: the device may still be attached.
             try:
-                self._run_retrying_on_etag(args)
-            except IncusError:
-                pass
+                self._run_retrying_on_busy(args)
+            except IncusError as exc:
+                if is_busy_operation(exc):
+                    raise
             return
-        self._run_retrying_on_etag(args)
+        self._run_retrying_on_busy(args)
 
     def current_project(self) -> str:
         """Return the CLI's active project (including environment overrides)."""

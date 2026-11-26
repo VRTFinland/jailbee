@@ -104,6 +104,33 @@ def test_gpg_disabled_skips_all_gpg_devices(mocker):
     assert not any(c.args[1].startswith("gpg-") for c in incus.config_device_add.call_args_list)
 
 
+def test_detach_survives_a_busy_device_remove(mocker):
+    import subprocess
+
+    from jailbee.incus import Incus
+
+    mocker.patch("jailbee.incus.time.sleep")
+    removed = []
+    busy = True
+
+    def run(args, **kwargs):
+        nonlocal busy
+        if args[1:4] == ["config", "device", "remove"]:
+            if busy:
+                busy = False
+                return subprocess.CompletedProcess(
+                    args, 1, "", 'Error: Instance is busy running a "stop" operation'
+                )
+            removed.append(args[5])
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    mocker.patch("jailbee.incus.subprocess.run", side_effect=run)
+
+    detach_runtime_devices(_cfg(), Incus(), "test")
+
+    assert removed == list(DETACHED_DEVICES)
+
+
 def test_detach_removes_gpg_extra_devices():
     incus = MagicMock()
     detach_runtime_devices(_cfg(), incus, "test")

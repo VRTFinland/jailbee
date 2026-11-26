@@ -526,6 +526,12 @@ before editing `## Unreleased`.
 
 ### Fixed
 
+- Container restarts stop successfully before detaching runtime sockets, so a
+  failed or still-running shutdown no longer strands a running container's GUI
+  or fails immediately on Incus's "busy running a stop operation" error.
+  Conflicting instance operations get a bounded retry, a stuck stop includes
+  diagnostics and a `--force` hint, and restart refuses while a live JailBee
+  stop job is running.
 - A newly spawned child's creating row appears beneath its orchestrator from the
   first dashboard refresh, rather than moving there after the instance appears
   ([#146](https://github.com/VRTFinland/jailbee/issues/146)).

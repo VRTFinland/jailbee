@@ -3219,8 +3219,9 @@ def boot_container(
     `jailbee restart` (``restart=True``), foreground and background alike,
     so all four share one ordering.
 
-    Detach happens *before* the boot so the four /run/user/<uid>/* socket
-    devices don't race with logind's tmpfs creation on next boot. Attach
+    Detach happens after a successful stop and *before* the boot so the
+    /run/user/<uid>/* socket devices don't race with logind's tmpfs creation
+    on next boot, or mutate a container still shutting down. Attach
     happens after the boot returns, by which time PID 1 + logind are
     running. See the runtime_mounts module docstring.
 
@@ -3282,6 +3283,17 @@ def boot_container(
             f"missing and could not be created: {', '.join(str(p) for p in missing)}"
         )
 
+    if (restart and state == "Running") or state == "Stopping":
+        # Finish shutdown before any device edits (including metadata mounts).
+        # No force fallback: this container holds the user's work. Incus.stop
+        # also accepts an in-flight stop finishing while it waits out "busy".
+        from jailbee.agent_resume import capture
+
+        if state == "Running":
+            capture(cfg, incus, name)
+        stop_container(incus, name, label=short_name(cfg, name))
+        state = "Stopped"
+
     from jailbee.container_bindings import sync as sync_pr_bindings
 
     sync_pr_bindings(incus, name, cfg=cfg)
@@ -3293,22 +3305,6 @@ def boot_container(
     allocate_startup(cfg, incus, name)
 
     detach_runtime_devices(cfg, incus, name)
-    if restart and state == "Running":
-        # A stop plus a start rather than `incus restart`, which has no way
-        # to bound the clean shutdown: incusd waits its silent 600s default
-        # and then fails with "context deadline exceeded". `stop_container`
-        # gives up sooner and says what is holding the container up. No
-        # force fallback — this container holds the user's work.
-        from jailbee.agent_resume import capture
-
-        capture(cfg, incus, name)
-        try:
-            stop_container(incus, name, label=short_name(cfg, name))
-        except IncusError:
-            # Still running: put back the devices the reboot was going to
-            # re-create, so a failed restart does not also strand the GUI.
-            attach_runtime_devices(cfg, incus, name)
-            raise
     if not (ensure_running and state == "Running" and not restart):
         incus.start(name)
     # Clear a failed-refresh guard only after the repaired disk is mounted.
