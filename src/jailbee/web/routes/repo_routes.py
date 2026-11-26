@@ -107,8 +107,11 @@ async def _transcript_view(
             entries=render_entries(found.entries, ctx.render_cache, meta),
             offset=found.offset,
             chat=(
-                ChatAvailability(available=False, code="unsupported_agent", message="Subagent chat unavailable")
-                if subagent else chat.availability(ctx, prefix, found.agent, found.info.session_id)
+                ChatAvailability(
+                    available=False, code="unsupported_agent", message="Subagent chat unavailable"
+                )
+                if subagent
+                else chat.availability(ctx, prefix, found.agent, found.info.session_id)
             ),
         )
 

@@ -911,7 +911,10 @@ def test_subagent_transcript_never_advertises_parent_chat(client, home, monkeypa
     from jailbee.web.protocol import ChatAvailability
 
     _subagent_session(home)
-    monkeypatch.setattr("jailbee.web.chat.availability", lambda *args: ChatAvailability(available=True, code="available", message="Available"))
+    monkeypatch.setattr(
+        "jailbee.web.chat.availability",
+        lambda *args: ChatAvailability(available=True, code="available", message="Available"),
+    )
     assert client.get(URL).json()["chat"]["available"] is True
     chat = client.get(SUBAGENT_URL).json()["chat"]
     assert chat["available"] is False

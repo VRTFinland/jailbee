@@ -85,8 +85,11 @@ class ConnectionFollows:
             if not await self._authorized():
                 return  # revoked: the socket is closed, nothing more is sent
             status = (
-                ChatAvailability(available=False, code="unsupported_agent", message="Subagent chat unavailable")
-                if key.subagent_id else await run_in_threadpool(
+                ChatAvailability(
+                    available=False, code="unsupported_agent", message="Subagent chat unavailable"
+                )
+                if key.subagent_id
+                else await run_in_threadpool(
                     chat.availability, ctx, key.prefix, key.agent, key.session_id
                 )
             )
