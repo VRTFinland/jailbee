@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import logging
 import re
+import threading
 import uuid
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from jailbee.accounts.adapters.base import wired_adapters
 from jailbee.incus import IncusError
-from jailbee.tmux import _runuser
+from jailbee.tmux import runuser
 
 if TYPE_CHECKING:
     from jailbee.accounts.models import AgentSession
@@ -133,7 +134,7 @@ def _resolve(
             return Outcome("no_pane", "Agent is not in the foreground"), None
         try:
             panes = incus.exec(
-                container, _runuser("tmux list-panes -a -F '#{pane_id} #{pane_pid} #{cursor_y}'")
+                container, runuser("tmux list-panes -a -F '#{pane_id} #{pane_pid} #{cursor_y}'")
             )
         except IncusError:
             return Outcome("no_pane", "No pane"), None
@@ -158,7 +159,7 @@ def _resolve(
             return Outcome("no_pane", "No pane"), None
         pane, cursor = found[0]
         try:
-            screen = incus.exec(container, _runuser(f"tmux capture-pane -p -t {pane}"))
+            screen = incus.exec(container, runuser(f"tmux capture-pane -p -t {pane}"))
         except IncusError:
             return Outcome("no_pane", "No pane"), None
         if not _empty_prompt(screen, cursor):
@@ -175,20 +176,30 @@ def availability(cfg: Config, incus: Incus, container: str, session_id: str) -> 
     return _resolve(cfg, incus, container, session_id)[0]
 
 
+_SEND_LOCKS = tuple(threading.Lock() for _ in range(64))
+
+
 def send(cfg: Config, incus: Incus, container: str, session_id: str, text: str) -> Outcome:
     """Deliver a user turn. Capture and paste cannot exclude concurrent human typing."""
+    # The pane is unknown until resolution; serialize the entire operation by container.
+    with _SEND_LOCKS[hash(container) % len(_SEND_LOCKS)]:
+        return _send_locked(cfg, incus, container, session_id, text)
+
+
+def _send_locked(cfg: Config, incus: Incus, container: str, session_id: str, text: str) -> Outcome:
+    text = "".join(c for c in text if c in "\n\t" or (ord(c) >= 32 and not 127 <= ord(c) <= 159))
     outcome, pane = _resolve(cfg, incus, container, session_id)
     if pane is None:
         return outcome
     buffer = "jailbee-" + uuid.uuid4().hex
     try:
-        incus.exec_with_input(container, _runuser(f"tmux load-buffer -b {buffer} -"), text)
+        incus.exec_with_input(container, runuser(f"tmux load-buffer -b {buffer} -"), text)
         try:
-            incus.exec(container, _runuser(f"tmux paste-buffer -pr -b {buffer} -t {pane}"))
-            incus.exec(container, _runuser(f"tmux send-keys -t {pane} Enter"))
+            incus.exec(container, runuser(f"tmux paste-buffer -pr -b {buffer} -t {pane}"))
+            incus.exec(container, runuser(f"tmux send-keys -t {pane} Enter"))
         finally:
             try:
-                incus.exec(container, _runuser(f"tmux delete-buffer -b {buffer}"))
+                incus.exec(container, runuser(f"tmux delete-buffer -b {buffer}"))
             except IncusError:
                 logging.getLogger(__name__).warning(
                     "Could not delete tmux input buffer", exc_info=True

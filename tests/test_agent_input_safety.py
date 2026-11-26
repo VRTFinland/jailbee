@@ -90,6 +90,62 @@ def test_multiple_sessions_route_to_their_nested_pane(setup_session, session_id,
     assert commands[5].startswith("tmux delete-buffer -b jailbee-")
 
 
+def test_send_strips_terminal_control_sequences(setup_session):
+    directory, incus = setup_session
+    record(directory, "one.json")
+    incus.exec.side_effect = [
+        "42 10 123 S 42 42 34816\n10 1 22 S 10 42 34816",
+        "%1 10 1",
+        "────\n> \n────",
+        "",
+        "",
+        "",
+    ]
+    assert (
+        agent_input.send(
+            Mock(), incus, "box", "old", "x\x1b[201~\r\x03\x1b[200~\n\tok\x7f\x85"
+        ).code
+        == "delivered"
+    )
+    assert incus.exec_with_input.call_args.args[2] == "x[201~[200~\n\tok"
+
+
+def test_concurrent_sends_do_not_interleave(setup_session):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    directory, incus = setup_session
+    record(directory, "one.json")
+    entered, release = Event(), Event()
+    operations = []
+
+    def execute(_container, command):
+        cmd = command[-1]
+        if cmd.startswith("import os"):
+            return "42 10 123 S 42 42 34816\n10 1 22 S 10 42 34816"
+        if "list-panes" in cmd:
+            return "%1 10 1"
+        if "capture-pane" in cmd:
+            return "────\n> \n────"
+        if "paste-buffer" in cmd:
+            operations.append("paste")
+            if len(operations) == 1:
+                entered.set()
+                assert release.wait(5)
+        elif "send-keys" in cmd:
+            operations.append("enter")
+        return ""
+
+    incus.exec.side_effect = execute
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(agent_input.send, Mock(), incus, "box", "old", "one")
+        assert entered.wait(5)
+        second = pool.submit(agent_input.send, Mock(), incus, "box", "old", "two")
+        release.set()
+        assert first.result().code == second.result().code == "delivered"
+    assert operations == ["paste", "enter", "paste", "enter"]
+
+
 def test_dialog_refusal_precedes_pane_capture(setup_session):
     directory, incus = setup_session
     record(directory, "dialog.json", status="waiting", waitingFor="permission")
