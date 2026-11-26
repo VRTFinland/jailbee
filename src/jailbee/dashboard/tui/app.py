@@ -24,9 +24,9 @@ from textual.message import Message
 
 from jailbee.config.models_remote import RemotePolicy
 from jailbee.dashboard import runner as drunner
-from jailbee.dashboard.questions import AnswerRegistry
 from jailbee.dashboard.commands import Transport
 from jailbee.dashboard.hit import Hit
+from jailbee.dashboard.questions import AnswerRegistry
 from jailbee.dashboard.runner import ActionOutcome, ActionRun
 from jailbee.dashboard.tui import scrollbar
 from jailbee.dashboard.tui.frame import DashboardView

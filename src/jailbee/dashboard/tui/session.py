@@ -139,7 +139,6 @@ from jailbee.dashboard.notifications import (
     is_critical,
     job_rows,
 )
-from jailbee.dashboard.questions import QuestionRouter
 from jailbee.dashboard.outbox import OutboxState
 from jailbee.dashboard.outbox_flow import LOADING as OUTBOX_LOADING
 from jailbee.dashboard.outbox_flow import Intent as OutboxIntent
@@ -151,6 +150,7 @@ from jailbee.dashboard.overlays import (
     parse_pr_number,
     validate_answer,
 )
+from jailbee.dashboard.questions import QuestionRouter
 from jailbee.dashboard.runner import (
     OUTPUT_DROPPED_MARKER,
     OUTPUT_KEEP_CHARS,

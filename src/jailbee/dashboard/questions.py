@@ -36,17 +36,26 @@ class QuestionRouter:
             self._answer[entry_id] = self._interaction
 
     def arrived(
-        self, entry_id: int, prompt: Prompt, *, on_top: bool,
-        overlay: Literal["none", "queue", "other"], suspended: bool,
+        self,
+        entry_id: int,
+        prompt: Prompt,
+        *,
+        on_top: bool,
+        overlay: Literal["none", "queue", "other"],
+        suspended: bool,
     ) -> bool:
         entry = self.queue.get(entry_id)
         if entry is None:
             return False
         self.queue.set_question(entry_id, prompt)
         return should_show_question(
-            critical=entry.critical, foreground=entry.foreground, on_top=on_top,
-            overlay=overlay, dispatch_interaction=self._dispatch.get(entry_id),
-            answer_interaction=self._answer.get(entry_id), interaction=self._interaction,
+            critical=entry.critical,
+            foreground=entry.foreground,
+            on_top=on_top,
+            overlay=overlay,
+            dispatch_interaction=self._dispatch.get(entry_id),
+            answer_interaction=self._answer.get(entry_id),
+            interaction=self._interaction,
             suspended=suspended,
         )
 
