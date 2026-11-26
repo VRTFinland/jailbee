@@ -34,11 +34,11 @@ from jailbee.state_service.protocol import (
     ActionOutput,
     ActionQuestion,
     ActionQuestionResolved,
-    AnswerActionQuestion,
     ActionRejected,
     ActionSyncEnd,
     ActionSyncStart,
     Active,
+    AnswerActionQuestion,
     DismissAction,
     GatherError,
     Hello,
@@ -345,10 +345,16 @@ class StateClient:
             return False
         if isinstance(message, (ActionQuestion, ActionQuestionResolved)):
             with self._lock:
-                questions = self._replay_questions if self._replay_questions is not None else self._action_questions
+                questions = (
+                    self._replay_questions
+                    if self._replay_questions is not None
+                    else self._action_questions
+                )
                 if isinstance(message, ActionQuestion):
                     questions[message.entry_id] = message
-                elif (current := questions.get(message.entry_id)) is not None and current.question_id == message.question_id:
+                elif (
+                    current := questions.get(message.entry_id)
+                ) is not None and current.question_id == message.question_id:
                     del questions[message.entry_id]
                     self._question_resolutions.append(message)
             self._notify()

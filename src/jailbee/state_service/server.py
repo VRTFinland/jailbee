@@ -20,9 +20,8 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from jailbee.prompt_channel import Prompt
-
 from jailbee import __version__
+from jailbee.prompt_channel import Prompt
 from jailbee.state_service.paths import ensure_runtime_dir, lock_path, socket_path
 from jailbee.state_service.protocol import (
     MAX_WIRE_LINE_BYTES,
@@ -33,11 +32,11 @@ from jailbee.state_service.protocol import (
     ActionOutput,
     ActionQuestion,
     ActionQuestionResolved,
-    AnswerActionQuestion,
     ActionRejected,
     ActionSyncEnd,
     ActionSyncStart,
     Active,
+    AnswerActionQuestion,
     DismissAction,
     Hello,
     ProtocolError,
@@ -221,7 +220,9 @@ class StateServer:
                     ):
                         return
                     question = self._questions.get(entry.entry_id)
-                    if question is not None and not self._send_action(client, question[0], replay=True):
+                    if question is not None and not self._send_action(
+                        client, question[0], replay=True
+                    ):
                         return
                     await asyncio.wait_for(writer.drain(), DRAIN_TIMEOUT_SECONDS)
                 if not self._send_action(client, ActionSyncEnd(), replay=True):
@@ -379,8 +380,13 @@ class StateServer:
     def _answer_question(self, client: _Client, answer: AnswerActionQuestion) -> None:
         entry = self._actions.get(answer.entry_id)
         pending = self._questions.get(answer.entry_id)
-        if (entry is None or pending is None or not client.dashboard_id
-                or not self._in_scope(entry, client) or pending[0].question_id != answer.question_id):
+        if (
+            entry is None
+            or pending is None
+            or not client.dashboard_id
+            or not self._in_scope(entry, client)
+            or pending[0].question_id != answer.question_id
+        ):
             return
         self._resolve_question(answer.entry_id, answer.value, client.dashboard_id)
 
@@ -409,7 +415,12 @@ class StateServer:
         return True
 
     def _broadcast_action(
-        self, message: ActionEntry | ActionOutput | ActionFinish | ActionQuestion | ActionQuestionResolved
+        self,
+        message: ActionEntry
+        | ActionOutput
+        | ActionFinish
+        | ActionQuestion
+        | ActionQuestionResolved,
     ) -> None:
         entry = self._actions[message.entry_id] if not isinstance(message, ActionEntry) else message
         for recipient in list(self._clients):
