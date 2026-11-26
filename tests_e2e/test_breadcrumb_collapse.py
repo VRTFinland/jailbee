@@ -63,7 +63,7 @@ def test_narrow_parent_collapses_and_navigates_without_a_viewport_breakpoint(
     page.locator(".title-bar").evaluate("bar => bar.style.width = '280px'")
     breadcrumb = page.get_by_role("navigation", name="Breadcrumb")
     parent = breadcrumb.get_by_role("link", name=SESSION_TITLE, exact=True)
-    expect(parent).to_have_text("‹")  # noqa: RUF001 - Specified breadcrumb back glyph.
+    expect(parent.locator('svg[aria-hidden="true"]')).to_be_visible()
     expect(breadcrumb.get_by_role("link")).to_have_count(1)
     expect(parent).to_have_attribute("aria-label", SESSION_TITLE)
     box = parent.bounding_box()
@@ -109,7 +109,7 @@ def test_wide_phone_and_resize_restore_the_subagent_path(breadcrumb_page: Page) 
         "title => title.scrollWidth === title.clientWidth"
     )
     page.set_viewport_size({"width": 280, "height": 844})
-    expect(parent).to_have_text("‹")  # noqa: RUF001 - Specified breadcrumb back glyph.
+    expect(parent.locator('svg[aria-hidden="true"]')).to_be_visible()
     assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
     page.set_viewport_size({"width": 1280, "height": 800})
     expect(breadcrumb.get_by_role("link")).to_have_text(["JailBee", "work", SESSION_TITLE])

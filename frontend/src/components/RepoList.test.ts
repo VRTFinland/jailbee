@@ -39,6 +39,19 @@ function mountList() {
 describe("RepoList", () => {
     beforeEach(() => reloadSettings())
 
+    it("keeps a row phase over a stopped state and renders its words with a vector icon", async () => {
+        const wrapper = mountList()
+        const stopped = {...view.repos[0].containers[0], state: "Stopped", phase: "booting"}
+        await wrapper.setProps({view: {...view, repos: [{prefix: "alpha", containers: [stopped]}]}})
+        const row = wrapper.get('[data-container="alpha-1"]')
+        const phase = row.get('[data-status="booting"]')
+        expect(phase.text()).toBe("booting")
+        expect(phase.find('svg[aria-hidden="true"]').exists()).toBe(true)
+        expect(row.find('[data-status="stopped"]').exists()).toBe(false)
+        expect(row.get('[data-status="waiting"]').text()).toBe("waiting for you")
+        expect(row.get("a").attributes("href")).toBe("/containers/alpha-1")
+    })
+
     it("switches persisted filters, dims context, hides empty repos and follows live membership", async () => {
         const wrapper = mountList()
         const parent = {...view.repos[0].containers[0], agent: null, state: "Stopped"}
@@ -166,7 +179,7 @@ describe("RepoList", () => {
     })
 
     it("links each container's name to its container view", () => {
-        const links = mountList().findAll("li.row a.name")
+        const links = mountList().findAll("li.row a")
         expect(links.map((a) => a.attributes("href"))).toEqual([
             "/containers/alpha-1",
             "/containers/alpha-2",
@@ -189,7 +202,7 @@ describe("RepoList", () => {
         const row = wrapper.get("li.row")
         expect(row.attributes("data-agent")).toBe("error")
         expect(row.get(".agent").text()).toBe("API error: quota")
-        expect(row.get(".agent").classes()).toContain("agent-error")
+        expect(row.get(".agent").attributes("data-status")).toBe("error")
     })
 
     it("marks each row with its row phase and state for the theme to style", () => {

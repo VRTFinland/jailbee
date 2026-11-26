@@ -48,6 +48,8 @@
     --md-type-label-small-size: 0.6875rem;
     --md-type-label-small-line-height: 1rem;
     --md-type-label-small-weight: 500;
+    --md-type-emphasis-weight: 700;
+    --md-context-opacity: 0.5;
 
     /* Icon sizes: Material Symbols use a 24px optical size at the medium step. */
     --md-icon-small: 1rem;

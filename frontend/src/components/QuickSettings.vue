@@ -2,6 +2,7 @@
 import {computed, inject, nextTick, onBeforeUnmount, onMounted, ref, watch} from "vue"
 import {useRoute, type RouteLocationRaw} from "vue-router"
 import {FONT_SIZE_RANGE, settings, THEMES, THEME_LABELS, updateSettings} from "../settings"
+import IconButton from "./ui/IconButton.vue"
 
 const props = defineProps<{context?: "containers" | "session" | null; session?: {agent: string; models: string[]; id: string} | null; parent?: {label: string; to: RouteLocationRaw}}>()
 const route = useRoute()
@@ -88,7 +89,8 @@ async function close(restoreFocus = true) {
     }
 }
 watch(() => route.path, () => { if (open.value) void close(false) })
-async function toggle() {
+async function toggle(event: MouseEvent) {
+    trigger.value = event.currentTarget as HTMLButtonElement
     if (open.value) return close()
     open.value = true
     page.value = 0
@@ -140,11 +142,9 @@ onBeforeUnmount(() => {
 
 <template>
     <div class="quick-settings">
-        <button ref="trigger" type="button" class="quick-trigger" aria-label="Quick settings"
-            aria-haspopup="dialog" :aria-expanded="open" :aria-describedby="filtered ? 'filter-description' : undefined" @click="toggle">
-            <span aria-hidden="true">&#8942;</span>
-            <span v-if="filtered" id="filter-description" class="filter-marker"><span class="visually-hidden">Container filter enabled</span></span>
-        </button>
+        <IconButton icon="menu" label="Quick settings" class="quick-trigger"
+            aria-haspopup="dialog" :aria-expanded="open" :aria-describedby="filtered ? 'filter-description' : undefined" @click="toggle" />
+        <span v-if="filtered" id="filter-description" class="filter-marker"><span class="visually-hidden">Container filter enabled</span></span>
         <div v-if="open" class="quick-backdrop" @click="close()" />
         <section v-if="open" ref="panel" class="quick-panel" role="dialog" aria-label="Quick settings" aria-modal="true" tabindex="-1">
             <router-link v-if="!settings.showTitleBar && parent" class="menu-row" :to="parent.to" @click="close(false)">Back to {{ parent.label }}</router-link>
@@ -192,10 +192,9 @@ onBeforeUnmount(() => {
 <style scoped>
 .quick-settings { position: relative; flex: none; z-index: 40; margin-left: auto; }
 .session-info { flex-direction: column; align-items: flex-start; overflow-wrap: anywhere; user-select: text; }
-.quick-trigger span { font-size: 24px; line-height: 1; }
 .quick-settings:not(.title-menu) { position: fixed; top: calc(var(--app-banner-height, 0px) + var(--quick-trigger-top)); right: 0.75rem; }
-.quick-trigger { position: relative; display: grid; place-items: center; width: var(--quick-trigger-size); height: var(--quick-trigger-size); color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
-.quick-trigger svg { width: 1.25rem; fill: none; stroke: currentColor; stroke-width: 2; }
+.quick-trigger { position: relative; }
+.filter-marker { pointer-events: none; }
 .quick-backdrop { position: fixed; inset: 0; background: rgb(0 0 0 / 20%); z-index: -1; }
 .quick-panel { position: absolute; top: calc(var(--quick-trigger-size) + 0.25rem); right: 0; width: min(22rem, calc(100vw - 2rem)); padding: 0.5rem; border: 1px solid var(--border-strong); border-radius: var(--radius); background: var(--surface); color: var(--text); box-shadow: 0 4px 16px rgb(0 0 0 / 20%); }
 .menu-row { display: flex; align-items: center; gap: 0.5rem; box-sizing: border-box; width: 100%; min-height: 2.75rem; padding: 0.25rem 0.5rem; margin: 0; color: inherit; text-decoration: none; font: inherit; border: 0; background: transparent; text-align: left; }

@@ -97,7 +97,7 @@ def test_cross_repo_counts_and_missing_parent_labels_agree_across_views(
     expect(child_row).not_to_contain_text("orchestrator not listed")
 
 
-def test_nested_eink_rows_keep_phase_edges_distinct(server: E2EServer, logged_in: Page) -> None:
+def test_nested_eink_rows_keep_phase_chips_distinct(server: E2EServer, logged_in: Page) -> None:
     page = logged_in
     open_settings(page)
     page.get_by_role("group", name="Theme", exact=True).get_by_label("E-ink", exact=True).check()
@@ -127,9 +127,15 @@ def test_nested_eink_rows_keep_phase_edges_distinct(server: E2EServer, logged_in
     rest = page.locator('[data-container="work-rest"]')
     job = page.locator('[data-container="work-job"]')
     boot = page.locator('[data-container="work-boot"]')
-    expect(rest).to_have_css("border-left-style", "solid")
-    expect(job).to_have_css("border-left-style", "double")
-    expect(boot).to_have_css("border-left-style", "dashed")
+    expect(rest.locator(".phase")).to_have_count(0)
+    expect(job.locator(".phase")).to_have_text("job")
+    expect(boot.locator(".phase")).to_have_text("booting")
+    assert job.locator(".phase svg path").get_attribute("d") != boot.locator(
+        ".phase svg path"
+    ).get_attribute("d")
+    for chip in (job.locator(".phase"), boot.locator(".phase")):
+        expect(chip).to_have_css("color", "rgb(0, 0, 0)")
+        expect(chip).to_have_css("border-top-color", "rgb(0, 0, 0)")
     for row in (rest, job, boot):
         expect(row).to_have_class(re.compile(r"\bnested\b"))
         expect(row).to_contain_text("Child of orch")

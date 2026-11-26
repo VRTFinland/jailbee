@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import {computed, nextTick, onBeforeUnmount, onMounted, ref, watch} from "vue"
 import QuickSettings from "./QuickSettings.vue"
+import Icon from "./ui/Icon.vue"
 import {settings} from "../settings"
 import type {RouteLocationRaw} from "vue-router"
 
@@ -76,12 +77,12 @@ onBeforeUnmount(() => {
     <header v-if="settings.showTitleBar" ref="bar" class="title-bar">
         <nav ref="breadcrumb" aria-label="Breadcrumb" class="breadcrumbs">
             <template v-for="(crumb, index) in visibleCrumbs" :key="index">
-                <router-link :to="crumb.to" :title="crumb.label" :aria-label="crumb.label" :class="{collapsed}" :style="parentWidth === null ? undefined : {maxWidth: `${parentWidth}px`}"><span>{{ collapsed ? '‹' : crumb.label }}</span></router-link><span v-if="!collapsed" class="separator" aria-hidden="true">›</span>
+                <router-link :to="crumb.to" :title="crumb.label" :aria-label="crumb.label" :class="{collapsed}" :style="parentWidth === null ? undefined : {maxWidth: `${parentWidth}px`}"><Icon v-if="collapsed" name="back" /><span v-else>{{ crumb.label }}</span></router-link><span v-if="!collapsed" class="separator" aria-hidden="true"><Icon name="forward" size="small" /></span>
             </template>
             <h1 :title="session ? `Agent: ${session.agent}\nModels: ${session.models.join(', ')}\nSession ID: ${session.id}` : title">{{ title }}</h1>
         </nav>
         <div ref="measurements" class="measurements" aria-hidden="true" inert>
-            <span v-for="(crumb, index) in crumbs" :key="index" class="crumb-label">{{ crumb.label }}</span><span class="separator-measure">›</span><span class="minimum-parent">0000000000</span><span class="title-measure">{{ title }}</span><span class="title-measure minimum-title">000</span>
+            <span v-for="(crumb, index) in crumbs" :key="index" class="crumb-label">{{ crumb.label }}</span><span class="separator-measure"><Icon name="forward" size="small" /></span><span class="minimum-parent">0000000000</span><span class="title-measure">{{ title }}</span><span class="title-measure minimum-title">000</span>
         </div>
         <slot />
         <QuickSettings class="title-menu" :context="context" :session="session" />
@@ -90,13 +91,14 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.title-bar { position: sticky; top: var(--app-banner-height, 0px); z-index: 12; display: flex; align-items: center; box-sizing: border-box; height: var(--title-bar-height); background: var(--bg); border-bottom: 1px solid var(--border); min-width: 0; }
+.title-bar { position: sticky; top: var(--app-banner-height, 0); z-index: var(--md-layer-sticky); display: flex; align-items: center; box-sizing: border-box; height: var(--title-bar-height); background: var(--md-surface-container); border-bottom: 1px solid var(--md-outline-variant); min-width: 0; }
 .breadcrumbs { display: flex; align-items: center; flex: 1; min-width: 0; overflow: hidden; }
-.breadcrumbs a { display: flex; flex: none; align-items: center; height: var(--title-bar-height); min-width: 0; overflow: hidden; white-space: nowrap; color: var(--muted); font-size: 13px; text-decoration: none; }
+.breadcrumbs a { display: flex; flex: none; align-items: center; height: var(--title-bar-height); min-width: 0; overflow: hidden; white-space: nowrap; color: var(--md-on-surface-variant); font-size: var(--md-type-body-medium-size); text-decoration: none; }
+.breadcrumbs a:focus-visible { outline: var(--md-focus-ring-width) solid var(--md-primary); outline-offset: calc(-1 * var(--md-focus-ring-offset)); }
 .breadcrumbs a span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.breadcrumbs a.collapsed { justify-content: center; width: 44px; font-size: 24px; }
-.separator, .separator-measure { flex: none; padding: 0 6px; color: var(--muted); font-size: 13px; }
-h1, .title-measure { font-size: 15px; line-height: 1.2; font-weight: 600; margin: 0; min-width: 3ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.measurements { position: absolute; visibility: hidden; pointer-events: none; display: flex; width: max-content; max-width: none; height: 0; overflow: hidden; font-size: 13px; }
+.breadcrumbs a.collapsed { justify-content: center; width: var(--md-target-min); }
+.separator, .separator-measure { display: inline-flex; align-items: center; flex: none; padding: 0 var(--md-space-4); color: var(--md-on-surface-variant); }
+h1, .title-measure { font-size: var(--md-type-title-medium-size); line-height: var(--md-type-title-medium-line-height); font-weight: var(--md-type-title-medium-weight); margin: 0; min-width: 3ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.measurements { position: absolute; visibility: hidden; pointer-events: none; display: flex; width: max-content; max-width: none; height: 0; overflow: hidden; font-size: var(--md-type-body-medium-size); }
 .measurements > * { flex: none; }
 </style>

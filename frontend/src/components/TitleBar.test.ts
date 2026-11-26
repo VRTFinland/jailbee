@@ -23,6 +23,14 @@ async function titleBar() {
 }
 
 describe("TitleBar breadcrumbs", () => {
+    it("uses bundled decorative vectors for the menu and breadcrumb separators", async () => {
+        const {wrapper} = await titleBar()
+        expect(wrapper.get('[aria-label="Quick settings"]').find('svg[aria-hidden="true"]').exists()).toBe(true)
+        expect(wrapper.get('nav[aria-label="Breadcrumb"]').findAll('svg[aria-hidden="true"]')).toHaveLength(3)
+        await wrapper.get('[aria-label="Quick settings"]').trigger("click")
+        expect(wrapper.get('[role="dialog"]').attributes("aria-label")).toBe("Quick settings")
+    })
+
     it("renders only one heading and one link per ancestor, including after title updates", async () => {
         const {wrapper} = await titleBar()
         expect(wrapper.findAll("h1").map(heading => heading.text())).toEqual(["Subagent"])
