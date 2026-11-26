@@ -115,7 +115,7 @@ onBeforeUnmount(() => { resize?.disconnect(); mutation?.disconnect(); profileObs
             <template v-else>
                 <h2>Summary</h2>
                 <button v-for="(item, index) in set.questions" :key="item.number" type="button" class="summary-row" @click="step = index">
-                    Q{{ item.number }}: {{ answers[index].value || 'Unanswered' }} — {{ answers[index].value === item.recommendation ? 'Recommendation' : 'Changed' }}
+                    Q{{ item.number }}: {{ answers[index].value || 'Unanswered' }}<template v-if="answers[index].value.trim() && item.recommendation"> — {{ answers[index].value === item.recommendation ? 'Recommendation' : 'Changed' }}</template>
                 </button>
                 <h3>Message preview</h3><pre>{{ preview }}</pre>
             </template>

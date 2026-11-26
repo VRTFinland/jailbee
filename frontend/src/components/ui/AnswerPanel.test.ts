@@ -17,6 +17,14 @@ it("keeps an answer when collapsed and offers send only in the summary", async (
     expect(wrapper.emitted("send")?.[0]).toEqual(["Q1: b"])
 })
 
+it("shows summary labels only for answered questions with recommendations", async () => {
+    const questions = [1, 2, 3, 4].map(number => ({number, title: "Choice", body: "Choose", options: [], recommendation: number === 2 ? "" : "yes", start: 0, end: 1}))
+    const wrapper = mount(AnswerPanel, {props: {set: {questions}, available: true, initialHeight: "half", answers: [{value: "", note: ""}, {value: "custom", note: ""}, {value: "yes", note: ""}, {value: "no", note: ""}]}})
+    await wrapper.get('button[aria-label="Summary"]').trigger("click")
+    const rows = wrapper.findAll('.summary-row').map(row => row.text())
+    expect(rows).toEqual(["Q1: Unanswered", "Q2: custom", "Q3: yes — Recommendation", "Q4: no — Changed"])
+})
+
 it("offers yes and open answers and reports external draft changes", async () => {
     const set = {questions: [{number: 2, title: "Open", body: "Explain", options: [], recommendation: "yes", start: 0, end: 1}]}
     const wrapper = mount(AnswerPanel, {props: {set, available: false, reason: "No live agent", initialHeight: "half", answers: [{value: "yes", note: ""}]}})

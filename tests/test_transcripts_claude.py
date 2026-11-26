@@ -66,6 +66,39 @@ def test_reading_a_transcript_yields_user_and_assistant_entries_in_order(
     assert result.offset == _transcript(home).stat().st_size
 
 
+def test_assistant_records_share_api_message_id(tmp_path: Path, source: ClaudeSource) -> None:
+    path = tmp_path / "session.jsonl"
+    blocks = [
+        {"type": "thinking", "thinking": "Consider the options."},
+        {"type": "text", "text": "❓ **Q1** - **Deploy**: Choose.\na) Canary\n"},
+        {"type": "text", "text": "b) Direct\n➡️ a: Safe\n"},
+        {"type": "tool_use", "id": "toolu_1", "name": "Read", "input": {"file_path": "/x"}},
+    ]
+    _write(
+        path,
+        *(
+            {
+                "type": "assistant",
+                "uuid": f"record-{i}",
+                "message": {
+                    "id": "msg_shared",
+                    "role": "assistant",
+                    "model": "claude-opus-5-5",
+                    "content": [block],
+                },
+            }
+            for i, block in enumerate(blocks)
+        ),
+    )
+    entries = source.read(path).entries
+    assert [type(entry) for entry in entries] == [Thinking, AssistantText, AssistantText, ToolCall]
+    assert [entry.message_id for entry in entries] == ["msg_shared"] * 4
+    assert [entry.text for entry in entries if isinstance(entry, AssistantText)] == [
+        "❓ **Q1** - **Deploy**: Choose.\na) Canary\n",
+        "b) Direct\n➡️ a: Safe\n",
+    ]
+
+
 def test_thinking_is_an_entry_with_its_model(home: Path, source: ClaudeSource) -> None:
     entries = source.read(_transcript(home)).entries
 

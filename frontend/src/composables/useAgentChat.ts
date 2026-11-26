@@ -16,11 +16,12 @@ export function useAgentChat(available: () => boolean, deliver: (text: string) =
     let generation = 0
     let timer: ReturnType<typeof setTimeout> | undefined
     const busy = computed(() => sending.value || awaiting.value)
-    function reset() {
-        generation++
+    function reset({sessionChanged = false}: {sessionChanged?: boolean} = {}) {
+        // Reloads lose echo continuity, not the result of an already submitted POST.
+        if (sessionChanged) generation++
         if (timer !== undefined) clearTimeout(timer)
         timer = undefined
-        sending.value = false
+        if (sessionChanged) sending.value = false
         awaiting.value = false
         expected = null
         matched = false
@@ -57,7 +58,8 @@ export function useAgentChat(available: () => boolean, deliver: (text: string) =
                 return false
             }
             if (draft.value === text) draft.value = ""
-            if (matched) finish()
+            if (expected === null) finish(false)
+            else if (matched) finish()
             else {
                 awaiting.value = true
                 status.value = "Waiting for transcript"

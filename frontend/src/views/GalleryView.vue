@@ -23,6 +23,11 @@ import {ICON_NAMES} from "../components/ui/material-symbols/paths"
 import iconLicence from "../components/ui/material-symbols/LICENSE?url&no-inline"
 import iconNotice from "../components/ui/material-symbols/NOTICE.md?url&no-inline"
 const sampleQuestions = {questions: [{number: 1, title: "Choose an approach", body: "Which approach should we take?", options: [{letter: "a", text: "Keep the current approach"}, {letter: "b", text: "Try a new approach"}], recommendation: "a", start: 0, end: 1}]}
+const summaryQuestions = {questions: [
+    {number: 1, title: "Unanswered", body: "Choose later.", options: [], recommendation: "yes", start: 0, end: 1},
+    {number: 2, title: "No recommendation", body: "Choose freely.", options: [], recommendation: "", start: 0, end: 1},
+]}
+const summaryAnswers = [{value: "", note: ""}, {value: "Custom answer", note: ""}]
 const THEMES = [
     {id: "light", label: "Light"},
     {id: "dark", label: "Dark"},
@@ -285,6 +290,12 @@ function typeStyle(token: string): Record<string, string> {
                     <div class="group">
                         <h3 class="group-title">Answer full</h3>
                         <AnswerPanel :set="sampleQuestions" :available="false" reason="Messaging is unavailable." initial-height="full" />
+                    </div>
+
+                    <div class="group">
+                        <h3 class="group-title">Answer summary variants</h3>
+                        <p>Open Summary to see unanswered and no-recommendation states.</p>
+                        <AnswerPanel :set="summaryQuestions" :answers="summaryAnswers" :available="true" initial-height="half" />
                     </div>
 
                     <div class="group">

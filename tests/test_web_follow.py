@@ -172,6 +172,7 @@ def test_an_appended_entry_arrives_rendered(
 
         message = ws.receive_json()
         assert message["type"] == "append"
+        assert message["chat"]["code"] == "permission_denied"
         assert message["v"] == PROTOCOL_VERSION
         assert message["key"] == {
             "prefix": "alpha",

@@ -153,7 +153,8 @@ acknowledgement or queue is used. Confirmation is bounded: commands such as
 `/compact` may not produce an ordinary user entry, so an unconfirmed paste does
 not leave messaging locked indefinitely: after 30 seconds it reports
 **Pasted; transcript confirmation unavailable** and unlocks. Reloading the transcript or reconnecting
-also resets that wait. The composer also works in the e-ink display profile,
+also resets that wait, but an in-flight send still completes and clears its
+text or answer set when delivery succeeds. The composer also works in the e-ink display profile,
 above its page controls.
 
 A leading `/` invokes a Claude command and `!` invokes its shell mode, just as at
@@ -162,7 +163,8 @@ pasting. Concurrent web and CLI sends to one pane are serialized, but terminal
 typing cannot be locked out.
 
 `jb remote web auth log` records sends and refusals with the device or token name,
-session, outcome and exact text in the local state database. Message text is not
+session, outcome and sanitized text in the local state database. Messages have
+separate retention and listing budgets so they cannot hide security events. Message text is not
 printed to the server's audit logger. Treat that database as private transcript
 data. `remote.ssh.agent_chat` is a separate, also default-off right for
 `jailbee agent say` over SSH.
@@ -180,12 +182,16 @@ The panel shows one question at a time. Recommended choices are preselected and
 badged; choose another full-width option or add a note. A question without options
 has a text field. Use Back, Next or the step dots to move between questions;
 **Show in conversation** finds and highlights the question in the transcript.
-The last step lists every answer as recommendation or changed. Select a summary
+The last step lists every answer, marking nonempty answers to questions with a
+recommendation as recommendation or changed. Select a summary
 row to edit it. Only this summary offers Send, beside a preview of the exact
 message: one `Q12: a` line per question, with an optional ` – note`.
 
-Answers are drafts in this browser, keyed by session and source message. Closing
-the panel or reloading preserves them when browser storage is available. They do
+Editing an answer creates a draft in this browser, keyed by session and source
+message. Untouched recommendations follow the newest questions automatically.
+Closing the panel or reloading preserves edited drafts when browser storage is
+available. The browser retains at most 100 drafts and completion history for 100
+sessions, with at most 100 dismissed question sets per session. They do
 not sync between devices, and blocked storage falls back to an in-memory draft.
 A newer assistant reply leaves the older draft attached to its source with a
 notice; send it deliberately or discard it. Questions in the new reply get their

@@ -104,6 +104,72 @@ def open_questions(
     return server, transcript, incus
 
 
+def test_real_message_records_form_one_set_without_newer_message_notice(
+    page: Page,
+    make_server: Callable[..., E2EServer],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    server, transcript, _ = open_questions(page, make_server, tmp_path, monkeypatch)
+    blocks: list[list[dict[str, object]]] = [
+        [{"type": "thinking", "thinking": "Consider rollout."}],
+        [
+            {"type": "text", "text": "❓ **Q21** - **Deploy**: Choose.\na) Canary\n"},
+            {"type": "text", "text": "b) Direct\n➡️ a: Safe\n"},
+        ],
+        [{"type": "text", "text": "❓ **Q22** - **Owner**: Who?"}],
+    ]
+    rows = [record(0, "user", TITLE)]
+    for index, content in enumerate(blocks, start=1):
+        row = json.loads(record(index, "assistant", ""))
+        row["message"].update(id="msg_shared", content=content)
+        rows.append(json.dumps(row) + "\n")
+    transcript.write_text("".join(rows))
+    page.reload()
+    panel = page.get_by_role("complementary", name="Answer questions")
+    panel.get_by_role("button", name="Expand answers", exact=True).click()
+    expect(panel.get_by_role("heading", name="Q21: Deploy")).to_be_visible()
+    expect(panel.get_by_role("radio", name="b) Direct", exact=True)).to_be_visible()
+    panel.get_by_role("textbox", name="Optional note").fill("edited draft")
+    panel.get_by_role("button", name="Question 22", exact=True).click()
+    expect(panel.get_by_role("heading", name="Q22: Owner")).to_be_visible()
+    wait_until(lambda: len(server.watches.open) == 1)
+    tool = json.loads(record(4, "assistant", ""))
+    tool["message"].update(
+        id="msg_shared",
+        content=[{"type": "tool_use", "id": "call-1", "name": "Bash", "input": {"command": "true"}}],
+    )
+    with transcript.open("a") as stream:
+        stream.write(json.dumps(tool) + "\n")
+    server.watches.open[-1].fire()
+    expect(page.get_by_role("button", name="Bash true", exact=True)).to_be_attached()
+    expect(panel.get_by_text("A newer message arrived", exact=False)).to_have_count(0)
+    expect(panel.get_by_role("combobox", name="Question set")).to_have_count(0)
+
+
+@pytest.mark.parametrize("profile", ["normal", "eink"])
+def test_untouched_question_set_follows_new_questions(
+    page: Page,
+    make_server: Callable[..., E2EServer],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    profile: str,
+) -> None:
+    server, transcript, _ = open_questions(page, make_server, tmp_path, monkeypatch, profile=profile)
+    with transcript.open("a") as stream:
+        stream.write(record(3, "assistant", "❓ **Q20** - **New owner**: Name a team."))
+    server.watches.open[-1].fire()
+    panel = page.get_by_role("complementary", name="Answer questions")
+    expect(panel.locator(".panel-header > strong")).to_have_text("1 question")
+    panel.get_by_role("button", name="Expand answers", exact=True).click()
+    expect(panel.get_by_role("heading", name="Q20: New owner")).to_be_visible()
+    expect(panel.get_by_text("A newer message arrived", exact=False)).to_have_count(0)
+    page.reload()
+    panel.get_by_role("button", name="Expand answers", exact=True).click()
+    expect(panel.get_by_role("heading", name="Q20: New owner")).to_be_visible()
+    expect(panel.get_by_role("combobox", name="Question set")).to_have_count(0)
+
+
 @pytest.mark.parametrize("width", [390, 1280])
 @pytest.mark.parametrize(
     "profile,controls",
@@ -183,7 +249,7 @@ def test_answers_share_composer_send_gate_and_confirm_in_transcript(
     panel.get_by_role("button", name="Expand answers", exact=True).click()
     expect(panel.get_by_role("textbox", name="Optional note")).to_have_value("after review")
     panel.get_by_role("button", name="Summary", exact=True).click()
-    panel.get_by_role("button", name="Q1: Operations — Changed", exact=True).click()
+    panel.get_by_role("button", name="Q1: Operations", exact=True).click()
     panel.get_by_role("textbox", name="Answer", exact=True).fill("Platform")
     panel.get_by_role("button", name="Next step").click()
     message = "Q12: b – after review\nQ1: Platform"  # noqa: RUF001 - Spec's literal separator.

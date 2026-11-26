@@ -377,7 +377,7 @@ def test_web_chat_delivers_and_audits_exact_message(home, tmp_path, monkeypatch,
             ws.send_text(json.dumps({"type": "auth", "v": PROTOCOL_VERSION, "token": token}))
             ws.receive_json()
             client.get("/api/repos/alpha/sessions")
-            text = "hello\nworld"
+            text = "hello\x1b\nworld"
             response = client.post(
                 f"/api/repos/alpha/sessions/claude/{SESSION_A}/messages", json={"text": text}
             )
@@ -385,13 +385,13 @@ def test_web_chat_delivers_and_audits_exact_message(home, tmp_path, monkeypatch,
             if refusal:
                 incus.exec_with_input.assert_not_called()
             else:
-                assert incus.exec_with_input.call_args.args[2] == text
+                assert incus.exec_with_input.call_args.args[2] == "hello\nworld"
     with Session(engine) as db:
         event = db.exec(select(WebAuthEvent).where(WebAuthEvent.event == "agent_message")).first()[
             0
         ]
         assert event.device_name == "reader"
-        assert json.loads(event.source)["text"] == text
+        assert json.loads(event.source)["text"] == "hello\nworld"
 
 
 def test_message_post_hides_excluded_repo(home):
@@ -444,3 +444,4 @@ def test_bad_repo_config_disables_chat_without_breaking_transcript(home, monkeyp
 def test_blank_chat_message_is_rejected(client):
     url = f"/api/repos/alpha/sessions/claude/{SESSION_A}/messages"
     assert client.post(url, json={"text": "  \n"}).status_code == 422
+    assert client.post(url, json={"text": "\x1b\r"}).status_code == 422

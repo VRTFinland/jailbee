@@ -34,6 +34,43 @@ describe("session answer drafts", () => {
         reloaded.scope.stop()
     })
 
+    it("selects the newest set when the selected untouched set expires beside an older edited draft", async () => {
+        const {state, sources, scope} = setup()
+        state.updateAnswers([{value: "b", note: "old edited"}])
+        sources.value.push({id: "middle", text: newer})
+        await nextTick()
+        state.select("middle")
+        sources.value.push({id: "latest", text: "❓ **Q14** - **Team**: Who?"})
+        await nextTick()
+        expect(state.selected.value?.id).toBe("latest")
+        expect(state.sets.value.map(set => set.id)).toEqual(["old", "latest"])
+        scope.stop()
+    })
+
+    it("retains edited answers when more text records complete the same API message", async () => {
+        const {state, sources, scope} = setup()
+        state.updateAnswers([{value: "b", note: "keep this"}])
+        sources.value = [{id: "old", text: text + "\n\n" + newer}]
+        await nextTick()
+        expect(state.selected.value?.answers).toEqual([{value: "b", note: "keep this"}, {value: "", note: ""}])
+        expect(state.hasNewer.value).toBe(false)
+        scope.stop()
+        const reloaded = setup(sources)
+        expect(reloaded.state.selected.value?.answers[0]).toEqual({value: "b", note: "keep this"})
+        reloaded.scope.stop()
+    })
+
+    it("preselects recommendations arriving in later records of an untouched message", async () => {
+        const partial = "❓ **Q12** - **Deploy**: Choose.\na) Canary\nb) All"
+        const {state, sources, scope} = setup(ref([{id: "old", text: partial}]))
+        expect(state.selected.value?.answers[0]?.value).toBe("")
+        sources.value = [{id: "old", text: partial + "\n➡️ a: Safe"}]
+        await nextTick()
+        expect(state.selected.value?.answers[0]?.value).toBe("a")
+        expect(createAnswerDraftStore().list(session)).toEqual([])
+        scope.stop()
+    })
+
     it("dismisses completed or discarded sets across reload without recreating them", async () => {
         const {state, sources, scope} = setup()
         state.dismiss("old")
@@ -107,10 +144,28 @@ describe("session answer drafts", () => {
         } finally { get.mockRestore(); put.mockRestore(); remove.mockRestore() }
     })
 
-    it("never offers older non-drafted questions and marks an old draft stale for a plain newer reply", async () => {
+    it("follows newer questions without turning untouched recommendations into drafts", async () => {
+        const {state, sources, scope} = setup()
+        expect(createAnswerDraftStore().list(session)).toEqual([])
+        sources.value.push({id: "new", text: newer})
+        await nextTick()
+        expect(state.sets.value.map(set => set.id)).toEqual(["new"])
+        expect(state.selected.value?.id).toBe("new")
+        expect(state.hasNewer.value).toBe(false)
+        scope.stop()
+        const reloaded = setup(sources)
+        expect(reloaded.state.selected.value?.id).toBe("new")
+        reloaded.sources.value.push({id: "plain", text: "No questions."})
+        await nextTick()
+        expect(reloaded.state.selected.value).toBeNull()
+        reloaded.scope.stop()
+    })
+
+    it("never offers older non-drafted questions and marks an edited draft stale for a plain newer reply", async () => {
         const sources = ref([{id: "history", text}, {id: "old", text: newer}])
         const {state, scope} = setup(sources)
         expect(state.sets.value.map(set => set.id)).toEqual(["old"])
+        state.updateAnswers([{value: "Platform", note: ""}])
         sources.value.push({id: "plain", text: "No questions."})
         await nextTick()
         expect(state.selected.value?.id).toBe("old")

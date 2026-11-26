@@ -63,6 +63,8 @@ def test_gallery_snapshot(
         slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
         reference = references / f"{stem}-{slug}.png"
         expected.add(reference)
+        if title == "Answer summary variants":
+            groups.nth(index).get_by_role("button", name="Summary", exact=True).click()
         try:
             assert_image_matches(
                 groups.nth(index).screenshot(animations="disabled", caret="hide", scale="css"),

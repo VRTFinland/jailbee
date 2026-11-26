@@ -178,6 +178,19 @@ def test_log_lists_audit_events_with_device_and_time() -> None:
     assert "2026-11-21" in out
 
 
+def test_log_keeps_security_events_visible_after_many_agent_messages() -> None:
+    engine = get_engine()
+    auth_admin.record_event(engine, "revoke", clock=FakeClock(), method="cli", device_name="phone")
+    for _ in range(50):
+        auth_admin.record_event(engine, "agent_message", clock=FakeClock(), source="hello")
+
+    result = run("log")
+
+    assert result.exit_code == 0, result.output
+    assert "revoke" in flat_output(result.output)
+    assert "agent_message" in flat_output(result.output)
+
+
 def test_totp_add_without_the_web_extra_names_it(mocker: MockerFixture) -> None:
     real_import = builtins.__import__
 

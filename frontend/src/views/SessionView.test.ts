@@ -2,6 +2,7 @@ import {enableAutoUnmount, flushPromises, mount} from "@vue/test-utils"
 import {getByRole, queryByRole} from "@testing-library/dom"
 import {afterEach, beforeEach, describe, expect, it, vi} from "vitest"
 import {createMemoryHistory} from "vue-router"
+import {Dashboard, DASHBOARD} from "../dashboard"
 import {setToken} from "../api"
 import type {TranscriptView} from "../protocol"
 import {createAppRouter} from "../router"
@@ -70,13 +71,13 @@ const transcript: TranscriptView = {
     ],
 }
 
-async function mountSession(fetchMock: ReturnType<typeof vi.fn<typeof fetch>>) {
+async function mountSession(fetchMock: ReturnType<typeof vi.fn<typeof fetch>>, dashboard?: Dashboard) {
     setToken("tok")
     vi.stubGlobal("fetch", withDashboardMode(fetchMock))
     const router = createAppRouter(createMemoryHistory())
     await router.push("/repos/alpha/sessions/claude/s-1")
     await router.isReady()
-    const wrapper = mount(SessionView, {global: {plugins: [router]}, attachTo: document.body})
+    const wrapper = mount(SessionView, {global: {plugins: [router], provide: dashboard ? {[DASHBOARD as symbol]: dashboard} : {}}, attachTo: document.body})
     await flushPromises()
     return {wrapper, router}
 }
@@ -100,6 +101,32 @@ afterEach(() => {
 })
 
 describe("SessionView", () => {
+    it.each(["reconnect", "context reload"])("dismisses delivered answers even after %s during the POST", async reset => {
+        localStorage.clear()
+        const dashboard = new Dashboard(() => ({start() {}, stop() {}, send() {}}))
+        dashboard.state.connected = true
+        let resolve!: (response: Response) => void
+        const view: TranscriptView = {...transcript, chat: {available: true, code: "available", message: ""}, entries: [{
+            kind: "assistant", id: "question", message_id: "message", timestamp: null, model: "m", html: "", text: "❓ **Q1** - **Deploy**: Choose.\na) Canary\n➡️ a: Safe",
+        }]}
+        const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+            if (init?.method === "POST") return new Promise<Response>(r => { resolve = r })
+            return jsonResponse(200, String(input).endsWith("/summary") ? {} : view)
+        })
+        const {wrapper} = await mountSession(fetchMock, dashboard)
+        await wrapper.get('[aria-label="Expand answers"]').trigger("click")
+        await wrapper.get('[aria-label="Summary"]').trigger("click")
+        await wrapper.get('[aria-label="Send answers"]').trigger("click")
+        if (reset === "reconnect") dashboard.state.connected = false
+        else updateSettings({agentContext: "collapsed"})
+        await flushPromises()
+        expect(wrapper.get('[aria-label="Send answers"]').attributes("disabled")).toBeDefined()
+        resolve(jsonResponse(200, {code: "delivered", message: ""}))
+        await flushPromises()
+        expect(wrapper.find('[aria-label="Answer questions"]').exists()).toBe(false)
+        expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(1)
+    })
+
     it.each(["alpha-1", null])("keeps the root and repo and adds the summary's container only when known (%s)", async container => {
         const {wrapper} = await mountSession(vi.fn(async input => jsonResponse(200,
             String(input).endsWith('/summary') ? {container} : transcript,

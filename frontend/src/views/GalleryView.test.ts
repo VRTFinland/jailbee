@@ -65,7 +65,7 @@ describe("GalleryView", () => {
             expect(buttons.slice(-2).map((b) => [b.text(), b.find("svg").exists()]))
                 .toEqual([["New container", true], ["Settings", true]])
             const iconButtons = panel.findAll(".icon-button")
-            expect(iconButtons.map((b) => b.attributes("aria-label"))).toEqual(["Menu", "Close", "Menu (tonal)", "Settings (tonal, disabled)", "Settings (disabled)", "Actions for feat-reader-chrome", "Actions for dev-ork", "Expand answer panel", "Collapse answers", "Reduce answer panel", "Collapse answers", "Previous page (compact)", "Next page (compact)", "Previous page (compact, disabled)", "Previous earlier sessions", "Next earlier sessions"])
+            expect(iconButtons.map((b) => b.attributes("aria-label"))).toEqual(["Menu", "Close", "Menu (tonal)", "Settings (tonal, disabled)", "Settings (disabled)", "Actions for feat-reader-chrome", "Actions for dev-ork", "Expand answer panel", "Collapse answers", "Reduce answer panel", "Collapse answers", "Expand answer panel", "Collapse answers", "Previous page (compact)", "Next page (compact)", "Previous page (compact, disabled)", "Previous earlier sessions", "Next earlier sessions"])
             expect(iconButtons[2].attributes("data-variant")).toBe("tonal")
             expect(iconButtons[3].attributes("disabled")).toBeDefined()
             expect(iconButtons[4].attributes("disabled")).toBeDefined()
@@ -110,6 +110,7 @@ describe("GalleryView", () => {
                 "Container name", "Invalid name", "Disabled field", "Multiline field", "Theme", "Native preferences", "Disabled select",
                 "a) Keep the current approach Recommendation", "b) Try a new approach", "Optional note",
                 "a) Keep the current approach Recommendation", "b) Try a new approach", "Optional note",
+                "Yes Recommendation", "Answer", "Optional note",
             ])
         }
     })
