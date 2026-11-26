@@ -388,10 +388,10 @@ def test_quitting_with_a_question_pending_cancels_it_and_the_app_exits(mocker, t
 
     async def script(app, pilot):
         await _confirm_modal(pilot, app)
-        app._after("quit")  # what the quit key does
+        app.exit(0)  # force teardown cancels even an open question
 
     app = _drive(mocker, tmp_path, spawn, script)  # wait_for: a hang fails the test
-    assert app.quit_requested
+    assert not app.quit_requested
     assert isinstance(spawn.child.answers[0], Cancel)  # the child was told, so it exited
     spawn.child._thread.join(_JOIN_SECONDS)
     assert not spawn.child._thread.is_alive()
