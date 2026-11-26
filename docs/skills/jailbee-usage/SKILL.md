@@ -989,7 +989,10 @@ only spawned children. Allowed in a restricted remote SSH session.
 
 `jailbee agent say [NAME] [TEXT] [--session ID]` sends a user turn to a live
 Claude session; use `-` as TEXT to read stdin. It refuses dialogs, terminal drafts,
-and unknown prompt layouts. See [commands](references/commands.md) for details.
+and unknown prompt layouts. The web transcript reader uses the same send when
+`remote.web.agent_chat: true` (default false); `remote.ssh.agent_chat` separately
+gates the command over SSH. For disabled reasons, delivery status and auditing,
+see [web messaging](references/commands.md#web-dashboard).
 
 ## Port forwarding — `jailbee port`
 
