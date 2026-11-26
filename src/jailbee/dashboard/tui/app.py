@@ -446,11 +446,7 @@ class DashboardApp(App[int], inherit_bindings=False):
         modal = modal_for(entry.pending_question, entry=entry)
 
         def close_resolved(_future: asyncio.Future[Any]) -> None:
-            if (
-                self._prompts_closed
-                or not self.screen_stack
-                or not self._answers.shown(entry_id)
-            ):
+            if self._prompts_closed or not self.screen_stack or not self._answers.shown(entry_id):
                 return
             if self.screen is modal:
                 modal.dismiss(None)

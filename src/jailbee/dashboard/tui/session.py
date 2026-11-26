@@ -1036,7 +1036,8 @@ class DashboardSession:
         if entry is None:
             return False
         show = self.questions.arrived(
-            entry_id, prompt,
+            entry_id,
+            prompt,
             on_top=on_top,
             overlay="none"
             if self.overlay is None
