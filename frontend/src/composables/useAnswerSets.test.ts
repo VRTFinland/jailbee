@@ -34,6 +34,32 @@ describe("session answer drafts", () => {
         reloaded.scope.stop()
     })
 
+    it("selects the newest set when the selected untouched set expires beside an older edited draft", async () => {
+        const {state, sources, scope} = setup()
+        state.updateAnswers([{value: "b", note: "old edited"}])
+        sources.value.push({id: "middle", text: newer})
+        await nextTick()
+        state.select("middle")
+        sources.value.push({id: "latest", text: "❓ **Q14** - **Team**: Who?"})
+        await nextTick()
+        expect(state.selected.value?.id).toBe("latest")
+        expect(state.sets.value.map(set => set.id)).toEqual(["old", "latest"])
+        scope.stop()
+    })
+
+    it("retains edited answers when more text records complete the same API message", async () => {
+        const {state, sources, scope} = setup()
+        state.updateAnswers([{value: "b", note: "keep this"}])
+        sources.value = [{id: "old", text: text + "\n\n" + newer}]
+        await nextTick()
+        expect(state.selected.value?.answers).toEqual([{value: "b", note: "keep this"}, {value: "", note: ""}])
+        expect(state.hasNewer.value).toBe(false)
+        scope.stop()
+        const reloaded = setup(sources)
+        expect(reloaded.state.selected.value?.answers[0]).toEqual({value: "b", note: "keep this"})
+        reloaded.scope.stop()
+    })
+
     it("dismisses completed or discarded sets across reload without recreating them", async () => {
         const {state, sources, scope} = setup()
         state.dismiss("old")

@@ -382,7 +382,7 @@ def audit_logging() -> Iterator[None]:
 def recent_events(engine: Engine, limit: int = 50) -> list[AuditEvent]:
     """The newest ``limit`` entries per audit class, oldest first."""
     with Session(engine) as s:
-        rows = []
+        rows: list[WebAuthEvent] = []
         for is_message in (True, False):
             condition = col(WebAuthEvent.event) == "agent_message"
             if not is_message:
