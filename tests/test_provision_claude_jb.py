@@ -548,6 +548,13 @@ def test_settings_added_to_proxy_launch(script, argv_env, tmp_path):
     [
         (["--settings", "mine"], ["--settings", "mine"]),
         (["--settings=mine"], ["--settings=mine"]),
+        *[
+            ([option, "--settings=example"], ["--settings", "FILE", option, "--settings=example"])
+            for option in (
+                "--system-prompt", "--system-prompt-file", "--append-system-prompt",
+                "--append-system-prompt-file", "--json-schema",
+            )
+        ],
         (["--", "--settings=prompt"], ["--settings", "FILE", "--", "--settings=prompt"]),
     ],
 )

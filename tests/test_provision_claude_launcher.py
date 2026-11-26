@@ -217,6 +217,13 @@ def test_interactive_remote_settings_notice(snippet: str, home: Path) -> None:
     [
         (["--settings", "mine"], ["--settings", "mine"]),
         (["--settings=mine"], ["--settings=mine"]),
+        *[
+            ([option, "--settings=example"], ["--settings", "FILE", option, "--settings=example"])
+            for option in (
+                "--system-prompt", "--system-prompt-file", "--append-system-prompt",
+                "--append-system-prompt-file", "--json-schema",
+            )
+        ],
         (["--", "--settings=prompt"], ["--settings", "FILE", "--", "--settings=prompt"]),
     ],
 )

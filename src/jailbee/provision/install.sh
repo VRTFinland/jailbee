@@ -313,10 +313,13 @@ case $- in
         fi ;;
 esac
 claude() (
+    _jb_skip=0
     for _jb_arg in "$@"; do
+        if [ "$_jb_skip" -eq 1 ]; then _jb_skip=0; continue; fi
         case "$_jb_arg" in
             --) break ;;
             --settings|--settings=*) command claude "$@"; return $? ;;
+            --system-prompt|--system-prompt-file|--append-system-prompt|--append-system-prompt-file|--json-schema) _jb_skip=1 ;;
         esac
     done
     if [ -f /etc/claude-code/managed-settings.d/50-jailbee.json ]; then
@@ -375,11 +378,13 @@ while [ $# -gt 0 ]; do
 done
 
 add_settings() {
-    local arg
+    local arg skip=0
     for arg in "${args[@]}"; do
+        if [ "$skip" -eq 1 ]; then skip=0; continue; fi
         case "$arg" in
             --) break ;;
             --settings|--settings=*) return ;;
+            --system-prompt|--system-prompt-file|--append-system-prompt|--append-system-prompt-file|--json-schema) skip=1 ;;
         esac
     done
     if [ -f /etc/claude-code/managed-settings.d/50-jailbee.json ]; then
