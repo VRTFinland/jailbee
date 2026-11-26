@@ -108,6 +108,8 @@ def run_actions(
         )
         requests.append(request)
     batch_sent = False
+    batch_acknowledged = False
+    batch_generation: int | None = None
     for index, request in enumerate(requests):
         entry_id = request.entry_id
         if entry_id in client.action_entries() and not batch_sent:
@@ -116,13 +118,18 @@ def run_actions(
             break
         last_output = ""
         sent = batch_sent
-        sent_generation: int | None = None
-        acknowledged = False
+        sent_generation: int | None = batch_generation
+        acknowledged = batch_acknowledged
         uncertain_generation: int | None = None
         disconnected_at: float | None = None
         while True:
             generation = client.action_connection()
-            snapshot = client.action_entries().get(entry_id)
+            entries = client.action_entries()
+            snapshot = entries.get(entry_id)
+            if len(requests) > 1 and any(item.entry_id in entries for item in requests):
+                batch_acknowledged = True
+                acknowledged = True
+                sent = batch_sent = True
             rejection = client.action_rejection(entry_id)
             if snapshot is not None:
                 acknowledged = True
@@ -149,13 +156,16 @@ def run_actions(
                 time.sleep(POLL_SECONDS)
                 continue
             disconnected_at = None
-            if acknowledged and snapshot is None and sent_generation != generation:
+            if acknowledged and snapshot is None and (
+                sent_generation != generation or batch_acknowledged
+            ):
                 results.append(RunResult(error="action missing after state service reconnect"))
                 outputs.append(last_output)
                 outcome_text.append(last_output)
                 return ActionOutcome(results, outcome_text.text(), outputs)
-            if sent and not acknowledged and sent_generation != generation and not batch_sent:
+            if sent and not acknowledged and sent_generation != generation:
                 sent = False
+                batch_sent = False
             if not sent:
                 try:
                     if len(requests) == 1:
@@ -163,6 +173,7 @@ def run_actions(
                     else:
                         client.run_action_batch(RunActionBatch(requests))
                         batch_sent = True
+                        batch_generation = generation
                     sent = True
                     sent_generation = generation
                 except (OSError, StateServiceUnavailable):
