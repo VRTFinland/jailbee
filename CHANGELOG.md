@@ -12,8 +12,13 @@ before editing `## Unreleased`.
 
 - Background commands in the terminal dashboard leave questions in Notifications
   (`Q`) instead of interrupting another task. Select an awaiting entry to answer
-  it; several commands can wait independently. A critical action whose modal
-  is in the foreground still asks immediately
+  it; several commands can wait independently, without a timeout. Questions
+  still open immediately while you are with the action (its critical modal is
+  on top, or no interaction has followed dispatch or your previous answer).
+  Each question shows the command, target and output tail, with `Later` (Esc)
+  to keep it waiting and `Abort command` (Ctrl-C) to cancel explicitly.
+  Returning from tmux opens the queue for new questions, not a question modal;
+  quitting with pending questions confirms how many commands will be aborted
   ([#168](https://github.com/VRTFinland/jailbee/issues/168)).
 - The web dashboard has a design system: Material 3 colours from one blue seed in
   both the light and dark themes (status colours readable at WCAG AA), the bundled
