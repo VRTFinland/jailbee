@@ -12,3 +12,4 @@ A dashboard runs an action by starting JailBee's own CLI as a child process. Unt
 
 - A test forbids prompt libraries outside `prompting`. The exceptions are named.
 - The terminal dashboard stops releasing the terminal for non-attach actions. Their output is shown by the dashboard instead.
+- Owning a question includes deciding when to show it. A question from a background action waits in the notification queue as a pending question. It opens at once only when the user is with that action. The rule lives in the frontend-agnostic dashboard core, so every dashboard applies it the same way. A follow-up spec makes the state service the UI that runs commands. Dashboards then receive its questions instead of holding the channel themselves.
