@@ -670,6 +670,14 @@ UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
         version=(1, 8, 10),
         actions=frozenset({"apply"}),
         reason=(
+            "`jailbee apply` syncs the container and usage skills describing agent messaging, "
+            "the web answer panel and source-bound answer drafts"
+        ),
+    ),
+    UpgradeNote(
+        version=(1, 8, 10),
+        actions=frozenset({"apply"}),
+        reason=(
             "Claude sessions default to unattended bypass mode with automatic permission "
             "rejection and numbered questions; set agents.claude.unattended: false to opt out"
         ),

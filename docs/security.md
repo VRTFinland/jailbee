@@ -126,10 +126,12 @@ Every login, failure, logout and revocation is audited
 - **FIDO2 domains.** A key is bound to the HTTPS domain it was registered at,
   taken from the request's `Origin` (else `Host`); the proxy must pass both
   through.
-- **Cross-origin checks.** A WebSocket handshake whose `Origin` names another
-  host or port than its `Host` is refused in every auth mode, so a page on
-  another site cannot open the live channel in a logged-in browser. With auth
-  disabled, a request whose `Host` is not `localhost`, a loopback address or
+- **Cross-origin checks.** A WebSocket handshake or state-changing HTTP request
+  whose `Origin` names another host or port than its `Host` is refused in every
+  auth mode. A page on another site cannot open the live channel or send agent
+  messages through the browser, including with authentication disabled. Clients
+  without an `Origin` header remain supported. With auth disabled, a request
+  whose `Host` is not `localhost`, a loopback address or
   the `listen` address is refused (DNS rebinding), unless
   `allow_unauthenticated_remote` is set.
 - **The PIN is in the journal.** `serve` prints the login PIN to stdout,
