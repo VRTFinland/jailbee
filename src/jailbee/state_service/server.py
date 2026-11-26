@@ -29,6 +29,8 @@ from jailbee.state_service.protocol import (
     ActionFinish,
     ActionOutput,
     ActionRejected,
+    ActionSyncEnd,
+    ActionSyncStart,
     Active,
     DismissAction,
     Hello,
@@ -182,6 +184,8 @@ class StateServer:
                     frozenset(hello.excluded_prefixes),
                 )
                 self._clients.add(client)
+                if not self._send_action(client, ActionSyncStart()):
+                    return
                 for entry in self._actions.values():
                     if self._in_scope(entry, client):
                         if not self._send_action(client, replace(entry, output="")):
@@ -204,6 +208,8 @@ class StateServer:
                             ),
                         ):
                             return
+                if not self._send_action(client, ActionSyncEnd()):
+                    return
                 await writer.drain()
                 if self._latest is not None:
                     writer.write(encode(self._latest))
@@ -374,7 +380,13 @@ class StateServer:
     def _send_action(
         self,
         client: _Client,
-        message: ActionEntry | ActionOutput | ActionFinish | ActionRejected | ActionDismissed,
+        message: ActionEntry
+        | ActionOutput
+        | ActionFinish
+        | ActionRejected
+        | ActionDismissed
+        | ActionSyncStart
+        | ActionSyncEnd,
     ) -> bool:
         transport = client.writer.transport
         if client not in self._clients or transport is None or transport.is_closing():

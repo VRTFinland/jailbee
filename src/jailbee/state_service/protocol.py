@@ -70,7 +70,8 @@ from jailbee.update_check import UpdateNotice
 # 43 adds ContainerInfo.start_identity for precise host-side boot recovery.
 # 44 distinguishes registered repos with unloadable configs from true orphans.
 # 45 adds action hosting messages. 46 adds action scope and dismissal.
-PROTOCOL = 46
+# 47 adds an atomic action replay boundary.
+PROTOCOL = 47
 
 # Allows escaped output tails and ordinary snapshots while bounding incoming lines.
 MAX_WIRE_LINE_BYTES = 16 * 1024 * 1024
@@ -180,6 +181,16 @@ class ActionEntry:
 
 
 @dataclass(frozen=True)
+class ActionSyncStart:
+    """Begin a complete in-scope action replay."""
+
+
+@dataclass(frozen=True)
+class ActionSyncEnd:
+    """Commit the preceding action replay."""
+
+
+@dataclass(frozen=True)
 class ActionOutput:
     entry_id: int
     chunk: str
@@ -220,6 +231,8 @@ Message = (
     | GatherError
     | RunAction
     | ActionEntry
+    | ActionSyncStart
+    | ActionSyncEnd
     | ActionOutput
     | ActionFinish
     | ActionRejected
@@ -230,6 +243,8 @@ Message = (
 _NAMES: dict[type[Any], str] = {
     RunAction: "run_action",
     ActionEntry: "action_entry",
+    ActionSyncStart: "action_sync_start",
+    ActionSyncEnd: "action_sync_end",
     ActionOutput: "action_output",
     ActionFinish: "action_finish",
     ActionRejected: "action_rejected",
