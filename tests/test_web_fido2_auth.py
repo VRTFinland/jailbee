@@ -308,7 +308,9 @@ def test_pin_guessing_does_not_lock_out_a_security_key(
     register(setup_client, setup_pin, key)
     for _ in range(6):
         last = client.post(
-            "/api/auth", json={"method": "pin", "pin": "x", "device_name": "x"}, headers=public_host()
+            "/api/auth",
+            json={"method": "pin", "pin": "x", "device_name": "x"},
+            headers=public_host(),
         )
     assert last.status_code == 429
 
