@@ -93,8 +93,10 @@ against; chosen automatically from its parent, PR head, or host branch.
 _Avoid_: base — that is `base_branch`
 
 **Prompt channel**:
-The private connection over which a command started by a dashboard puts its
-questions to that dashboard and receives the answers.
+The private connection over which a dashboard action's child command puts its
+questions to the action host and receives answers. Background dashboard actions
+are hosted by the state service; commands run directly in a terminal keep their
+terminal prompts.
 _Avoid_: askpass, prompt hook
 
 **Pending question**:

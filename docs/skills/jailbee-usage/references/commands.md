@@ -1184,7 +1184,13 @@ The repo menu also carries `Apply config…` (runs `jailbee apply` in the termin
 The terminal dashboard's notification badge separates running actions (`⟳`),
 pending questions (`?`, theme accent, omitted when zero) and failures (`✗`, red).
 Queue rows show questions as "awaiting answer" in the accent colour, not as errors.
-Click any badge count or press `Q` to open the queue.
+Click any badge count or press `Q` to open the queue. Background actions are
+hosted by the shared state service. Entries, live output and dismissal are shared
+by dashboards in the same repo scope; reconnecting includes output so far.
+Entries persist until dismissed. A service restart marks unfinished entries as
+"interrupted", in the failure colour and count. Only the originating dashboard
+opens a critical action's modal automatically. Shared questions and action-aware
+service lifetime are later slices; for now a service-hosted question is cancelled.
 
 The menu, in order: `Attach tmux`, then `Launch →` with one "Launch
 `<name>`" entry per app the repo's GUI registry declares (browsers, the
