@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 import uuid
 from dataclasses import dataclass
@@ -74,19 +75,23 @@ def _sessions(cfg: Config, container: str, tree: dict[int, tuple[int, int]]) -> 
     return sessions
 
 
+class ContainerNotRunningError(Exception):
+    """The selected container is not running."""
+
+
 def live_sessions(cfg: Config, incus: Incus, container: str) -> list[AgentSession]:
     """Return recorded sessions whose process identity still matches the container."""
     if not _running(incus, container):
-        return []
+        raise ContainerNotRunningError("Container not running")
     return _sessions(cfg, container, _processes(incus, container))
 
 
 def _resolve(
     cfg: Config, incus: Incus, container: str, session_id: str
 ) -> tuple[Outcome, str | None]:
-    if not _running(incus, container):
-        return Outcome("container_not_running", "Container not running"), None
     try:
+        if not _running(incus, container):
+            return Outcome("container_not_running", "Container not running"), None
         tree = _processes(incus, container)
         matches = [s for s in _sessions(cfg, container, tree) if s.session_id == session_id]
         if len(matches) != 1:
@@ -146,7 +151,12 @@ def send(cfg: Config, incus: Incus, container: str, session_id: str, text: str) 
             incus.exec(container, _runuser(f"tmux paste-buffer -pr -b {buffer} -t {pane}"))
             incus.exec(container, _runuser(f"tmux send-keys -t {pane} Enter"))
         finally:
-            incus.exec(container, _runuser(f"tmux delete-buffer -b {buffer}"))
+            try:
+                incus.exec(container, _runuser(f"tmux delete-buffer -b {buffer}"))
+            except IncusError:
+                logging.getLogger(__name__).warning(
+                    "Could not delete tmux input buffer", exc_info=True
+                )
     except IncusError as exc:
         return Outcome("delivery_error", f"Delivery failed: {exc}")
     return Outcome("delivered", "Delivered")
