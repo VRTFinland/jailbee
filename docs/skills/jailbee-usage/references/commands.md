@@ -1285,8 +1285,9 @@ happened.
 
 Prompt-channel confirmations show two compact rows, "No" then "Yes", with
 only a full-width highlight marking the answer Enter chooses. Up/Down moves;
-Tab, Shift-Tab, Left and Right also switch rows; y/n answers immediately;
-Esc or Ctrl-C cancels. The highlight starts on the command's default ("No"
+Tab, Shift-Tab, Left and Right also switch rows; y/n answers immediately.
+Esc means `Later`, leaving the action question pending; Ctrl-C means
+`Abort command`. The highlight starts on the command's default ("No"
 if absent). Destructive questions always start on "No" and have a red frame
 and `DESTRUCTIVE:` title, not a red answer row.
 
