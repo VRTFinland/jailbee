@@ -26,7 +26,6 @@ from jailbee.config.models_remote import RemotePolicy
 from jailbee.dashboard import runner as drunner
 from jailbee.dashboard.commands import Transport
 from jailbee.dashboard.hit import Hit
-from jailbee.dashboard.notifications import should_show_question
 from jailbee.dashboard.runner import ActionOutcome, ActionRun
 from jailbee.dashboard.tui import scrollbar
 from jailbee.dashboard.tui.frame import DashboardView
@@ -120,7 +119,6 @@ class _OnAppThread:
         self._lock = threading.Lock()
         self._pending: list[tuple[int, str]] = []
         self._scheduled = False
-        self.asking_entry: int | None = None
 
     def entry_id(self, index: int) -> int:
         return self._inner.entry_id(index)
@@ -147,7 +145,6 @@ class _OnAppThread:
     def question(self, index: int, asking: bool) -> None:
         def ask() -> None:
             self.drain()
-            self.asking_entry = self._inner.entry_id(index) if asking else None
             self._inner.question(index, asking)
 
         self._on_app_thread(ask)
@@ -217,6 +214,7 @@ class DashboardApp(App[int], inherit_bindings=False):
         self._pending_prompts: set[asyncio.Future[Any]] = set()
         self._prompts_closed = False
         self._entry_answers: dict[int, asyncio.Future[Any]] = {}
+        self._disconnected_entries: set[int] = set()
         self._shown_questions: set[int] = set()
         self._output_screen: OutputScreen | None = None  # the one a live entry follows
         self._critical_screen: OutputScreen | None = None
@@ -286,9 +284,11 @@ class DashboardApp(App[int], inherit_bindings=False):
                     run=self.action_runner,
                     transport=session.transport,
                     policy=session.ssh_policy,
-                    on_prompt=lambda prompt: self._ask_from_worker(
-                        prompt, None if relay is None else relay.asking_entry
+                    on_prompt=self._ask_from_worker,
+                    on_entry_prompt=lambda entry_id, prompt: self._ask_from_worker(
+                        prompt, entry_id
                     ),
+                    on_entry_disconnect=self._disconnect_entry,
                     progress=relay,
                     client=self.remote_client,
                     **extra,
@@ -358,6 +358,15 @@ class DashboardApp(App[int], inherit_bindings=False):
         except (Exception, asyncio.CancelledError):
             logger.debug("app-thread post dropped", exc_info=True)
 
+    def _disconnect_entry(self, entry_id: int) -> None:
+        def cancel() -> None:
+            self._disconnected_entries.add(entry_id)
+            answer = self._entry_answers.get(entry_id)
+            if answer is not None:
+                self._resolve_answer(answer, None)
+
+        self._on_app_thread(cancel)
+
     def _ask_from_worker(self, prompt: Prompt, entry_id: int | None = None) -> Any:
         """Block the worker until the UI answers, possibly later from the queue."""
         if self._prompts_closed or threading.get_ident() == self._ui_thread:
@@ -368,7 +377,9 @@ class DashboardApp(App[int], inherit_bindings=False):
             return None  # the dashboard is closing: cancel the question
 
     async def _ask(self, prompt: Prompt, entry_id: int | None = None) -> Any:
-        if self._prompts_closed:
+        if self._prompts_closed or entry_id in self._disconnected_entries:
+            if entry_id is not None:
+                self._disconnected_entries.discard(entry_id)
             return None
         answer: asyncio.Future[Any] = asyncio.get_running_loop().create_future()
         self._pending_prompts.add(answer)
@@ -377,23 +388,17 @@ class DashboardApp(App[int], inherit_bindings=False):
             self.push_screen(modal_for(prompt), lambda value: self._resolve_answer(answer, value))
         else:
             self._entry_answers[entry.id] = answer
-            self.session.queue.set_question(entry.id, prompt)
-            self.session.queue_changed()
-            if should_show_question(
-                critical_foreground=self.session.question_in_foreground(entry.id)
-                and self.screen is self._critical_screen
+            if self.session.question_arrived(
+                entry.id, prompt, on_top=self.screen is self._critical_screen, queue_key="Q"
             ):
                 self.show_question(entry.id)
-            else:
-                self.session.set_notice(f"'{entry.command}' awaiting answer · Q: queue")
         try:
             return await answer
         finally:
             self._pending_prompts.discard(answer)
             if entry is not None:
                 self._entry_answers.pop(entry.id, None)
-                self.session.queue.set_awaiting(entry.id, False)
-                self.session.queue_changed()
+                self._disconnected_entries.discard(entry.id)
 
     @staticmethod
     def _resolve_answer(answer: asyncio.Future[Any], value: Any) -> None:

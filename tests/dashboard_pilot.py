@@ -634,6 +634,9 @@ class BareTerminal:
         # Closing the latest modal: what "continue in background" and Esc both do.
         self.modal = on_close
 
+    def show_question(self, entry_id):  # type: ignore[no-untyped-def]
+        self.questions = [*getattr(self, "questions", []), entry_id]
+
     def update_output(self, text, failed=False):  # type: ignore[no-untyped-def]
         self.updated = [*getattr(self, "updated", []), text]
         self.updated_failed = [*getattr(self, "updated_failed", []), failed]

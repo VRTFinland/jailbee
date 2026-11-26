@@ -178,6 +178,96 @@ def test_critical_question_still_opens_after_another_live_output_was_closed(mock
     asyncio.run(scenario())
 
 
+def test_dead_child_clears_pending_question(mocker, tmp_path):
+    import threading
+
+    from jailbee.prompt_channel import CommandEnd
+
+    close_child = Event()
+
+    class Child:
+        stdout = None
+
+        def __init__(self, sock):
+            self.thread = threading.Thread(target=self.run, args=(sock,))
+            self.thread.start()
+
+        def run(self, sock):
+            end = CommandEnd(sock)
+            # Send a prompt then close without waiting for its answer.
+            end._ch.handshake()
+            end._ch.send(Prompt(1, "text", "Waiting?").to_json())
+            close_child.wait(5)
+            end.close()
+
+        def wait(self):
+            self.thread.join(5)
+            return 1
+
+        def kill(self):
+            close_child.set()
+
+    def spawn(argv, *, cwd, env, prompt_sock):
+        return Child(prompt_sock)
+
+    app = make_app(mocker, [RepoGroup("alpha", str(tmp_path), None, [ci("alpha-a", "alpha")])])
+    app.threaded_actions = True
+    app.action_runner = drunner.run_action
+    app.action_spawn = spawn
+
+    async def scenario():
+        async with app.run_test() as pilot:
+            try:
+                app.session.run_dashboard_command("alpha-a", "container", ["start", "alpha-a"])
+                async with asyncio.timeout(5):
+                    while not any(e.pending_question for e in app.session.queue):
+                        await pilot.pause(0.01)
+                close_child.set()
+                async with asyncio.timeout(5):
+                    while not any(e.finished for e in app.session.queue):
+                        await pilot.pause(0.01)
+                entry = next(iter(app.session.queue))
+                assert entry.state == "failed"
+                assert entry.pending_question is None
+            finally:
+                close_child.set()
+                app.exit()
+
+    asyncio.run(scenario())
+
+
+def test_critical_question_waits_when_another_screen_is_on_top(mocker, tmp_path):
+    release = Event()
+
+    def run(argv, *, on_prompt, **kwargs):
+        assert release.wait(10)
+        on_prompt(Prompt(1, "text", "Critical question?"))
+        return drunner.RunResult(status=0)
+
+    app = make_app(mocker, [RepoGroup("alpha", str(tmp_path), None, [ci("alpha-a", "alpha")])])
+    app.action_runner = run
+    app.threaded_actions = True
+
+    async def scenario():
+        async with app.run_test() as pilot:
+            try:
+                app.session.run_dashboard_command("alpha-a", "container", ["merge", "alpha-a"])
+                await pilot.pause()
+                app.show_output("Other", "Output", failed=False, live=True)
+                await pilot.pause()
+                other_screen = app.screen
+                release.set()
+                async with asyncio.timeout(5):
+                    while not any(e.pending_question for e in app.session.queue):
+                        await pilot.pause(0.01)
+                assert app.screen is other_screen
+            finally:
+                release.set()
+                app.exit()
+
+    asyncio.run(scenario())
+
+
 def test_exit_cancels_all_deferred_commands(mocker, tmp_path):
     answers = []
     finished = Event()
@@ -206,8 +296,67 @@ def test_exit_cancels_all_deferred_commands(mocker, tmp_path):
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("critical_foreground, expected", [(False, False), (True, True)])
-def test_question_routing_has_no_frontend_dependency(critical_foreground, expected):
-    from jailbee.dashboard.notifications import should_show_question
+def test_batch_prompt_carries_entry_identity(tmp_path):
+    seen = []
 
-    assert should_show_question(critical_foreground=critical_foreground) is expected
+    class Progress:
+        def entry_id(self, index):
+            return [42, 77][index]
+
+        def output(self, index, chunk):
+            pass
+
+        def question(self, index, asking):
+            pass
+
+    def run(argv, *, on_prompt, **kwargs):
+        on_prompt(Prompt(1, "text", argv[0]))
+        return drunner.RunResult(status=0)
+
+    drunner.run_actions(
+        [drunner.ActionRun([name], tmp_path) for name in ("first", "second")],
+        run=run,
+        progress=Progress(),
+        on_entry_prompt=lambda entry_id, prompt: seen.append((entry_id, prompt.question)),
+    )
+    assert seen == [(42, "first"), (77, "second")]
+
+
+def test_queue_cursor_stays_on_selected_question(mocker, tmp_path):
+    from tests.dashboard_pilot import bare_session
+
+    session, terminal = bare_session(mocker, [RepoGroup("alpha", str(tmp_path), None, [])])
+    first = session.queue.start("first", "alpha")
+    session.queue.start("second", "alpha")
+    session.queue.set_question(first, Prompt(1, "text", "Name?"))
+    session.open_queue()
+    picker = session.overlay
+    session.picker_chosen(picker.entries[1])
+    assert terminal.questions == [first]
+    assert session.overlay.start_index == 1
+
+
+def test_importing_question_core_does_not_load_textual():
+    import subprocess
+    import sys
+
+    subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys; import jailbee.dashboard.notifications; "
+            "import jailbee.dashboard.tui.session; assert 'textual' not in sys.modules",
+        ],
+        check=True,
+    )
+
+
+def test_question_arrival_updates_queue_and_notice(mocker, tmp_path):
+    from tests.dashboard_pilot import bare_session
+
+    session, _ = bare_session(mocker, [RepoGroup("alpha", str(tmp_path), None, [])])
+    entry_id = session.queue.start("jailbee start alpha", "alpha")
+    prompt = Prompt(1, "text", "Name?")
+    assert not session.question_arrived(entry_id, prompt, on_top=False, queue_key="N")
+    assert session.queue.get(entry_id).pending_question == prompt
+    assert "N" in session.notice
