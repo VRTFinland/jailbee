@@ -17,7 +17,6 @@ import subprocess
 import sys
 import threading
 import time
-from collections import deque
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import replace
 from typing import IO, TYPE_CHECKING, Any
@@ -137,9 +136,8 @@ class StateClient:
         self._question_resolutions: deque[ActionQuestionResolved] = deque()
         self._action_rejections: dict[int, str] = {}
         self._replay_entries: dict[int, ActionEntry] | None = None
-        self._action_events: deque[
-            ActionEntry | ActionOutput | ActionFinish | ActionRejected | ActionDismissed
-        ] = deque(maxlen=256)
+        self._connection_generation = 0
+        self._action_synced = False
         self._status: str | None = None
         self._active = True
         self._closed = threading.Event()
@@ -192,13 +190,14 @@ class StateClient:
                 raise StateServiceUnavailable("state service disconnected")
             self._sock.sendall(encode(request))
 
-    def drain_action_events(
-        self,
-    ) -> list[ActionEntry | ActionOutput | ActionFinish | ActionRejected | ActionDismissed]:
+    def action_connection(self) -> int | None:
+        """Generation of the connected socket after its action replay completes."""
         with self._lock:
-            events = list(self._action_events)
-            self._action_events.clear()
-            return events
+            return (
+                self._connection_generation
+                if self._sock is not None and self._action_synced
+                else None
+            )
 
     def action_rejection(self, entry_id: int) -> str | None:
         with self._lock:
@@ -290,6 +289,8 @@ class StateClient:
                     sock.close()
                     return
                 self._sock = sock
+                self._connection_generation += 1
+                self._action_synced = False
                 # Replayed under the lock, so a concurrent `set_active` lands
                 # wholly before this send (and is what we replay) or after it.
                 if not self._active:
@@ -309,6 +310,7 @@ class StateClient:
             finally:
                 with self._lock:
                     self._sock = None
+                    self._action_synced = False
                 reader.close()
                 sock.close()
             if self._closed.is_set():
@@ -334,6 +336,7 @@ class StateClient:
                 if self._replay_entries is not None:
                     self._action_entries = self._replay_entries
                     self._replay_entries = None
+                    self._action_synced = True
                 if self._replay_questions is not None:
                     self._action_questions = self._replay_questions
                     self._replay_questions = None
@@ -352,14 +355,12 @@ class StateClient:
         if isinstance(message, ActionDismissed):
             with self._lock:
                 self._action_entries.pop(message.entry_id, None)
-                self._action_events.append(message)
             self._notify()
             return False
         if isinstance(message, (ActionEntry, ActionOutput, ActionFinish, ActionRejected)):
             from jailbee.dashboard.runner import OUTPUT_DROPPED_MARKER, OUTPUT_KEEP_CHARS
 
             with self._lock:
-                self._action_events.append(message)
                 entries = (
                     self._replay_entries
                     if self._replay_entries is not None
