@@ -30,6 +30,16 @@ def test_say_uses_one_live_session_and_stdin(cli_seams):
     assert "Using session abc" in result.output
 
 
+def test_say_reports_dialog_delivery_warning_as_success(cli_seams):
+    delivered, _ = cli_seams
+    delivered.return_value = agent_input.Outcome(
+        "delivered_with_warning", "The text went to an open terminal dialog; check it there."
+    )
+    result = CliRunner().invoke(cli.app, ["agent", "say", "box", "hello"])
+    assert result.exit_code == 0
+    assert "The text went to an open terminal dialog; check it there." in result.output
+
+
 def test_say_requires_session_when_several_live(cli_seams):
     delivered, sessions = cli_seams
     sessions.append(AgentSession("claude", 43, 11, "idle", None, None, None, "def"))
@@ -46,8 +56,6 @@ def test_say_requires_session_when_several_live(cli_seams):
         ("no_live_session", 4),
         ("unsupported_agent", 5),
         ("no_pane", 6),
-        ("waiting_at_dialog", 7),
-        ("unsent_terminal_input", 8),
         ("delivery_error", 9),
     ],
 )

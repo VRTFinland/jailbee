@@ -378,7 +378,7 @@ class RemoteUnlocks:
     network: bool = False
     mounts: bool = False
     orchestration: bool = False
-    agent_chat: bool = False
+    agent_chat: bool = True
     # Whether `remote.ssh.waypipe` is on: only worded into the GUI refusal.
     waypipe_available: bool = False
     # The transport named in refusals (`remote.<transport>.network is on`).
@@ -392,7 +392,7 @@ class RemoteUnlocks:
         waypipe: bool | None = None,
         transport: RemoteTransport = "ssh",
     ) -> RemoteUnlocks:
-        """The switches `config` turns on; all off without a config.
+        """The switches `config` turns on; only agent chat is on without a config.
 
         ``transport`` names the remote transport; waypipe is an SSH-only
         feature, so only an SSH policy (a `RemoteSSHConfig`) can enable it.

@@ -78,7 +78,7 @@ class WebDeps:
     file_watch: WatchFactory | None = None
     """Starts a watch on a followed transcript; None uses inotify (polling
     where it is unavailable)."""
-    agent_chat: bool = False
+    agent_chat: bool = True
     incus_factory: Callable[[], Incus] | None = None
     warm_session_cache: bool = False
     """Read every visible repository's session info in the background at

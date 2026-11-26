@@ -247,6 +247,9 @@ describe("SessionView live follow", () => {
         setPageGeometry(5000, 100)
         const scrollTo = vi.spyOn(window, "scrollTo").mockImplementation(() => {})
         const {append} = await mountLive("/repos/alpha/sessions/claude/s-1")
+        window.dispatchEvent(new Event("wheel"))
+        window.dispatchEvent(new Event("scroll"))
+        scrollTo.mockClear()
         await append(sessionKey, [answer])
         expect(scrollTo).not.toHaveBeenCalled()
     })
@@ -260,6 +263,7 @@ describe("SessionView live follow", () => {
         })
         const scrollTo = vi.spyOn(window, "scrollTo").mockImplementation(() => {})
         const {wrapper, append} = await mountLive("/repos/alpha/sessions/claude/s-1")
+        scrollTo.mockClear()
         window.dispatchEvent(new Event("wheel"))
         y = 3300 // The first frame still shows the end.
         window.dispatchEvent(new Event("scroll"))
@@ -326,6 +330,9 @@ describe("SessionView live follow", () => {
         Element.prototype.scrollIntoView = scrollIntoView
         try {
             const {wrapper, append} = await mountLive("/repos/alpha/sessions/claude/s-1")
+            window.dispatchEvent(new Event("wheel"))
+            y = 0
+            window.dispatchEvent(new Event("scroll"))
             await append(sessionKey, [answer])
             await wrapper.get(".jump-latest").trigger("click")
             // An asynchronous jump may pass the end before settling at the
@@ -481,6 +488,7 @@ describe("SessionView in the e-ink profile", () => {
         setPageGeometry(1000, 200)
         updateSettings({displayProfile: "eink"})
         const {wrapper, append} = await mountLive("/repos/alpha/sessions/claude/s-1")
+        scrollTo.mockClear()
         await append(sessionKey, [answer, second])
         expect(wrapper.findAll(".entry.assistant")).toHaveLength(0)
         expect(wrapper.get(".new-messages").text()).toBe("2 new messages ↓")
@@ -566,6 +574,10 @@ describe("SessionView in the e-ink profile", () => {
             window.dispatchEvent(new Event("scroll"))
         })
         const {wrapper, connection} = await mountLive("/repos/alpha/sessions/claude/s-1")
+        window.dispatchEvent(new Event("wheel"))
+        y = 0
+        window.dispatchEvent(new Event("scroll"))
+        await new Promise(resolve => requestAnimationFrame(resolve))
         for (let i = 0; i < 5; i++) await wrapper.get("button.next").trigger("click")
         expect(y).toBe(2960)
         connection(false)

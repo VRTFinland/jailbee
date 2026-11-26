@@ -5,6 +5,7 @@
 // Portalled overlays preserve the sample panel's theme and display profile.
 import {reactive} from "vue"
 import AnswerPanel from "../components/ui/AnswerPanel.vue"
+import AgentComposer from "../components/AgentComposer.vue"
 import Disclosure from "../components/ui/Disclosure.vue"
 import TranscriptEntry from "../components/ui/TranscriptEntry.vue"
 import Button from "../components/ui/Button.vue"
@@ -300,6 +301,9 @@ function typeStyle(token: string): Record<string, string> {
 
                     <div class="group">
                         <h3 class="group-title">Reader</h3>
+                        <AgentComposer :available="true" :initial-expanded="true" status="Delivered" />
+                        <AgentComposer :available="true" :initial-expanded="false" status="Delivered" />
+                        <AgentComposer :available="true" :panel-open="true" status="Sending…" />
                         <TranscriptEntry kind="user">Make the title bar one row.</TranscriptEntry>
                         <TranscriptEntry>I'll update the reader and run the suite.</TranscriptEntry>
                         <TranscriptEntry kind="user" meta>Agent context</TranscriptEntry>

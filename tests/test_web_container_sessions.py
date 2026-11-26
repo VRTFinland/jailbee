@@ -303,7 +303,6 @@ def test_a_session_two_containers_saw_belongs_to_the_one_that_saw_it_last(
         "no_live_session",
         "waiting_at_dialog",
         "no_pane",
-        "unsent_terminal_input",
     ],
 )
 def test_web_chat_delivers_and_audits_exact_message(home, tmp_path, monkeypatch, refusal):
@@ -330,8 +329,7 @@ def test_web_chat_delivers_and_audits_exact_message(home, tmp_path, monkeypatch,
     incus.list_containers.return_value = [{"name": "alpha-1", "status": "Running"}]
     incus.exec.side_effect = [
         "42 10 123 S 42 42 5\n10 1 22 S 10 42 5\n",
-        "%1 10 1\n",
-        "────────\n> \n────────\n",
+        "%1 10\n",
     ] * 2 + ["", "", ""]
     if refusal == "container_not_running":
         incus.list_containers.return_value = []
@@ -350,13 +348,7 @@ def test_web_chat_delivers_and_audits_exact_message(home, tmp_path, monkeypatch,
             )
         )
     elif refusal == "no_pane":
-        incus.exec.side_effect = ["42 10 123 S 42 42 5\n10 1 22 S 10 42 5\n", "%1 99 1\n"]
-    elif refusal == "unsent_terminal_input":
-        incus.exec.side_effect = [
-            "42 10 123 S 42 42 5\n10 1 22 S 10 42 5\n",
-            "%1 10 1\n",
-            "────────\n> draft\n────────\n",
-        ]
+        incus.exec.side_effect = ["42 10 123 S 42 42 5\n10 1 22 S 10 42 5\n", "%1 99\n"]
     snap = snapshot_of(repo_group("alpha", container("alpha-1", agent_status=live(SESSION_A))))
     engine = get_engine()
     pin = PinHolder(generate=pin_sequence())
@@ -381,8 +373,9 @@ def test_web_chat_delivers_and_audits_exact_message(home, tmp_path, monkeypatch,
             response = client.post(
                 f"/api/repos/alpha/sessions/claude/{SESSION_A}/messages", json={"text": text}
             )
-            assert response.json()["code"] == (refusal or "delivered")
-            if refusal:
+            expected = "delivered_with_warning" if refusal == "waiting_at_dialog" else refusal
+            assert response.json()["code"] == (expected or "delivered")
+            if refusal and refusal != "waiting_at_dialog":
                 incus.exec_with_input.assert_not_called()
             else:
                 assert incus.exec_with_input.call_args.args[2] == "hello\nworld"

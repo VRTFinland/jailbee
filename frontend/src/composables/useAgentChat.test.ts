@@ -2,6 +2,29 @@ import {describe, expect, it, vi} from "vitest"
 import {useAgentChat} from "./useAgentChat"
 
 describe("agent chat", () => {
+    it("accepts dialog delivery and preserves its warning without waiting for an echo", async () => {
+        const warning = "The text went to an open terminal dialog; check it there."
+        const chat = useAgentChat(() => true, async () => ({code: "delivered_with_warning", message: warning}))
+        chat.draft.value = "hello"
+        expect(await chat.send("hello")).toBe(true)
+        expect(chat.draft.value).toBe("")
+        expect(chat.awaiting.value).toBe(false)
+        expect(chat.status.value).toBe(warning)
+        chat.observe([{kind: "user", id: "1", html: "", text: "hello", meta: false, label: "", expandable: false, timestamp: null}])
+        expect(chat.status.value).toBe(warning)
+    })
+    it("confirms Claude's real pasted user-turn text with expanded tabs", async () => {
+        const chat = useAgentChat(() => true, async () => ({code: "delivered", message: ""}))
+        // Claude Code 2.1.332 expands each pasted tab to four spaces before recording.
+        const text = "  **bold**\nsecond line  \nthird\tline  "
+        chat.draft.value = text
+        await chat.send(text)
+        chat.observe([{kind: "user", id: "737de03e-9079-4851-b4f3-2cbc0dd3ff71", timestamp: "2026-11-26T21:35:51.717Z",
+            html: "", text: "  **bold**\nsecond line  \nthird    line", meta: false, label: null, expandable: false}])
+        expect(chat.status.value).toBe("Delivered")
+        expect(chat.awaiting.value).toBe(false)
+        chat.reset()
+    })
     it("unlocks a slash command when no ordinary transcript entry arrives", async () => {
         vi.useFakeTimers()
         const chat = useAgentChat(() => true, async () => ({code: "delivered", message: ""}))

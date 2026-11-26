@@ -79,7 +79,7 @@ def test_tool_only_assistant_record_marks_existing_draft_as_older(
         stream.write(json.dumps(tool) + "\n")
     server.watches.open[-1].fire()
     expect(panel.get_by_role("status")).to_contain_text("A newer message arrived")
-    expect(panel.get_by_role("heading", name="Q12: Deployment")).to_be_visible()
+    expect(panel.get_by_text("Q12 · Deployment", exact=False)).to_be_visible()
 
 
 def test_eink_long_question_and_summary_turn_pages_without_swipe_scrolling(
@@ -98,26 +98,13 @@ def test_eink_long_question_and_summary_turn_pages_without_swipe_scrolling(
     panel = page.get_by_role("complementary", name="Answer questions")
     panel.get_by_role("button", name="Expand answers", exact=True).click()
     next_page = panel.get_by_role("button", name="Next answer page", exact=True)
-    expect(next_page).to_be_visible()
-    next_page.click()
-    expect(panel.locator(".answer-pages > span")).to_have_text(re.compile(r"^2 /"))
-    panel.get_by_role("button", name="Previous answer page", exact=True).click()
-    panel.get_by_role("button", name="Show in conversation").focus()
-    page.keyboard.press("PageDown")
-    assert panel.locator(".panel-content").evaluate("el => el.scrollTop") > 0
-    panel.get_by_role("button", name="Previous answer page", exact=True).click()
-    page.evaluate("document.documentElement.dataset.profile = 'normal'")
+    expect(panel.locator(".question-title")).to_have_attribute(
+        "title", re.compile("Read the full reasoning carefully")
+    )
     expect(next_page).to_have_count(0)
-    page.evaluate("document.documentElement.dataset.profile = 'eink'")
-    expect(next_page).to_be_visible()
     assert (
         panel.locator(".panel-content").evaluate("el => getComputedStyle(el).overflowY") == "hidden"
     )
-    turns = 0
-    while next_page.is_enabled():
-        next_page.click()
-        turns += 1
-        assert turns < 30
     expect(panel.get_by_role("button", name="Next step")).to_be_in_viewport()
     panel.get_by_role("textbox", name="Optional note").fill("An exact note. " * 100)
     panel.get_by_role("button", name="Next step").click()

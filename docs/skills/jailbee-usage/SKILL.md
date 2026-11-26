@@ -1017,13 +1017,25 @@ A `claude-jb` default is ignored (warning) while `litellm.enabled` is off. The o
 only spawned children. Allowed in a restricted remote SSH session.
 
 `jailbee agent say [NAME] [TEXT] [--session ID]` sends a user turn to a live
-Claude session; use `-` as TEXT to read stdin. It refuses dialogs, terminal drafts,
-and unknown prompt layouts. The web transcript reader uses the same send when
-`remote.web.agent_chat: true` (default false); `remote.ssh.agent_chat` separately
-gates the command over SSH. Controls except newline/tab are stripped; leading
+Claude session; use `-` as TEXT to read stdin. A send to an open terminal dialog
+succeeds with exit 0 and a warning to check it there; the paste and Enter may act
+on that dialog. A busy Claude queues the message as the next turn. A paste joins real text already
+typed in the terminal; Claude replaces its ghost suggestion. The web transcript
+reader uses the same send when
+`remote.web.agent_chat` is enabled (the default); `remote.ssh.agent_chat` separately
+gates the command over SSH and also defaults to true. Set either to false to opt out. Controls except newline/tab are stripped; leading
 `/` and `!` invoke Claude command and shell modes as at the terminal. The web
 reader also offers numbered questions in a non-modal answer panel, with
 recommendations, summary-only send and browser-local drafts per source message.
+Enter sends; Shift+Enter adds a line (also in free-text answers), and IME
+composition does not send. Opting out hides send controls. The composer starts
+collapsed on mobile and expanded on desktop; explicit visibility choices are
+remembered on the device. Hiding preserves its draft and send status remains
+visible. The composer hides while the answer panel is open; its **Hide** control
+preserves answers, distinct from discarding them. Its compact title row contains
+the question, step pills and controls; answer status shares the composer row.
+The reader opens at the bottom (last page on e-ink), unless a message anchor is
+specified, and preserves the usual follow behaviour afterwards.
 For disabled reasons, delivery status and auditing,
 see [web messaging](references/commands.md#web-dashboard).
 

@@ -134,6 +134,8 @@ def test_latest_answer_and_sticky_title_follow_the_readable_area(
         )
         page.reload()
         expect(page.get_by_role("heading", name=TITLE, exact=True)).to_be_visible()
+    page.evaluate("window.scrollTo(0, 0)")
+    wait_for_scroll_settled(page)
     latest = page.get_by_role("button", name="Latest answer")
     title = page.get_by_role("heading", name=TITLE, exact=True)
     expect(title).to_have_attribute("title", re.compile(r"Agent:.*Models:.*Session ID:", re.S))
@@ -188,8 +190,7 @@ def test_end_follow_and_new_messages_restore_follow(
         page.get_by_role("switch", name="Follow new messages on e-ink").check()
         page.go_back()
         expect(page.get_by_role("heading", name=TITLE, exact=True)).to_be_visible()
-    page.get_by_role("button", name="Latest answer").click()
-    page.get_by_role("button", name="Scroll to bottom").click()
+    # Opening the reader already lands at the transcript end.
     expect(page.locator(".jump-latest")).to_have_count(0)
     if profile == "eink":
         expect(page.get_by_role("button", name="Next", exact=False).last).to_be_disabled()
@@ -271,7 +272,14 @@ def test_keyboard_momentum_leaves_follow_off_after_end(
     # Move into the answer-jump spacer. One animated PageUp starts with the
     # transcript end still visible, then leaves it without another key event.
     wait_for_scroll_settled(page)
+    page.evaluate("""() => {
+        const end = document.querySelector('.transcript').getBoundingClientRect().bottom + scrollY;
+        const boundary = document.querySelector('.agent-composer').getBoundingClientRect().top;
+        window.scrollTo(0, end - boundary);
+    }""")
+    wait_for_scroll_settled(page)
     before = page.evaluate("window.scrollY")
+    page.mouse.move(width / 2, 200)
     page.mouse.wheel(0, 200)
     page.wait_for_function("previous => window.scrollY > previous + 150", arg=before)
     wait_for_scroll_settled(page)
@@ -310,6 +318,8 @@ def test_long_answer_jump_does_not_follow_away_from_its_start(
         )
         page.reload()
         expect(page.get_by_role("heading", name=TITLE, exact=True)).to_be_visible()
+    page.evaluate("window.scrollTo(0, 0)")
+    wait_for_scroll_settled(page)
     page.get_by_role("button", name="Latest answer").click()
     assert_latest_starts_below_header(page)
     position = page.evaluate("window.scrollY")
@@ -328,8 +338,9 @@ def test_eink_default_holds_new_entries_even_at_the_end(
     page.get_by_role("radio", name="E-ink (page turns").check()
     expect(page.get_by_role("switch", name="Follow new messages on e-ink")).not_to_be_checked()
     page.go_back()
-    page.get_by_role("button", name="Latest answer").click()
-    page.get_by_role("button", name="Scroll to bottom").click()
+    expect(page.get_by_role("heading", name=TITLE, exact=True)).to_be_visible()
+    wait_until(lambda: len(server.watches.open) == 1)
+    # Opening the reader already lands at the transcript end.
     expect(page.locator(".jump-latest")).to_have_count(0)
     position = page.evaluate("window.scrollY")
     with transcript.open("a") as stream:
@@ -394,6 +405,8 @@ def test_short_landscape_page_turns_do_not_skip_text(
     )
     page.reload()
     expect(page.get_by_role("heading", name=TITLE, exact=True)).to_be_visible()
+    page.evaluate("window.scrollTo(0, 0)")
+    wait_for_scroll_settled(page)
     # A larger guard stands in for a device's nonzero safe-area inset.
     page.evaluate("document.documentElement.style.setProperty('--guard-bottom', '60px')")
     next_page = page.get_by_role("button", name="Next", exact=False).last

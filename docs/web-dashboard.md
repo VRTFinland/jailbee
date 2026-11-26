@@ -118,15 +118,16 @@ rows in the e-ink theme.
 
 ## Message the agent
 
-Enable messaging in the host-global configuration, then restart the web server:
+Messaging is on by default. To disable it, set this in the host-global
+configuration and restart the web server:
 
 ```yaml
 remote:
   web:
-    agent_chat: true
+    agent_chat: false
 ```
 
-The default is `false`. This right is independent of command-running rights and
+This right is independent of command-running rights and
 applies to every logged-in device. With login disabled, anyone who can reach the
 server has it too. Repository visibility still applies: an excluded repository's
 sessions cannot be messaged.
@@ -134,17 +135,30 @@ sessions cannot be messaged.
 The transcript reader's **Message agent** field sends multi-line text to the
 session being read, using the same boundary as
 [`jailbee agent say`](commands.md). The message is pasted into that
-Claude session's tmux pane as an ordinary user turn, even while Claude is working.
+Claude session's tmux pane as an ordinary user turn; Claude queues it as the
+next turn while working and replaces its ghost suggestion with the pasted text.
+If real text is already typed in the terminal, the paste joins that text.
 There is no web marker in the transcript. Only Claude is supported, including
 `claude-jb`; subagent transcripts cannot be messaged.
 
-The field is disabled with a reason when permission is off, the session is no
-longer live, the agent is unsupported, or its pane cannot be found. Open dialogs,
-unsent terminal input and unknown prompt layouts refuse the send without clearing
-anything. A refusal keeps your text and shows the reason inline. Resolve dialogs
-or terminal drafts at the terminal before retrying. Avoid typing into the same
-pane while sending: checking the input and pasting cannot lock out concurrent
+Press Enter to send or Shift+Enter to add a line; the answer panel's free-text
+field uses the same keys. While an input method is composing text, Enter does not
+send. When permission is off, the composer and answer-panel send controls are
+hidden; questions remain readable in the transcript. The field is disabled with
+a reason when the session is no longer live, the agent is unsupported, or its
+pane cannot be found. Sending to an open terminal dialog still pastes the text
+and shows a warning to check the dialog there: the paste and Enter may act on the
+dialog rather than produce a user turn. A refusal keeps your text and shows the
+reason in the reserved status row, which also announces delivery updates. Avoid
+typing into the same pane while sending: the paste cannot lock out concurrent
 terminal typing.
+
+The composer starts collapsed on mobile widths and expanded on desktop. Use
+**Message agent** to expand it and focus the field, or hide it without losing its
+draft. An explicit show/hide choice is remembered on this device when browser
+storage is available. The composer is hidden while the answer panel is open and
+returns in its remembered state when the panel is hidden or answered. Send status
+remains visible when the composer is collapsed.
 
 **Waiting for transcript** means the text was pasted; **Delivered** appears only
 when a matching ordinary user entry arrives in the live transcript. The field
@@ -166,22 +180,27 @@ typing cannot be locked out.
 session, outcome and sanitized text in the local state database. Messages have
 separate retention and listing budgets so they cannot hide security events. Message text is not
 printed to the server's audit logger. Treat that database as private transcript
-data. `remote.ssh.agent_chat` is a separate, also default-off right for
+data. `remote.ssh.agent_chat` is a separate, also default-on right for
 `jailbee agent say` over SSH.
 
 ### Answer numbered questions
 
 When the latest assistant reply contains well-formed numbered ❓ questions, an
 **Answer** bar offers them as a non-modal panel. On a phone, expand it to half or
-full height; on a wide screen it sits beside the transcript. Collapse it to read
-on without losing answers. The conversation remains scrollable, and e-ink uses
+full height; on a wide screen it sits beside the transcript. The caret points in
+the direction the panel will move. Use **Hide** to read on without losing answers;
+discarding a draft is a separate action. The conversation remains scrollable, and e-ink uses
 hairlines without animation. Long question bodies and summaries use the panel's
 Previous/Next page controls in the e-ink profile rather than swipe scrolling.
 
 The panel shows one question at a time. Recommended choices are preselected and
 badged; choose another full-width option or add a note. A question without options
-has a text field. Use Back, Next or the step dots to move between questions;
-**Show in conversation** finds and highlights the question in the transcript.
+has a text field. The compact title row contains the question number, title, body,
+step dots and controls. Truncated text can be shown in full on demand. Use Back,
+Next or the step dots to move between questions; the **Show in conversation**
+icon finds and highlights the question in the transcript. The footer places
+**Discard answer** on the left and **Next** or **Send** on the right. Answer
+send status and warnings use the same reserved row as the composer.
 The last step lists every answer, marking nonempty answers to questions with a
 recommendation as recommendation or changed. Select a summary
 row to edit it. Only this summary offers Send, beside a preview of the exact
@@ -597,6 +616,11 @@ you tap it, revealing them and moving to the first new answer or the end. **Foll
 the transcript's end, using the pager's last content page rather than continuous
 scrolling. It is off by default and remembered on this device. The front page refreshes every
 minute, or immediately when you tap **Refresh**.
+
+Opening, navigating to or reloading a session transcript starts at the bottom;
+e-ink starts on the last page. An explicit message anchor takes precedence.
+After opening, the usual follow behaviour applies: new messages stay in view at
+the end without pulling the reader down when they have scrolled up.
 
 Session transcripts keep their title in a compact sticky breadcrumb bar while you
 read. The title tooltip and the menu's Session section show the agent, all models

@@ -116,6 +116,8 @@ def test_eink_page_turns_hold_new_messages_and_refresh_snapshot(
     open_session(page)
     pages = page.get_by_role("navigation", name="Pages", exact=True)
     indicator = pages.locator(".page-indicator")
+    # The reader opens on its last page. Start this page-turn exercise at the top.
+    page.evaluate("window.scrollTo(0, 0)")
     expect(indicator).to_have_text(re.compile(r"1 / [2-9]\d*"))
     expect(pages.get_by_role("button", name=re.compile("Prev"))).to_be_disabled()
     start = page.evaluate("window.scrollY")

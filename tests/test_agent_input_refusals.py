@@ -12,29 +12,23 @@ from jailbee.incus import IncusError
 @pytest.mark.parametrize(
     ("sessions", "tree", "panes", "expected"),
     [
-        ([], "42 10 123 S 42 42 34816\n", "%1 10 1", "no_live_session"),
+        ([], "42 10 123 S 42 42 34816\n", "%1 10", "no_live_session"),
         (
             [AgentSession("claude", 42, 99, "idle", None, None, None, "id")],
             "42 10 123 S 42 42 34816\n",
-            "%1 10 1",
+            "%1 10",
             "no_live_session",
         ),
         (
             [AgentSession("other", 42, 123, "idle", None, None, None, "id")],
             "42 10 123 S 42 42 34816\n",
-            "%1 10 1",
+            "%1 10",
             "unsupported_agent",
-        ),
-        (
-            [AgentSession("claude", 42, 123, "waiting", "permission", None, None, "id")],
-            "42 10 123 S 42 42 34816\n",
-            "%1 10 1",
-            "waiting_at_dialog",
         ),
         (
             [AgentSession("claude", 42, 123, "idle", None, None, None, "id")],
             "42 10 123 S 42 42 34816\n10 1 20 S 10 42 34816\n",
-            "%2 11 1",
+            "%2 11",
             "no_pane",
         ),
     ],
@@ -60,8 +54,7 @@ def test_successful_delivery_survives_buffer_cleanup_failure(monkeypatch):
     incus.list_containers.return_value = [{"name": "box", "status": "Running"}]
     incus.exec.side_effect = [
         "42 10 123 S 42 42 34816\n10 1 20 S 10 42 34816\n",
-        "%1 10 1",
-        "────\n> \n────",
+        "%1 10",
     ] * 2 + ["", "", IncusError("cleanup")]
     assert agent_input.send(Mock(), incus, "box", "id", "text").code == "delivered"
 
@@ -76,8 +69,9 @@ def test_cleanup_does_not_mask_delivery_failure(monkeypatch):
     incus.list_containers.return_value = [{"name": "box", "status": "Running"}]
     incus.exec.side_effect = [
         "42 10 123 S 42 42 34816\n10 1 20 S 10 42 34816\n",
-        "%1 10 1",
-        "────\n> \n────",
+        "%1 10",
+        "42 10 123 S 42 42 34816\n10 1 20 S 10 42 34816\n",
+        "%1 10",
         IncusError("paste failed"),
         IncusError("cleanup failed"),
     ]

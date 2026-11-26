@@ -94,6 +94,7 @@ def test_reader_prompt_uses_primary_container_and_jump_uses_shared_button(
         probe.remove();
         return style.backgroundColor === expected;
     }""")
+    page.evaluate("window.scrollTo(0, 0)")
     jump = page.locator(".jump-latest")
     expect(jump).to_have_attribute("data-variant", "primary")
     expect(jump.locator("svg[aria-hidden='true']")).to_have_count(1)

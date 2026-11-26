@@ -662,7 +662,15 @@ def test_agent_say_requires_agent_chat_even_with_full_command_policy(restricted:
     from jailbee.remote_ssh.router import RemoteUnlocks
 
     with pytest.raises(RouteError, match="agent_chat is off"):
-        policy_allows(("agent", "say", "box", "hi"), FULL, restrict_host=restricted)
+        policy_allows(
+            ("agent", "say", "box", "hi"),
+            FULL,
+            restrict_host=restricted,
+            unlocks=RemoteUnlocks(agent_chat=False),
+        )
+    assert (
+        policy_allows(("agent", "say", "box", "hi"), FULL, restrict_host=restricted) == "agent say"
+    )
     assert (
         policy_allows(
             ("agent", "say", "box", "hi"),

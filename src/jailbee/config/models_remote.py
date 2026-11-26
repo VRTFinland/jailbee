@@ -149,15 +149,15 @@ class RemotePolicy(BaseModel):
     """Transport-agnostic remote permissions: what a remote session may do.
 
     Shared by every remote transport (`remote.ssh`, `remote.web`). The defaults
-    here are the most restrictive; `RemoteSSHConfig` keeps its historical
-    looser ones. `restrict_host` is a plain field here and forced on for the web.
+    here are restrictive except for agent chat; `RemoteSSHConfig` keeps its
+    historical looser ones. `restrict_host` is forced on for the web.
     """
 
     model_config = ConfigDict(extra="forbid")
     _label: ClassVar[str] = "remote"
 
     agent_chat: bool = Field(
-        default=False,
+        default=True,
         description="Allow remote sessions to send messages to live agents.",
     )
     commands: RemoteCommandPolicy = Field(

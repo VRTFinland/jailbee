@@ -8,7 +8,7 @@ import {buildAnswerMessage, initialAnswers} from "../../questions"
 import type {Answer, QuestionSet} from "../../questions"
 
 const props = withDefaults(defineProps<{set: QuestionSet; available: boolean; busy?: boolean; answers?: Answer[]; reason?: string; error?: string; status?: string; initialHeight?: "bar" | "half" | "full"}>(), {initialHeight: "bar"})
-const emit = defineEmits<{send: [text: string]; show: [index: number]; height: [value: "bar" | "half" | "full"]; "update:answers": [value: Answer[]]}>()
+const emit = defineEmits<{send: [text: string]; show: [index: number]; discard: []; height: [value: "bar" | "half" | "full"]; "update:answers": [value: Answer[]]}>()
 const localAnswers = ref(initialAnswers(props.set))
 const answers = computed(() => props.answers ?? localAnswers.value)
 function updateAnswer(index: number, key: keyof Answer, value: string) {
@@ -56,6 +56,11 @@ function syncPage() {
     page.value = el.scrollTop + el.clientHeight >= el.scrollHeight - 1
         ? pages.value - 1 : Math.floor(el.scrollTop / el.clientHeight)
 }
+function answerKey(event: KeyboardEvent) {
+    if (event.key !== "Enter" || event.shiftKey || event.isComposing || event.keyCode === 229) return
+    event.preventDefault()
+    if (props.available && !props.busy && answers.value.every(answer => answer.value.trim())) emit("send", preview.value)
+}
 function pageKey(event: KeyboardEvent) {
     if (!eink.value || !['PageUp', 'PageDown'].includes(event.key)) return
     event.preventDefault()
@@ -83,24 +88,25 @@ onBeforeUnmount(() => { resize?.disconnect(); mutation?.disconnect(); profileObs
 <template>
     <aside ref="root" class="answer-panel" :data-height="height" aria-label="Answer questions" @keydown="pageKey">
         <header class="panel-header">
-            <Icon name="question" /><strong>{{ set.questions.length }} {{ set.questions.length === 1 ? 'question' : 'questions' }}</strong>
-            <Button v-if="height === 'bar'" variant="text" aria-label="Expand answers" @click="height = 'half'">Answer</Button>
+            <template v-if="height === 'bar'">
+                <Icon name="question" /><strong>{{ set.questions.length }} {{ set.questions.length === 1 ? 'question' : 'questions' }}</strong>
+                <Button variant="text" aria-label="Expand answers" @click="height = 'half'">Answer</Button>
+            </template>
             <template v-else>
-                <IconButton v-if="height === 'half'" icon="expand" label="Expand answer panel" @click="height = 'full'" />
-                <IconButton v-else icon="collapse" label="Reduce answer panel" @click="height = 'half'" />
-                <IconButton icon="close" label="Collapse answers" @click="height = 'bar'" />
+                <span class="question-title" :title="question ? `Q${question.number} · ${question.title} — ${question.body}` : 'Summary'">{{ question ? `Q${question.number} · ${question.title} — ${question.body}` : 'Summary' }}</span>
+                <nav class="steps" aria-label="Answer steps">
+                    <button v-for="(item, index) in set.questions" :key="item.number" type="button" :aria-label="`Question ${item.number}`" :aria-current="step === index ? 'step' : undefined" @click="step = index"><span class="dot" aria-hidden="true" /></button>
+                    <button type="button" aria-label="Summary" :aria-current="step === set.questions.length ? 'step' : undefined" @click="step = set.questions.length"><span class="dot" aria-hidden="true" /></button>
+                </nav>
+                <IconButton v-if="question" icon="jump" label="Show in conversation" @click="emit('show', step)" />
+                <IconButton v-if="height === 'half'" icon="collapse" label="Expand answer panel" @click="height = 'full'" />
+                <IconButton v-else icon="expand" label="Reduce answer panel" @click="height = 'half'" />
+                <IconButton icon="expand" label="Hide" @click="height = 'bar'" />
             </template>
         </header>
         <div v-if="height !== 'bar'" ref="content" class="panel-content" @scroll="syncPage" @focusin="nextTick(syncPage)">
             <slot name="sets" />
-            <nav class="steps" aria-label="Answer steps">
-                <button v-for="(item, index) in set.questions" :key="item.number" type="button" :aria-label="`Question ${item.number}`" :aria-current="step === index ? 'step' : undefined" @click="step = index"><span class="dot" aria-hidden="true" /></button>
-                <button type="button" aria-label="Summary" :aria-current="step === set.questions.length ? 'step' : undefined" @click="step = set.questions.length"><span class="dot" aria-hidden="true" /></button>
-            </nav>
             <template v-if="question">
-                <h2>Q{{ question.number }}: {{ question.title }}</h2>
-                <p>{{ question.body }}</p>
-                <Button variant="text" @click="emit('show', step)">Show in conversation</Button>
                 <fieldset v-if="question.options.length || question.recommendation === 'yes'">
                     <legend>Answer</legend>
                     <label v-if="question.recommendation === 'yes'" class="option"><input :checked="answers[step].value === 'yes'" type="radio" value="yes" :disabled="busy" :name="`answer-${question.number}`" @change="updateAnswer(step, 'value', 'yes')"> <span>Yes <strong>Recommendation</strong></span></label>
@@ -109,7 +115,7 @@ onBeforeUnmount(() => { resize?.disconnect(); mutation?.disconnect(); profileObs
                         <span>{{ option.letter }}) {{ option.text }} <strong v-if="question.recommendation === option.letter">Recommendation</strong></span>
                     </label>
                 </fieldset>
-                <Field v-if="!question.options.length" :model-value="answers[step].value" label="Answer" :disabled="busy" @update:model-value="updateAnswer(step, 'value', $event)" />
+                <Field v-if="!question.options.length" :model-value="answers[step].value" label="Answer" multiline placeholder="Enter to send; Shift+Enter for a new line" :disabled="busy" @keydown="answerKey" @update:model-value="updateAnswer(step, 'value', $event)" />
                 <Field :model-value="answers[step].note" label="Optional note" :disabled="busy" @update:model-value="updateAnswer(step, 'note', $event)" />
             </template>
             <template v-else>
@@ -119,15 +125,11 @@ onBeforeUnmount(() => { resize?.disconnect(); mutation?.disconnect(); profileObs
                 </button>
                 <h3>Message preview</h3><pre>{{ preview }}</pre>
             </template>
-            <p v-if="!available && reason" role="status">{{ reason }}</p>
-            <p v-if="error" role="alert">{{ error }}</p>
-            <p v-if="status" role="status">{{ status }}</p>
             <footer>
-                <Button v-if="step > 0" variant="text" aria-label="Previous step" @click="step--">Back</Button>
-                <Button v-if="question" variant="tonal" aria-label="Next step" @click="step++">Next</Button>
+                <Button variant="danger" aria-label="Discard answer" :disabled="busy" @click="emit('discard')">Discard answer</Button>
+                <Button v-if="question" variant="primary" aria-label="Next step" @click="step++">Next</Button>
                 <Button v-else variant="primary" aria-label="Send answers" :disabled="!available || busy || answers.some(answer => !answer.value.trim())" @click="emit('send', preview)">Send</Button>
             </footer>
-            <slot name="draft-actions" />
         </div>
         <nav v-if="height !== 'bar' && eink && pages > 1" class="answer-pages" aria-label="Answer pages">
             <Button variant="text" aria-label="Previous answer page" :disabled="page === 0" @click="turnPage(-1)">Previous</Button>
@@ -142,6 +144,10 @@ onBeforeUnmount(() => { resize?.disconnect(); mutation?.disconnect(); profileObs
 .panel-header, footer, .steps { display: flex; align-items: center; gap: var(--md-space-8); }
 .panel-header { flex: none; padding: var(--md-space-8); }
 .panel-header > strong { margin-right: auto; }
+.question-title { flex: 1; min-width: var(--md-space-32); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.steps { flex: 0 1 auto; min-width: var(--md-target-min); max-width: calc(var(--md-target-min) * 3); overflow-x: auto; gap: 0; }
+.steps button { flex: none; }
+.steps button { min-width: var(--md-target-min); min-height: var(--md-target-min); padding: var(--md-space-4); }
 .option input { accent-color: var(--md-primary); }
 .option strong { display: inline-block; padding: 0 var(--md-space-8); border: 1px solid var(--md-outline-variant); border-radius: var(--md-shape-small); font-size: var(--md-type-label-small-size); }
 .option span { overflow-wrap: anywhere; }
@@ -150,9 +156,8 @@ onBeforeUnmount(() => { resize?.disconnect(); mutation?.disconnect(); profileObs
 [data-profile="eink"] .panel-content { overflow: hidden; }
 .answer-pages { flex: none; display: flex; justify-content: space-between; align-items: center; padding: var(--md-space-4); }
 [data-height="full"] .panel-content { max-height: var(--md-layout-answer-full); }
-.steps { flex-wrap: wrap; }
 .steps button, .summary-row { min-height: var(--md-target-min); color: var(--md-on-surface); background: var(--md-surface-container-high); border: 1px solid var(--md-outline-variant); border-radius: var(--md-shape-small); padding: var(--md-space-8); cursor: pointer; }
-.steps button { min-width: var(--md-target-min); border: 0; background: transparent; }
+.steps button { border: 0; background: transparent; }
 .dot { display: block; width: var(--md-space-8); height: var(--md-space-8); border-radius: var(--md-shape-full); background: var(--md-outline); }
 .steps [aria-current] .dot { background: var(--md-primary); outline: 1px solid var(--md-primary); outline-offset: var(--md-space-4); }
 .option, .summary-row { display: flex; width: 100%; gap: var(--md-space-8); padding: var(--md-space-12); margin-bottom: var(--md-space-8); min-height: var(--md-target-row); border: 1px solid var(--md-outline-variant); border-radius: var(--md-shape-small); }

@@ -2,7 +2,8 @@ import {computed, ref} from "vue"
 import type {MessageOutcome, RenderedEntry} from "../protocol"
 
 const WAIT_MS = 30000
-const normalize = (text: string) => text.replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, "").trim()
+// Claude's terminal editor expands pasted tabs before writing the user turn.
+const normalize = (text: string) => text.replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, "").replace(/\t/g, "    ").trim()
 
 /** One send gate shared by the composer and other session input surfaces. */
 export function useAgentChat(available: () => boolean, deliver: (text: string) => Promise<MessageOutcome>) {
@@ -52,12 +53,17 @@ export function useAgentChat(available: () => boolean, deliver: (text: string) =
         try {
             const result = await deliver(text)
             if (current !== generation) return false
-            if (result.code !== "delivered") {
+            if (result.code !== "delivered" && result.code !== "delivered_with_warning") {
                 expected = null
                 error.value = result.message
                 return false
             }
             if (draft.value === text) draft.value = ""
+            if (result.code === "delivered_with_warning") {
+                expected = null
+                status.value = result.message
+                return true
+            }
             if (expected === null) finish(false)
             else if (matched) finish()
             else {

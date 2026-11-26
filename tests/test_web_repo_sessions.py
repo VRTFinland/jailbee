@@ -56,6 +56,7 @@ def open_client(
     *,
     snapshots: FakeSourceFactory | None = None,
     warm: bool = False,
+    agent_chat: bool | None = None,
 ) -> Iterator[TestClient]:
     clock = FakeClock()
     pin = PinHolder(generate=pin_sequence())
@@ -68,6 +69,7 @@ def open_client(
         pin=pin,
         repo_scope=RemoteRepoScope(excluded),
         agent_homes=homes,
+        **({"agent_chat": agent_chat} if agent_chat is not None else {}),
     )
     with TestClient(create_app(deps)) as client:
         body = {"method": "pin", "pin": pin.current, "device_name": "boox"}
@@ -431,7 +433,18 @@ def test_a_repo_lists_only_sessions_started_in_its_own_containers_repo_dir(
     assert [r["title"] for r in beta_rows] == ["beta's own"]
 
 
-def test_chat_disabled_in_snapshot_and_post(client: TestClient) -> None:
+@pytest.fixture
+def chat_disabled_client(homes: Homes) -> Iterator[TestClient]:
+    yield from open_client(homes, frozenset({"secret"}), agent_chat=False)
+
+
+def test_chat_enabled_by_default_in_snapshot(client: TestClient) -> None:
+    url = f"/api/repos/alpha/sessions/claude/{SESSION_A}"
+    assert client.get(url).json()["chat"]["code"] != "permission_denied"
+
+
+def test_chat_disabled_in_snapshot_and_post(chat_disabled_client: TestClient) -> None:
+    client = chat_disabled_client
     url = f"/api/repos/alpha/sessions/claude/{SESSION_A}"
     assert client.get(url).json()["chat"] == {
         "available": False,
