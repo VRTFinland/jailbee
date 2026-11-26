@@ -369,7 +369,9 @@ class StateServer:
             return replace(question, can_answer=False, reason="answer in a local dashboard")
         return question
 
-    def _prepare_action(self, client: _Client, request: RunAction) -> tuple[ActionEntry, Any] | None:
+    def _prepare_action(
+        self, client: _Client, request: RunAction
+    ) -> tuple[ActionEntry, Any] | None:
         if self._draining:
             self._send_action(client, ActionRejected(request.entry_id, "state service is draining"))
             return None
@@ -529,7 +531,9 @@ class StateServer:
             self._action_changed(entry)
 
         async def run_batch() -> None:
-            for index, (request, (entry, policy)) in enumerate(zip(requests, prepared, strict=True)):
+            for _index, (request, (entry, policy)) in enumerate(
+                zip(requests, prepared, strict=True)
+            ):
                 if self._stopping:
                     break
                 await self._launch_action(client, request, entry, policy)
@@ -538,7 +542,7 @@ class StateServer:
                     break
             else:
                 return
-            for remaining in requests[index + (0 if self._stopping else 1):]:
+            for remaining in requests[_index + (0 if self._stopping else 1) :]:
                 self._action_finish(ActionFinish(remaining.entry_id, error="batch stopped"), True)
 
         task = asyncio.create_task(run_batch())

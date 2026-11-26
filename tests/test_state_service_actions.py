@@ -810,14 +810,19 @@ def test_batch_continues_after_origin_dashboard_closes(runtime_dir, tmp_path):
 
     paths.ensure_runtime_dir()
     server = StateServer(
-        FakeGatherer(), version="v1",
+        FakeGatherer(),
+        version="v1",
         action_spawn=lambda argv, **kw: Child(kw["prompt_sock"], "first" in argv),
     )
-    thread = threading.Thread(target=lambda: asyncio.run(server.serve(paths.socket_path())), daemon=True)
+    thread = threading.Thread(
+        target=lambda: asyncio.run(server.serve(paths.socket_path())), daemon=True
+    )
     thread.start()
     track_server(server, thread)
     _until(paths.socket_path().exists)
-    client = StateClient(None, dashboard_id="one", version="v1", spawn=lambda: None, backoff=(0.05,))
+    client = StateClient(
+        None, dashboard_id="one", version="v1", spawn=lambda: None, backoff=(0.05,)
+    )
     client.start()
     try:
         client.wait_first_snapshot(3)
@@ -843,16 +848,24 @@ def test_batch_rejects_duplicate_ids_without_starting_any_action(runtime_dir, tm
 
     spawned = []
     paths.ensure_runtime_dir()
-    server = StateServer(FakeGatherer(), version="v1", action_spawn=lambda *a, **kw: spawned.append(1))
-    thread = threading.Thread(target=lambda: asyncio.run(server.serve(paths.socket_path())), daemon=True)
+    server = StateServer(
+        FakeGatherer(), version="v1", action_spawn=lambda *a, **kw: spawned.append(1)
+    )
+    thread = threading.Thread(
+        target=lambda: asyncio.run(server.serve(paths.socket_path())), daemon=True
+    )
     thread.start()
     track_server(server, thread)
     _until(paths.socket_path().exists)
-    client = StateClient(None, dashboard_id="one", version="v1", spawn=lambda: None, backoff=(0.05,))
+    client = StateClient(
+        None, dashboard_id="one", version="v1", spawn=lambda: None, backoff=(0.05,)
+    )
     client.start()
     try:
         client.wait_first_snapshot(3)
-        request = RunAction(101, ["ls"], str(tmp_path), "x", False, "one", "none", str(tmp_path), "repo")
+        request = RunAction(
+            101, ["ls"], str(tmp_path), "x", False, "one", "none", str(tmp_path), "repo"
+        )
         client.run_action_batch(RunActionBatch([request, request]))
         _until(lambda: client.action_rejection(101) is not None)
         assert not spawned
