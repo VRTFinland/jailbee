@@ -35,17 +35,27 @@ def test_running_action_keeps_server_alive_until_idle_after_completion(runtime_d
             finish.set()
 
     paths.ensure_runtime_dir()
-    server = StateServer(FakeGatherer(), version="v1", idle_timeout=0.3,
-                         action_spawn=lambda *a, **kw: Child(kw["prompt_sock"]))
-    thread = threading.Thread(target=lambda: asyncio.run(server.serve(paths.socket_path())), daemon=True)
+    server = StateServer(
+        FakeGatherer(),
+        version="v1",
+        idle_timeout=0.3,
+        action_spawn=lambda *a, **kw: Child(kw["prompt_sock"]),
+    )
+    thread = threading.Thread(
+        target=lambda: asyncio.run(server.serve(paths.socket_path())), daemon=True
+    )
     thread.start()
     track_server(server, thread)
     _until(paths.socket_path().exists)
-    client = StateClient(None, dashboard_id="one", version="v1", spawn=lambda: None, backoff=(0.05,))
+    client = StateClient(
+        None, dashboard_id="one", version="v1", spawn=lambda: None, backoff=(0.05,)
+    )
     client.start()
     client.wait_first_snapshot(3)
     try:
-        client.run_action(RunAction(42, ["ls"], str(tmp_path), "t", False, "one", "none", str(tmp_path), "repo"))
+        client.run_action(
+            RunAction(42, ["ls"], str(tmp_path), "t", False, "one", "none", str(tmp_path), "repo")
+        )
         assert started.wait(2)
         client.close()
         time.sleep(0.6)
@@ -74,6 +84,7 @@ def test_question_survives_last_disconnect(runtime_dir, tmp_path):
                 command = CommandEnd(sock)
                 answers.append(command.ask(lambda n: Prompt(n, "confirm", "Proceed?")))
                 command.close()
+
             self.thread = threading.Thread(target=ask)
             self.thread.start()
 
@@ -85,21 +96,31 @@ def test_question_survives_last_disconnect(runtime_dir, tmp_path):
             pass
 
     paths.ensure_runtime_dir()
-    server = StateServer(FakeGatherer(), version="v1", idle_timeout=0.3,
-                         action_spawn=lambda *a, **kw: Child(kw["prompt_sock"]))
-    thread = threading.Thread(target=lambda: asyncio.run(server.serve(paths.socket_path())), daemon=True)
+    server = StateServer(
+        FakeGatherer(),
+        version="v1",
+        idle_timeout=0.3,
+        action_spawn=lambda *a, **kw: Child(kw["prompt_sock"]),
+    )
+    thread = threading.Thread(
+        target=lambda: asyncio.run(server.serve(paths.socket_path())), daemon=True
+    )
     thread.start()
     track_server(server, thread)
     _until(paths.socket_path().exists)
     first = StateClient(None, dashboard_id="one", version="v1", spawn=lambda: None, backoff=(0.05,))
     first.start()
     first.wait_first_snapshot(3)
-    first.run_action(RunAction(43, ["ls"], str(tmp_path), "t", False, "one", "none", str(tmp_path), "repo"))
+    first.run_action(
+        RunAction(43, ["ls"], str(tmp_path), "t", False, "one", "none", str(tmp_path), "repo")
+    )
     _until(lambda: 43 in first.action_questions())
     first.close()
     time.sleep(0.6)
     assert thread.is_alive()
-    second = StateClient(None, dashboard_id="two", version="v1", spawn=lambda: None, backoff=(0.05,))
+    second = StateClient(
+        None, dashboard_id="two", version="v1", spawn=lambda: None, backoff=(0.05,)
+    )
     second.start()
     try:
         second.wait_first_snapshot(3)
@@ -129,6 +150,7 @@ def test_shutdown_kills_verbose_child_and_persists_interrupted(runtime_dir, tmp_
             self.stopped = threading.Event()
             read, self.write = os.pipe()
             self.stdout = os.fdopen(read, "rb")
+
             def work():
                 try:
                     os.write(self.write, b"x" * 4096)
@@ -140,6 +162,7 @@ def test_shutdown_kills_verbose_child_and_persists_interrupted(runtime_dir, tmp_
                 finally:
                     os.close(self.write)
                     self.stopped.set()
+
             self.thread = threading.Thread(target=work)
             self.thread.start()
             children.append(self)
@@ -154,17 +177,27 @@ def test_shutdown_kills_verbose_child_and_persists_interrupted(runtime_dir, tmp_
     paths.ensure_runtime_dir()
     engine = create_engine(f"sqlite:///{tmp_path / 'state.db'}")
     _ensure_schema(engine)
-    server = StateServer(FakeGatherer(), version="v1", engine=engine,
-                         action_spawn=lambda *a, **kw: Child(kw["prompt_sock"]))
-    thread = threading.Thread(target=lambda: asyncio.run(server.serve(paths.socket_path())), daemon=True)
+    server = StateServer(
+        FakeGatherer(),
+        version="v1",
+        engine=engine,
+        action_spawn=lambda *a, **kw: Child(kw["prompt_sock"]),
+    )
+    thread = threading.Thread(
+        target=lambda: asyncio.run(server.serve(paths.socket_path())), daemon=True
+    )
     thread.start()
     track_server(server, thread)
     _until(paths.socket_path().exists)
-    client = StateClient(None, dashboard_id="one", version="v1", spawn=lambda: None, backoff=(0.05,))
+    client = StateClient(
+        None, dashboard_id="one", version="v1", spawn=lambda: None, backoff=(0.05,)
+    )
     client.start()
     client.wait_first_snapshot(3)
     try:
-        client.run_action(RunAction(44, ["ls"], str(tmp_path), "t", False, "one", "none", str(tmp_path), "repo"))
+        client.run_action(
+            RunAction(44, ["ls"], str(tmp_path), "t", False, "one", "none", str(tmp_path), "repo")
+        )
         _until(lambda: 44 in client.action_questions())
         conn = Conn(paths.socket_path(), version="v0")
         conn.send(Shutdown())

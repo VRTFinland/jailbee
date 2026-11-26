@@ -169,8 +169,12 @@ class StateServer:
 
     async def _schedule(self) -> None:
         while not self._stopping:
-            if (not self._clients and not self._action_tasks and not self._questions
-                    and self._clock() - self._idle_since >= self._idle_timeout):
+            if (
+                not self._clients
+                and not self._action_tasks
+                and not self._questions
+                and self._clock() - self._idle_since >= self._idle_timeout
+            ):
                 log.info("no clients for %.0fs; exiting", self._idle_timeout)
                 return
             refresh, self._refresh = self._refresh, False
@@ -378,6 +382,7 @@ class StateServer:
 
         task = asyncio.create_task(wait_for_action())
         self._action_tasks.add(task)
+
         def action_done(done: asyncio.Task[None]) -> None:
             self._action_tasks.discard(done)
             self._action_cancellations.pop(request.entry_id, None)
@@ -485,8 +490,10 @@ class StateServer:
             self._actions[finish.entry_id],
             finished=True,
             state=(
-                "interrupted" if interrupted else
-                "done" if finish.status == 0
+                "interrupted"
+                if interrupted
+                else "done"
+                if finish.status == 0
                 and not (finish.error or finish.refused or finish.cancelled or finish.declined)
                 else "failed"
             ),
