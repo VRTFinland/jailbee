@@ -71,6 +71,40 @@ describe("RepoView", () => {
         wrapper.unmount()
     })
 
+    it("ignores the previous repository's late answer after switching repos", async () => {
+        updateSettings({liveSessionsOnly: true, openOnlyLiveSession: true})
+        let answer: (response: Response) => void = () => {}
+        const {wrapper, router} = await mountRepo(vi.fn(input => String(input).includes("/alpha/")
+            ? new Promise<Response>(resolve => {answer = resolve})
+            : Promise.resolve(jsonResponse(200, {sessions: []}))))
+        await router.push("/repos/beta")
+        await flushPromises()
+        answer(jsonResponse(200, {sessions}))
+        await flushPromises()
+        expect(router.currentRoute.value.path).toBe("/repos/beta")
+        expect(wrapper.findAll("li.session")).toHaveLength(0)
+        wrapper.unmount()
+    })
+
+    it("ignores a late response after leaving the repository", async () => {
+        updateSettings({liveSessionsOnly: true, openOnlyLiveSession: true})
+        let answer: (response: Response) => void = () => {}
+        const {wrapper, router} = await mountRepo(vi.fn(() => new Promise<Response>(resolve => {answer = resolve})))
+        await router.push("/settings")
+        answer(jsonResponse(200, {sessions}))
+        await flushPromises()
+        expect(router.currentRoute.value.name).toBe("settings")
+        wrapper.unmount()
+    })
+
+    it("does not jump from a subagent's repository breadcrumb", async () => {
+        updateSettings({liveSessionsOnly: true, openOnlyLiveSession: true})
+        const {wrapper, router} = await mountRepo(vi.fn().mockResolvedValue(jsonResponse(200, {sessions})),
+            undefined, "/repos/alpha/sessions/claude/s-new/subagents/worker")
+        expect(router.currentRoute.value.name).toBe("repo")
+        wrapper.unmount()
+    })
+
     it("does not bounce back when returning from the live session", async () => {
         updateSettings({liveSessionsOnly: true, openOnlyLiveSession: true})
         const {wrapper, router} = await mountRepo(vi.fn().mockResolvedValue(jsonResponse(200, {sessions})),

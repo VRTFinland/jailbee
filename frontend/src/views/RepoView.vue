@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import TitleBar from "../components/TitleBar.vue"
-import {computed, nextTick, onMounted, ref} from "vue"
+import {computed, nextTick, ref, watch} from "vue"
 import {useRoute, useRouter} from "vue-router"
 import {apiFetch, Unauthorized} from "../api"
 import PageNav from "../components/PageNav.vue"
@@ -46,16 +46,22 @@ function sessionLinkLabel(session: SessionSummary): string {
         .filter(Boolean).join(" ")
 }
 
-onMounted(async () => {
+watch(prefix, async (selected, _previous, onCleanup) => {
+    let current = true
+    onCleanup(() => { current = false })
+    sessions.value = null
+    error.value = null
     try {
         const list = await apiFetch<SessionList>(
-            `/api/repos/${encodeURIComponent(prefix.value)}/sessions`,
+            `/api/repos/${encodeURIComponent(selected)}/sessions`,
         )
+        if (!current) return
         sessions.value = list.sessions
-        await openSingleLive(prefix.value, list.sessions.filter(s => s.live))
+        await openSingleLive(selected, list.sessions.filter(s => s.live))
         await nextTick()
         pager.measure()
     } catch (e) {
+        if (!current) return
         if (e instanceof Unauthorized) {
             await router.push({name: "login"})
         } else if (e instanceof Error && e.message.startsWith("API error 404")) {
@@ -64,7 +70,7 @@ onMounted(async () => {
             error.value = "The sessions could not be loaded."
         }
     }
-})
+}, {immediate: true})
 </script>
 
 <template>

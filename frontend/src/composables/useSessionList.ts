@@ -7,9 +7,10 @@ export function useSessionList() {
     const route = useRoute()
     const router = useRouter()
     const liveOnly = ref(settings.liveSessionsOnly)
+    const listRoute = route.name
 
     async function openSingleLive(prefix: string, sessions: {agent: string; session_id: string}[]) {
-        if (!liveOnly.value || !settings.openOnlyLiveSession || sessions.length !== 1) return
+        if (route.name !== listRoute || !liveOnly.value || !settings.openOnlyLiveSession || sessions.length !== 1) return
         const session = sessions[0]!
         const target = {name: "session", params: {prefix, agent: session.agent, sessionId: session.session_id}}
         // Breadcrumbs and browser Back must reach the list rather than bounce.
