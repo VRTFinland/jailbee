@@ -37,9 +37,7 @@ def _decode(payload: str) -> ActionEntry:
 def save(engine: Engine, entry: ActionEntry) -> None:
     with Session(engine) as session:
         session.merge(
-            ActionEntryRow(
-                entry_id=entry.entry_id, state=entry.state, payload=_encode(entry)
-            )
+            ActionEntryRow(entry_id=entry.entry_id, state=entry.state, payload=_encode(entry))
         )
         session.commit()
 
