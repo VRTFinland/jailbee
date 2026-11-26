@@ -55,9 +55,9 @@ def test_composer_delivery_and_refusal(
     def execute(name: str, command: list[str]) -> str:
         cmd = " ".join(command)
         if "python3" in cmd:
-            return "42 10 123\n10 1 22\n"
+            return "42 10 123 S 42 42 5\n10 1 22 S 10 42 5\n"
         if "list-panes" in cmd:
-            return "%1 10\n"
+            return "%1 10 1\n"
         if "capture-pane" in cmd:
             return "────────\n> occupied\n────────\n" if busy else "────────\n> \n────────\n"
         return ""
