@@ -57,7 +57,9 @@ def test_action_streams_output_and_result(runtime_dir, tmp_path):
                 "repo",
             )
         )
-        _until(lambda: bool(client.action_entries().get(123) and client.action_entries()[123].finished))
+        _until(
+            lambda: bool(client.action_entries().get(123) and client.action_entries()[123].finished)
+        )
         assert client.action_entries()[123].status == 7
         assert client.action_entries()[123].output == "hello\n"
     finally:

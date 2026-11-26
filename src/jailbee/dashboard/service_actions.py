@@ -119,7 +119,9 @@ def run_actions(
                 results.append(RunResult(refused=rejection))
                 outputs.append("")
                 return ActionOutcome(results, outcome_text.text(), outputs)
-            if generation is None or (uncertain_generation is not None and generation == uncertain_generation):
+            if generation is None or (
+                uncertain_generation is not None and generation == uncertain_generation
+            ):
                 if disconnected_at is None:
                     disconnected_at = time.monotonic()
                 if time.monotonic() - disconnected_at >= RECONNECT_TIMEOUT_SECONDS:

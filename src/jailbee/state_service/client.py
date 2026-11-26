@@ -187,7 +187,11 @@ class StateClient:
     def action_connection(self) -> int | None:
         """Generation of the connected socket after its action replay completes."""
         with self._lock:
-            return self._connection_generation if self._sock is not None and self._action_synced else None
+            return (
+                self._connection_generation
+                if self._sock is not None and self._action_synced
+                else None
+            )
 
     def action_rejection(self, entry_id: int) -> str | None:
         with self._lock:

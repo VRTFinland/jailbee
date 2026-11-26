@@ -182,9 +182,18 @@ def test_batch_resumes_after_disconnect_without_resubmitting_accepted_action(tmp
         def run_action(self, request):
             self.sent.append(request.entry_id)
             self.entries[request.entry_id] = ActionEntry(
-                request.entry_id, request.argv, request.cwd, request.target, False,
-                request.origin, request.transport, request.repo_root, request.prefix,
-                finished=True, status=0, output="ok",
+                request.entry_id,
+                request.argv,
+                request.cwd,
+                request.target,
+                False,
+                request.origin,
+                request.transport,
+                request.repo_root,
+                request.prefix,
+                finished=True,
+                status=0,
+                output="ok",
             )
             if len(self.sent) == 1:
                 raise BrokenPipeError("ambiguous send")
@@ -192,13 +201,17 @@ def test_batch_resumes_after_disconnect_without_resubmitting_accepted_action(tmp
     class Progress:
         def entry_id(self, index):
             return index + 1
+
         def output(self, index, chunk):
             pass
+
         def question(self, index, asking):
             pass
 
     client = Client()
-    outcome = run_actions(client, [ActionRun(["ls"], tmp_path)] * 2, Progress(), groups=[], transport="none")
+    outcome = run_actions(
+        client, [ActionRun(["ls"], tmp_path)] * 2, Progress(), groups=[], transport="none"
+    )
     assert client.sent == [1, 2]
     assert [result.status for result in outcome.results] == [0, 0]
 
@@ -208,14 +221,19 @@ def test_disconnect_timeout_returns_partial_output(tmp_path, monkeypatch):
 
     class Client:
         dashboard_id = "origin"
+
         def action_connection(self):
             return None
+
         def action_entries(self):
             return {}
+
         def action_rejection(self, entry_id):
             return None
+
         def status(self):
             return "offline"
+
         def run_action(self, request):
             raise AssertionError("must not send while disconnected")
 
