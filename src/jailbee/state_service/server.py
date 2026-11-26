@@ -16,6 +16,7 @@ import os
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -200,17 +201,21 @@ class StateServer:
                         client, ActionOutput(entry.entry_id, entry.output), replay=True
                     ):
                         return
-                    if entry.finished and not self._send_action(
-                        client,
-                        ActionFinish(
-                            entry.entry_id,
-                            entry.status,
-                            entry.refused,
-                            entry.error,
-                            entry.cancelled,
-                            entry.declined,
-                        ),
-                        replay=True,
+                    if (
+                        entry.finished
+                        and entry.state != "interrupted"
+                        and not self._send_action(
+                            client,
+                            ActionFinish(
+                                entry.entry_id,
+                                entry.status,
+                                entry.refused,
+                                entry.error,
+                                entry.cancelled,
+                                entry.declined,
+                            ),
+                            replay=True,
+                        )
                     ):
                         return
                     await asyncio.wait_for(writer.drain(), DRAIN_TIMEOUT_SECONDS)
@@ -362,6 +367,7 @@ class StateServer:
     def _action_finish(self, finish: ActionFinish) -> None:
         entry = replace(
             self._actions[finish.entry_id],
+            finished_at=datetime.now(UTC),
             finished=True,
             state="done"
             if finish.status == 0
@@ -376,6 +382,21 @@ class StateServer:
         self._actions[finish.entry_id] = entry
         self._action_changed(entry)
         self._broadcast_action(finish)
+        self._prune_finished_actions()
+
+    def _prune_finished_actions(self) -> None:
+        from jailbee.db.actions import prune_finished
+
+        entries, evicted = prune_finished(list(self._actions.values()), now=datetime.now(UTC))
+        evicted_entries = {entry.entry_id: entry for entry in self._actions.values()}
+        self._actions = {entry.entry_id: entry for entry in entries}
+        for entry_id in evicted:
+            entry = evicted_entries[entry_id]
+            self._action_dismissed(entry_id)
+            message = ActionDismissed(entry_id)
+            for recipient in list(self._clients):
+                if self._in_scope(entry, recipient):
+                    self._send_action(recipient, message)
 
     def _action_changed(self, entry: ActionEntry) -> None:
         if self._engine is not None:

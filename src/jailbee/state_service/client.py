@@ -352,6 +352,17 @@ class StateClient:
                             error=message.error,
                             cancelled=message.cancelled,
                             declined=message.declined,
+                            state=(
+                                "done"
+                                if message.status == 0
+                                and not (
+                                    message.error
+                                    or message.refused
+                                    or message.cancelled
+                                    or message.declined
+                                )
+                                else "failed"
+                            ),
                         )
             self._notify()
             return False

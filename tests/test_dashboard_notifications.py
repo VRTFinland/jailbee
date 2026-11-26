@@ -1533,6 +1533,8 @@ def test_pilot_replays_interrupted_action_in_failure_colour(mocker, tmp_path):
             str(tmp_path),
             "repo",
             finished=True,
+            status=0,
+            cancelled=True,
             state="interrupted",
         )
     }
