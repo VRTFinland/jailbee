@@ -20,8 +20,7 @@ from tests_e2e.test_session_reading import (
 def assert_at_transcript_end(page: Page) -> None:
     page.wait_for_function("""() => {
         const bottom = document.querySelector('.transcript')?.getBoundingClientRect().bottom;
-        const boundary = (document.querySelector('.page-nav[data-mode="bar"]') ??
-            document.querySelector('.bottom-guard')).getBoundingClientRect().top;
+        const boundary = document.querySelector('.agent-composer').getBoundingClientRect().top;
         return bottom !== undefined && Math.abs(bottom - boundary) <= 2;
     }""")
 

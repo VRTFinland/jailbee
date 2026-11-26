@@ -103,7 +103,8 @@ def test_composer_delivery_and_refusal(
         box = composer.bounding_box()
         nav = page.locator(".page-nav").bounding_box()
         assert box is not None and nav is not None
-        assert box["y"] + box["height"] <= nav["y"]
+        assert (box["y"] + box["height"] <= nav["y"] or
+                box["x"] + box["width"] <= nav["x"])
 
 
 @pytest.mark.parametrize("width", [390, 1280])
