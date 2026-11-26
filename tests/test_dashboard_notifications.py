@@ -62,7 +62,7 @@ def test_a_started_action_is_a_running_entry_and_counts_on_the_badge(mocker, tmp
         "alpha-a",
         "running",
     )
-    assert session.view().queue == QueueCounts(running=1, attention=0)
+    assert session.view().queue == QueueCounts(running=1, failed=0)
 
 
 def test_no_badge_while_nothing_has_run(mocker, tmp_path):
@@ -82,7 +82,7 @@ def test_a_clean_finish_records_status_and_output_without_an_output_screen(mocke
     assert entry.output == "output of jailbee start alpha-a\n"
     assert getattr(terminal, "shown", []) == []
     assert session.notice == "'jailbee start alpha-a' done · Q: queue"
-    assert session.view().queue == QueueCounts(running=0, attention=0)
+    assert session.view().queue == QueueCounts(running=0, failed=0)
 
 
 def test_a_failed_finish_needs_attention_without_an_output_screen(mocker, tmp_path):
@@ -95,7 +95,7 @@ def test_a_failed_finish_needs_attention_without_an_output_screen(mocker, tmp_pa
     assert (entry.state, entry.status) == ("failed", 3)
     assert getattr(terminal, "shown", []) == []
     assert session.notice is not None and "exited 3" in session.notice
-    assert session.view().queue == QueueCounts(running=0, attention=1)
+    assert session.view().queue == QueueCounts(running=0, failed=1)
 
 
 def test_a_bulk_dispatch_is_one_entry_per_action(mocker, tmp_path):
@@ -256,7 +256,7 @@ def test_pilot_the_badge_shows_and_a_click_on_it_opens_the_queue(mocker, tmp_pat
     _children(mocker, failing=("alpha-a",))
     run = drive(mocker, [_pilot_start, Click(Hit("queue"))], [_pilot_group(tmp_path)], screens=True)
 
-    assert "⟳ 0 · ⚠ 1" in run.screens[1].splitlines()[0]
+    assert "⟳ 0 · ✗ 1" in run.screens[1].splitlines()[0]
     assert _is_queue(run.trace[2].overlay)
     assert run.app.outputs == []  # nothing popped up on its own
 
@@ -485,13 +485,34 @@ def test_queue_question_marks_awaiting_and_answering_returns_to_running():
     entry = queue.get(entry_id)
     assert entry is not None and entry.state == "awaiting" and not entry.finished
     assert entry.needs_attention
-    assert queue.counts() == QueueCounts(running=0, attention=1)
+    assert queue.counts() == QueueCounts(running=0, pending=1)
     assert not queue.dismiss(entry_id)
 
     queue.set_awaiting(entry_id, False)
     entry = queue.get(entry_id)
     assert entry is not None and entry.state == "running"
-    assert queue.counts() == QueueCounts(running=1, attention=0)
+    assert queue.counts() == QueueCounts(running=1, failed=0)
+
+
+def test_queue_counts_questions_separately_from_failed_actions_and_jobs():
+    from jailbee.dashboard.notifications import JobRow, NotificationQueue
+
+    queue = NotificationQueue()
+    queue.start("jailbee start a", "a")
+    asking = queue.start("jailbee start b", "b")
+    failed = queue.start("jailbee start c", "c")
+    done = queue.start("jailbee stop d", "d")
+    queue.set_awaiting(asking, True)
+    queue.finish(failed, 2, "failed")
+    queue.finish(done, 0, "done")
+    queue.set_jobs((JobRow("e", "boot", False), JobRow("f", "failed", True)))
+
+    assert queue.counts() == QueueCounts(running=2, pending=1, failed=2)
+    queue.set_awaiting(asking, False)
+    assert queue.counts() == QueueCounts(running=3, pending=0, failed=2)
+    queue.set_awaiting(asking, True)
+    queue.finish(asking, 1, "aborted")
+    assert queue.counts() == QueueCounts(running=2, pending=0, failed=3)
 
 
 def _progress(terminal):  # type: ignore[no-untyped-def]
@@ -518,26 +539,26 @@ def test_session_question_goes_awaiting_answer_then_running_again(mocker, tmp_pa
     progress.question(0, True)
     (entry,) = _entries(session)
     assert entry.state == "awaiting"
-    assert session.view().queue == QueueCounts(running=0, attention=1)
+    assert session.view().queue == QueueCounts(running=0, pending=1)
 
     progress.question(0, False)
     (entry,) = _entries(session)
     assert entry.state == "running"
-    assert session.view().queue == QueueCounts(running=1, attention=0)
+    assert session.view().queue == QueueCounts(running=1, failed=0)
 
 
-def test_session_failure_and_pending_question_both_raise_the_attention_count(mocker, tmp_path):
+def test_session_failure_replaces_the_pending_question_count(mocker, tmp_path):
     _children(mocker, failing=("alpha-a",))
     session, terminal = _one_repo(mocker, tmp_path, defer=True)
     _start(session)
     _progress(terminal).question(0, True)
-    assert session.view().queue == QueueCounts(running=0, attention=1)
+    assert session.view().queue == QueueCounts(running=0, pending=1)
 
     terminal.finish_pending()  # the child ended (exit 3) with the question still open
 
     (entry,) = _entries(session)
     assert entry.state == "failed"
-    assert session.view().queue == QueueCounts(running=0, attention=1)
+    assert session.view().queue == QueueCounts(running=0, failed=1)
 
 
 def test_the_list_row_of_a_running_entry_shows_its_last_line(mocker, tmp_path):
@@ -763,7 +784,7 @@ def test_snapshot_jobs_are_read_only_queue_rows_counted_as_running(mocker, tmp_p
         ("alpha-c", False),
     ]
     assert len(list(session.queue)) == 0  # not actions of this session
-    assert session.view().queue == QueueCounts(running=3, attention=0)
+    assert session.view().queue == QueueCounts(running=3, failed=0)
     picker = _open_queue(session)
     assert [e.label.split(":")[0].lstrip("⟳✗ ") for e in picker.entries] == [
         "alpha-a",
@@ -775,7 +796,7 @@ def test_snapshot_jobs_are_read_only_queue_rows_counted_as_running(mocker, tmp_p
 
 def test_a_job_row_goes_when_the_job_does(mocker, tmp_path):
     session, group = _job_session(mocker, tmp_path, [_job_container("alpha-a", "creating")])
-    assert session.view().queue == QueueCounts(running=1, attention=0)
+    assert session.view().queue == QueueCounts(running=1, failed=0)
 
     _retick(session, group, [ci("alpha-a", "alpha")])
 
@@ -798,7 +819,7 @@ def test_a_failed_job_needs_attention_while_the_snapshot_shows_it(mocker, tmp_pa
     session, group = _job_session(mocker, tmp_path, [_job_container("alpha-a", "failed")])
 
     assert [(j.target, j.failed) for j in session.queue.jobs] == [("alpha-a", True)]
-    assert session.view().queue == QueueCounts(running=0, attention=1)
+    assert session.view().queue == QueueCounts(running=0, failed=1)
 
     _retick(session, group, [ci("alpha-a", "alpha")])
     assert session.view().queue is None
@@ -806,7 +827,7 @@ def test_a_failed_job_needs_attention_while_the_snapshot_shows_it(mocker, tmp_pa
 
 def test_a_dead_worker_is_a_failed_job(mocker, tmp_path):
     session, _ = _job_session(mocker, tmp_path, [_job_container("alpha-a", "creating", pid=2**22)])
-    assert session.view().queue == QueueCounts(running=0, attention=1)
+    assert session.view().queue == QueueCounts(running=0, failed=1)
 
 
 def test_a_job_row_cannot_be_dismissed(mocker, tmp_path):
@@ -818,7 +839,7 @@ def test_a_job_row_cannot_be_dismissed(mocker, tmp_path):
     picker = session.overlay
     assert isinstance(picker, Picker) and picker.purpose == "queue-job"
     assert [e.value for e in picker.entries] == ["log"]
-    assert session.view().queue == QueueCounts(running=0, attention=1)
+    assert session.view().queue == QueueCounts(running=0, failed=1)
 
 
 def test_a_job_row_opens_the_job_log(mocker, tmp_path):
@@ -889,7 +910,7 @@ def test_returning_from_a_hand_off_opens_when_a_different_item_replaced_the_old_
     assert len(before) == 1
 
     _retick(session, group, [ci("alpha-a", "alpha"), _job_container("alpha-b", "failed")])
-    assert session.queue.counts().attention == 1
+    assert session.queue.counts().failed == 1
     session.after_hand_off(before)
 
     assert isinstance(session.overlay, Picker)
@@ -902,7 +923,7 @@ def test_pilot_a_hand_off_adding_no_attention_leaves_a_failed_job_row_closed(moc
     seen: list[object] = []
 
     def hand_off(app) -> None:  # type: ignore[no-untyped-def]
-        assert app.session.queue.counts().attention == 1  # the stale failed job is there
+        assert app.session.queue.counts().failed == 1  # the stale failed job is there
         app.hand_off(lambda: 0)
         seen.append(app.session.overlay)
 
@@ -927,10 +948,10 @@ def test_the_badge_adds_job_rows_to_queue_entries(mocker, tmp_path):
     terminal.defer = True
     session.run_dashboard_command("alpha-b", "container", ["start", "alpha-b"])
     # one live job + one running entry; one failed job
-    assert session.queue.counts() == QueueCounts(running=2, attention=1)
+    assert session.queue.counts() == QueueCounts(running=2, failed=1)
     terminal.finish_pending()
     # the entry failed: attention = failed entry + failed job
-    assert session.queue.counts() == QueueCounts(running=1, attention=2)
+    assert session.queue.counts() == QueueCounts(running=1, failed=2)
 
 
 def _pilot_two_entries(mocker, tmp_path):  # type: ignore[no-untyped-def]

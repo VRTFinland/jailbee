@@ -36,22 +36,24 @@ async function signOut() {
 </script>
 
 <template>
-    <div class="page">
+    <div>
         <TitleBar @readable-top="readableTop = $event" title="JailBee" context="containers" />
-        <div class="bar">
-            <span class="device" v-if="device">{{ device }}</span>
-            <Button v-if="eink" class="refresh" variant="text" @click="refresh">Refresh</Button>
-            <Button variant="text" @click="signOut">Log out</Button>
+        <div class="page">
+            <div class="bar">
+                <span class="device" v-if="device">{{ device }}</span>
+                <Button v-if="eink" class="refresh" variant="text" @click="refresh">Refresh</Button>
+                <Button variant="text" @click="signOut">Log out</Button>
+            </div>
+
+            <p v-if="!connected" class="notice">Connecting…</p>
+            <p v-else-if="status" class="notice">{{ status }}</p>
+
+            <main>
+                <p v-if="view === null" class="muted">Waiting for the first update…</p>
+                <RepoList v-else :view="view" />
+            </main>
+            <PageNav :pager="pager" />
         </div>
-
-        <p v-if="!connected" class="notice">Connecting…</p>
-        <p v-else-if="status" class="notice">{{ status }}</p>
-
-        <main>
-            <p v-if="view === null" class="muted">Waiting for the first update…</p>
-            <RepoList v-else :view="view" />
-        </main>
-        <PageNav :pager="pager" />
     </div>
 </template>
 

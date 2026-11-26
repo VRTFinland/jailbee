@@ -801,10 +801,13 @@ and keeps drawing while it runs; the status line names the running command.
   before its worker starts, including a spawn error, stays as a failed entry
   with its output until dismissed, even though no job row exists yet.
   Other actions refused by the policy or
-  that could not start are only a notice. The badge `⟳ R · ⚠ A` at the top-right
-  of the dashboard title (R running, A needs attention: failed or awaiting an answer)
+  that could not start are only a notice. The badge `⟳ R · ? P · ✗ F` at the top-right
+  of the dashboard title (R running, P awaiting an answer, F failed)
   appears once anything has run. The bold accent running glyph animates while R is
-  non-zero; attention stays red and bold, and a narrow title shortens before the badge.
+  non-zero; pending questions use the accent `?` and failures use red `✗`, both bold.
+  Queue rows use the same icons and colours, with "awaiting answer" for a question.
+  A zero pending count is omitted, other zero counts stay dim, and a narrow title
+  shortens before the badge.
   Coming back from a tmux hand-off opens the queue at once
   when something *new* needs attention, including a pending question, but never
   opens a question modal by itself (a failed job row that was already there
@@ -819,7 +822,7 @@ and keeps drawing while it runs; the status line names the running command.
   Background jobs (create, start/restart, autostart, destroy) the snapshot
   shows, whoever started them, are listed above the entries as read-only
   rows (`target: phase · job`): they cannot be dismissed, count as running
-  in the badge (a failed job or a dead worker counts as ⚠) and go when the
+  in the badge (a failed job or a dead worker counts as ✗) and go when the
   job does. Liveness belongs to the gathered snapshot: a normally finishing
   worker does not turn its older row into a dead-job warning between refreshes.
   A worker killed mid-job is reported as dead on the next snapshot while its

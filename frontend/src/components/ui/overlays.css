@@ -15,6 +15,7 @@
 .ui-popup.ui-overlay-scope[data-profile="eink"] {
     border: 1px solid var(--md-on-surface);
     animation: none;
+    box-shadow: none;
 }
 .ui-popup {
     z-index: var(--md-layer-popover);
@@ -22,9 +23,10 @@
     max-width: min(90vw, 24rem);
     max-height: var(--reka-popper-available-height);
     overflow: auto;
-    padding: var(--md-space-4);
+    padding: var(--md-space-8);
     border: 1px solid var(--md-hairline);
-    border-radius: var(--md-shape-medium);
+    border-radius: var(--md-shape-extra-small);
+    box-shadow: var(--md-elevation-level-2);
     background: var(--md-surface-container);
     color: var(--md-on-surface);
     font-family: var(--md-font-body);

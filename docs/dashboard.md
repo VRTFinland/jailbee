@@ -45,10 +45,12 @@ tree beside a preview. You mark, delete or publish from there:
 ![The accounts overlay](images/dashboard/dashboard-accounts.png)
 
 Every action the dashboard starts becomes an entry in its notification queue.
-Once anything has run, a badge `⟳ R · ⚠ A` appears at the top-right of the
-title (R running, A failed or awaiting an answer). Its bold running glyph uses
-the active theme's accent and advances one frame per refresh while work runs;
-a zero running count stays dim, and a non-zero attention count stays red and bold.
+Once anything has run, a badge `⟳ R · ? P · ✗ F` appears at the top-right of the
+title (R running, P awaiting an answer, F failed). Its bold running glyph uses
+the active theme's accent and advances one frame per refresh while work runs.
+Pending questions use `?` and the same accent in both the badge and queue rows,
+with the state text "awaiting answer"; only failures use red `✗`. The pending
+count is omitted when zero; zero running and failed counts stay dim.
 `NO_COLOR` keeps the emphasis without emitting colours. On narrow terminals the
 title shortens before the badge; when both cannot fit, only the badge remains,
 ellipsised if needed (at six columns or fewer, only the border fits). Click it or press `Q`

@@ -58,7 +58,9 @@ def test_title_bar_on_every_signed_in_view(
         trigger_box = trigger.bounding_box()
         assert bar_box is not None and trigger_box is not None
         assert bar_box["height"] <= 44
-        assert trigger_box["x"] + trigger_box["width"] >= bar_box["x"] + bar_box["width"] - 1
+        assert bar_box["x"] == 0 and bar_box["y"] == 0
+        assert bar_box["width"] == width
+        assert trigger_box["x"] + trigger_box["width"] >= width - 4
         assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
 
 

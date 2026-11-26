@@ -101,6 +101,14 @@ def test_new_second_positional_completes_branches_once_first_is_filled(completio
     assert _complete(["new", "feat-foo"], "") == ["feat/bar", "main"]
 
 
+def test_retarget_base_completes_fetched_upstream_branches(completion_repo, mocker):
+    mocker.patch("jailbee.git.list_branches", return_value=["main"])
+    mocker.patch("jailbee.git.list_base_candidates", return_value=["main", "release/2.1"])
+
+    assert _complete(["git", "retarget", "feat-foo"], "rel") == ["release/2.1"]
+    assert _complete(["retarget", "feat-foo"], "rel") == ["release/2.1"]
+
+
 def test_format_option_completes_in_declaration_order():
     """`--format` values are `("table", "json")` — order matters, not just membership."""
     assert _complete(["ls", "--format"], "") == ["table", "json"]
