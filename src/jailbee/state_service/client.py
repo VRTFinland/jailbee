@@ -17,20 +17,32 @@ import subprocess
 import sys
 import threading
 import time
+from collections import deque
 from collections.abc import Callable, Iterator, Sequence
+from dataclasses import replace
 from typing import IO, TYPE_CHECKING
 
 from jailbee import __version__
 from jailbee.state_service import StaleDashboard, StateServiceError, StateServiceUnavailable
 from jailbee.state_service.paths import ensure_runtime_dir, log_path, socket_path, spawn_lock_path
 from jailbee.state_service.protocol import (
+    MAX_WIRE_LINE_BYTES,
     PROTOCOL,
+    ActionDismissed,
+    ActionEntry,
+    ActionFinish,
+    ActionOutput,
+    ActionRejected,
+    ActionSyncEnd,
+    ActionSyncStart,
     Active,
+    DismissAction,
     GatherError,
     Hello,
     Message,
     ProtocolError,
     Refresh,
+    RunAction,
     Shutdown,
     Snapshot,
     decode,
@@ -98,12 +110,16 @@ class StateClient:
         cwd_root: Path | None,
         *,
         on_update: Callable[[], None] | None = None,
+        dashboard_id: str | None = None,
+        excluded_prefixes: Sequence[str] = (),
         spawn: Callable[[], None] = spawn_server,
         version: str = __version__,
         connect_timeout: float = CONNECT_TIMEOUT_SECONDS,
         backoff: Sequence[float] = BACKOFF_SECONDS,
     ) -> None:
+        self._dashboard_id = dashboard_id
         self._cwd_root = cwd_root
+        self._excluded_prefixes = list(excluded_prefixes)
         self._on_update = on_update
         self._spawn = spawn
         self._version = version
@@ -112,11 +128,22 @@ class StateClient:
         self._lock = threading.Lock()
         self._sock: socket.socket | None = None
         self._latest: Snapshot | None = None
+        self._action_entries: dict[int, ActionEntry] = {}
+        self._action_rejections: dict[int, str] = {}
+        self._replay_entries: dict[int, ActionEntry] | None = None
+        self._action_events: deque[
+            ActionEntry | ActionOutput | ActionFinish | ActionRejected | ActionDismissed
+        ] = deque(maxlen=256)
         self._status: str | None = None
         self._active = True
         self._closed = threading.Event()
         self._first = threading.Event()
         self._thread = threading.Thread(target=self._run, name="jailbee-state-client", daemon=True)
+
+    @property
+    def dashboard_id(self) -> str | None:
+        """Identity advertised to the state service for hosted actions."""
+        return self._dashboard_id
 
     # ---- the dashboard's side ------------------------------------------------
 
@@ -151,6 +178,33 @@ class StateClient:
         with self._lock:
             self._active = value
         self._send(Active(value))
+
+    def run_action(self, request: RunAction) -> None:
+        """Send an action request; raise when disconnected instead of dropping it."""
+        with self._lock:
+            if self._sock is None:
+                raise StateServiceUnavailable("state service disconnected")
+            self._sock.sendall(encode(request))
+
+    def drain_action_events(
+        self,
+    ) -> list[ActionEntry | ActionOutput | ActionFinish | ActionRejected | ActionDismissed]:
+        with self._lock:
+            events = list(self._action_events)
+            self._action_events.clear()
+            return events
+
+    def action_rejection(self, entry_id: int) -> str | None:
+        with self._lock:
+            return self._action_rejections.get(entry_id)
+
+    def action_entries(self) -> dict[int, ActionEntry]:
+        with self._lock:
+            return self._action_entries.copy()
+
+    def dismiss_action(self, entry_id: int) -> None:
+        """Dismiss a finished shared entry for every dashboard."""
+        self._send(DismissAction(entry_id))
 
     def close(self) -> None:
         self._closed.set()
@@ -219,9 +273,13 @@ class StateClient:
                 if not self._active:
                     with contextlib.suppress(OSError):
                         sock.sendall(encode(Active(False)))
+            with self._lock:
+                self._replay_entries = None
             got_snapshot = False
             try:
-                for line in reader:
+                while line := reader.readline(MAX_WIRE_LINE_BYTES + 1):
+                    if len(line) > MAX_WIRE_LINE_BYTES or not line.endswith(b"\n"):
+                        raise ProtocolError("state service message exceeds wire line limit")
                     if self._dispatch(decode(line)):
                         got_snapshot = True
             except (OSError, ProtocolError):
@@ -244,6 +302,59 @@ class StateClient:
 
     def _dispatch(self, message: Message) -> bool:
         """Apply ``message``; True when it was a snapshot."""
+        if isinstance(message, ActionSyncStart):
+            with self._lock:
+                self._replay_entries = {}
+            return False
+        if isinstance(message, ActionSyncEnd):
+            with self._lock:
+                if self._replay_entries is not None:
+                    self._action_entries = self._replay_entries
+                    self._replay_entries = None
+            self._notify()
+            return False
+        if isinstance(message, ActionDismissed):
+            with self._lock:
+                self._action_entries.pop(message.entry_id, None)
+                self._action_events.append(message)
+            self._notify()
+            return False
+        if isinstance(message, (ActionEntry, ActionOutput, ActionFinish, ActionRejected)):
+            from jailbee.dashboard.runner import OUTPUT_DROPPED_MARKER, OUTPUT_KEEP_CHARS
+
+            with self._lock:
+                self._action_events.append(message)
+                entries = (
+                    self._replay_entries
+                    if self._replay_entries is not None
+                    else self._action_entries
+                )
+                if isinstance(message, ActionRejected):
+                    self._action_rejections.pop(message.entry_id, None)
+                    self._action_rejections[message.entry_id] = message.reason
+                    if len(self._action_rejections) > 256:
+                        del self._action_rejections[next(iter(self._action_rejections))]
+                elif isinstance(message, ActionEntry):
+                    entries[message.entry_id] = message
+                elif not isinstance(message, ActionRejected) and message.entry_id in entries:
+                    entry = entries[message.entry_id]
+                    if isinstance(message, ActionOutput):
+                        output = entry.output + message.chunk
+                        if len(output) > OUTPUT_KEEP_CHARS:
+                            output = OUTPUT_DROPPED_MARKER + output[-OUTPUT_KEEP_CHARS:]
+                        entries[message.entry_id] = replace(entry, output=output)
+                    else:
+                        entries[message.entry_id] = replace(
+                            entry,
+                            finished=True,
+                            status=message.status,
+                            refused=message.refused,
+                            error=message.error,
+                            cancelled=message.cancelled,
+                            declined=message.declined,
+                        )
+            self._notify()
+            return False
         if isinstance(message, Snapshot):
             with self._lock:
                 self._latest = message
@@ -279,8 +390,15 @@ class StateClient:
         reader = sock.makefile("rb")
         try:
             cwd = str(self._cwd_root) if self._cwd_root is not None else None
-            sock.sendall(encode(Hello(PROTOCOL, self._version, cwd)))
-            reply = decode(reader.readline())
+            sock.sendall(
+                encode(
+                    Hello(PROTOCOL, self._version, cwd, self._dashboard_id, self._excluded_prefixes)
+                )
+            )
+            line = reader.readline(MAX_WIRE_LINE_BYTES + 1)
+            if len(line) > MAX_WIRE_LINE_BYTES or not line.endswith(b"\n"):
+                raise ProtocolError("invalid or oversized state service hello")
+            reply = decode(line)
             if not isinstance(reply, Hello):
                 raise ProtocolError(f"expected hello, got {type(reply).__name__}")
             if (reply.protocol, reply.version) != (PROTOCOL, self._version):

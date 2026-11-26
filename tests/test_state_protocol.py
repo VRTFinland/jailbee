@@ -427,7 +427,13 @@ def test_wire_schema_names_every_field_that_crosses_the_wire():
 
     memory = schema["snapshot"]["$defs"]["MemoryStatus"]["properties"]
     assert {"swap_cached", "zswapped"} <= memory.keys()
-    assert schema["hello"]["properties"].keys() == {"protocol", "version", "cwd_root"}
+    assert schema["hello"]["properties"].keys() == {
+        "protocol",
+        "version",
+        "cwd_root",
+        "dashboard_id",
+        "excluded_prefixes",
+    }
 
 
 def test_wire_schema_leaves_out_docstrings_and_titles():
@@ -451,7 +457,7 @@ def test_wire_schema_leaves_out_docstrings_and_titles():
 # PROTOCOL fails below: a client of another version would misread it. A pydantic
 # upgrade that only reshapes its schema output trips this too; a bump is then
 # harmless (a protocol mismatch makes the dashboard replace the state service).
-WIRE_SCHEMA = (44, "ba57bad99aa10d217e23a5bc89a5d3397e12f07640283a6c3475bc226528908d")
+WIRE_SCHEMA = (47, "7552267b03716a0d534163ef705f0aaca4cc8e8db5b519b17fc3b7c67f094634")
 
 
 def test_a_wire_schema_change_bumps_the_protocol():

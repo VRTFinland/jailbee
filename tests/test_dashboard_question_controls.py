@@ -30,7 +30,7 @@ def test_escape_defers_a_question_and_it_can_be_reopened(mocker, tmp_path, contr
 
     app = make_app(mocker, [RepoGroup("alpha", str(tmp_path), None, [ci("alpha-a", "alpha")])])
     app.threaded_actions = True
-    app.action_runner = run
+    app.session.client.action_runner = run
 
     async def scenario():
         async with app.run_test() as pilot:
@@ -95,8 +95,8 @@ def test_disconnect_closes_the_displayed_question(mocker, tmp_path, covered):
 
     app = make_app(mocker, [RepoGroup("alpha", str(tmp_path), None, [ci("alpha-a", "alpha")])])
     app.threaded_actions = True
-    app.action_runner = runner.run_action
-    app.action_spawn = lambda argv, *, cwd, env, prompt_sock: Child(prompt_sock)
+    app.session.client.action_runner = runner.run_action
+    app.session.client.action_spawn = lambda argv, *, cwd, env, prompt_sock: Child(prompt_sock)
 
     async def scenario():
         async with app.run_test() as pilot:
@@ -135,7 +135,7 @@ def test_abort_command_cancels_the_waiting_command(mocker, tmp_path, control):
 
     app = make_app(mocker, [RepoGroup("alpha", str(tmp_path), None, [ci("alpha-a", "alpha")])])
     app.threaded_actions = True
-    app.action_runner = run
+    app.session.client.action_runner = run
 
     async def scenario():
         async with app.run_test() as pilot:

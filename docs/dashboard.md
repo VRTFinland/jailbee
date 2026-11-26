@@ -85,8 +85,21 @@ declining shows the "Pick a different name" hint, not a failure. If
 creation fails before its background worker starts, the reason stays as a
 failed queue entry until dismissed, even when no container row exists yet.
 
-The queue lives as long as the dashboard; the rules are in
-[Commands](commands.md#terminal-dashboard-actions).
+Background actions run in the per-user state service through the shared action
+runner, not in the terminal dashboard. Every connected dashboard in the same
+repository scope sees the entries and live output; connecting later includes the
+output so far. Dismissing a finished entry clears it in every dashboard.
+Critical output opens automatically only in the dashboard that started it;
+other dashboards can inspect its entry without a terminal hand-off block.
+Lifecycle jobs remain in the same queue alongside these actions.
+
+Entries and their capped output tails are stored in the host state database
+until dismissed. After a state service restart, an entry left running or awaiting
+an answer is shown as **interrupted**, in the failure colour, and counts as
+needing attention. Pending questions themselves are not stored. In this first
+action-host slice, a command that asks through the service receives cancellation;
+shared question delivery and action-aware service lifetime are follow-up work.
+The full queue controls are in [Commands](commands.md#terminal-dashboard-actions).
 
 ## Keys
 

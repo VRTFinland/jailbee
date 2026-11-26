@@ -99,7 +99,12 @@ isolated per-branch development environments using Incus system containers. See
 - **The dashboards gather nothing themselves.** `state_service/` holds the only
   gather loop (`gatherer.Gatherer`), run by one on-demand per-user server;
   `jailbee.dashboard.tui.app` (a `DashboardSession` in a Textual app) and the Qt app
-  render what `StateClient` holds.
+  render what `StateClient` holds. The state service also hosts background
+  dashboard actions through `dashboard.runner` (the existing subprocess boundary),
+  publishes their notification entries/output, and persists entries in the state
+  database. Frontends keep presentation state only; attach-style terminal
+  hand-offs stay local. Answer arbitration and question routing belong to the
+  frontend-agnostic dashboard core, not `dashboard.tui`.
 - **`jailbee.dashboard` is a package: shared core first, terminal frontend
   in `tui/`.** `model`, `columns`, `menus`, `dispatch` and the moved
   `accounts`/`egress`/`overlays`/… modules are frontend-agnostic; the state

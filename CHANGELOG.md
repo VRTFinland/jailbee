@@ -10,6 +10,12 @@ before editing `## Unreleased`.
 
 ### Added
 
+- Background dashboard actions run in the shared state service. Dashboards in
+  the same repository scope share notification entries, live output and
+  dismissal; a newly connected dashboard sees the output so far. Entries stay
+  in the state database until dismissed, and work left running by a service
+  restart appears as interrupted and needs attention
+  ([#169](https://github.com/VRTFinland/jailbee/issues/169)).
 - `jailbee litellm quota [-P PROFILE] [--json]` inside a container shows the
   ChatGPT subscription's usage limits (plan, used percent and reset time per
   window) for a `claude-jb` profile routed through the LiteLLM proxy. Profiles

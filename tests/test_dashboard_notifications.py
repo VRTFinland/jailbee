@@ -50,6 +50,30 @@ def _choose(session, label_part: str):  # type: ignore[no-untyped-def]
     session.picker_chosen(next(e for e in picker.entries if label_part in e.label))
 
 
+def test_shared_action_sync_preserves_local_question_and_origin_modal():
+    from jailbee.dashboard.notifications import NotificationQueue, QueueEntry
+
+    queue = NotificationQueue()
+    local = QueueEntry(
+        42,
+        "jailbee merge",
+        "repo",
+        state="awaiting",
+        pending_question=object(),
+        critical=True,
+        foreground=True,
+    )
+    queue._entries[42] = local
+    remote = QueueEntry(42, "jailbee merge", "repo", state="running", critical=True)
+
+    queue.sync_shared([remote])
+
+    synced = queue.get(42)
+    assert synced is not None
+    assert synced.state == "awaiting"
+    assert synced.foreground
+
+
 def test_a_started_action_is_a_running_entry_and_counts_on_the_badge(mocker, tmp_path):
     _children(mocker)
     session, _ = _one_repo(mocker, tmp_path, defer=True)
@@ -672,8 +696,8 @@ def test_pilot_an_expanded_running_entry_updates_live(mocker, tmp_path):
 
     app = make_app(mocker, [_pilot_group(tmp_path)])
     app.threaded_actions = True
-    app.action_runner = drunner.run_action
-    app.action_spawn = spawn
+    app.session.client.action_runner = drunner.run_action
+    app.session.client.action_spawn = spawn
 
     def shown(app) -> str:  # type: ignore[no-untyped-def]
         screen = app.screen
@@ -966,8 +990,8 @@ def _pilot_two_entries(mocker, tmp_path):  # type: ignore[no-untyped-def]
 
     app = make_app(mocker, [_pilot_group(tmp_path)])
     app.threaded_actions = True
-    app.action_runner = drunner.run_action
-    app.action_spawn = spawn
+    app.session.client.action_runner = drunner.run_action
+    app.session.client.action_spawn = spawn
     return app, children
 
 
@@ -1134,9 +1158,9 @@ def test_a_question_drains_the_output_before_it():
 
 
 def test_a_crashed_action_worker_still_settles_its_entries(mocker, tmp_path):
-    from tests.dashboard_pilot import drive
+    from tests.dashboard_pilot import FakeStateClient, drive
 
-    mocker.patch.object(drunner, "run_actions", side_effect=RuntimeError("boom"))
+    mocker.patch.object(FakeStateClient, "run_action", side_effect=RuntimeError("boom"))
     seen: list[list[str]] = []
 
     def start_and_look(app) -> None:  # type: ignore[no-untyped-def]
@@ -1455,3 +1479,72 @@ def test_pilot_b_on_a_non_critical_output_screen_does_nothing(mocker, tmp_path):
     )
 
     assert isinstance(seen[0], pm.OutputScreen)
+
+
+def test_interrupted_entry_needs_failure_attention():
+    from jailbee.dashboard.notifications import NotificationQueue, QueueEntry
+
+    queue = NotificationQueue()
+    queue._entries[123] = QueueEntry(123, "jailbee doctor", "alpha", state="interrupted")
+    assert queue.counts().failed == 1
+    assert ("entry", 123) in queue.attention_items()
+
+
+def test_pilot_interrupted_entry_is_drawn_as_failure(mocker, tmp_path):
+    import asyncio
+
+    from jailbee.dashboard.notifications import QueueEntry
+    from tests.dashboard_pilot import make_app
+
+    app = make_app(mocker, [_pilot_group(tmp_path)])
+    app.session.queue._entries[123] = QueueEntry(
+        123, "jailbee doctor", "alpha", state="interrupted"
+    )
+
+    async def main():
+        async with app.run_test(size=(100, 25)) as pilot:
+            await pilot.pause()
+            await pilot.press("Q")
+            await pilot.pause()
+            entry = app.session.queue_picker().entries[0]
+            assert "interrupted" in entry.label
+            assert entry.tone == "error"
+            assert app.frame.native_box is not None
+
+    asyncio.run(main())
+
+
+def test_pilot_replays_interrupted_action_in_failure_colour(mocker, tmp_path):
+    import asyncio
+
+    from jailbee.state_service.protocol import ActionEntry
+    from tests.dashboard_pilot import make_app
+
+    app = make_app(mocker, [_pilot_group(tmp_path)])
+    app.session.client.action_entries = lambda: {
+        123: ActionEntry(
+            123,
+            ["doctor"],
+            str(tmp_path),
+            "alpha",
+            False,
+            "origin",
+            "none",
+            str(tmp_path),
+            "repo",
+            finished=True,
+            state="interrupted",
+        )
+    }
+
+    async def main():
+        async with app.run_test(size=(100, 25)) as pilot:
+            app.session._sync_shared_actions()
+            await pilot.press("Q")
+            await pilot.pause()
+            entry = app.session.queue_picker().entries[0]
+            assert "interrupted" in entry.label
+            assert entry.tone == "error"
+            assert app.session.queue.counts().failed == 1
+
+    asyncio.run(main())

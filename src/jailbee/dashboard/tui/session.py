@@ -16,6 +16,7 @@ import re
 import subprocess
 import sys
 import time
+import uuid
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime
@@ -138,7 +139,6 @@ from jailbee.dashboard.notifications import (
     QueueEntry,
     is_critical,
     job_rows,
-    should_show_question,
 )
 from jailbee.dashboard.outbox import OutboxState
 from jailbee.dashboard.outbox_flow import LOADING as OUTBOX_LOADING
@@ -151,6 +151,7 @@ from jailbee.dashboard.overlays import (
     parse_pr_number,
     validate_answer,
 )
+from jailbee.dashboard.questions import QuestionRouter
 from jailbee.dashboard.runner import (
     OUTPUT_DROPPED_MARKER,
     OUTPUT_KEEP_CHARS,
@@ -332,7 +333,7 @@ QUEUE_TAIL_LINES = 3
 QUEUE_NO_OUTPUT_YET = "(no output yet)"
 QUEUE_ROW_TAIL_CHARS = 60
 
-_QUEUE_ICONS = {"running": "⟳", "awaiting": "?", "done": "✓", "failed": "✗"}
+_QUEUE_ICONS = {"running": "⟳", "awaiting": "?", "done": "✓", "failed": "✗", "interrupted": "✗"}
 
 
 def _queue_state(entry: QueueEntry) -> str:
@@ -340,6 +341,8 @@ def _queue_state(entry: QueueEntry) -> str:
         return "running"
     if entry.state == "awaiting":
         return "awaiting answer"
+    if entry.state == "interrupted":
+        return "interrupted"
     return f"{entry.state} (exit {entry.status})"
 
 
@@ -375,7 +378,7 @@ def open_state_client(cwd_root: Path | None) -> StateClient:
     """A started `StateClient` for this dashboard (the tests' seam)."""
     from jailbee.state_service.client import StateClient
 
-    client = StateClient(cwd_root)
+    client = StateClient(cwd_root, dashboard_id=uuid.uuid4().hex)
     client.start()
     return client
 
@@ -520,6 +523,13 @@ class _EntryProgress:
     def output(self, index: int, chunk: str) -> None:
         self._session._entry_output(self._ids[index], chunk)
 
+    def replace_output(self, index: int, text: str) -> None:
+        entry_id = self._ids[index]
+        self._session.queue.replace_output(entry_id, text)
+        self._session.queue_changed()
+        if entry_id in (self._session._following, self._session._modal_entry):
+            self._session.terminal.update_output(text)
+
     def question(self, index: int, asking: bool) -> None:
         self._session._entry_question(self._ids[index], asking)
 
@@ -585,9 +595,7 @@ class DashboardSession:
         self.overlay: Overlay | None = None
         # Every action started through the action runner, until dismissed.
         self.queue = NotificationQueue()
-        self._interaction = 0
-        self._action_interactions: dict[int, int] = {}
-        self._answer_interactions: dict[int, int] = {}
+        self.questions = QuestionRouter(self.queue)
         self._queue_frame = 0
         self._following: int | None = None  # the entry whose output screen follows it live
         self._modal_entry: int | None = None  # the critical entry whose modal is open
@@ -654,6 +662,7 @@ class DashboardSession:
         hover, keys and resizes do not speed it up.
         """
         self.jobs.poll()
+        self._sync_shared_actions()
         snapshot = self.client.latest()
         assert snapshot is not None  # `wait_first_snapshot` returned
         self.presented = self._without_dismissed(
@@ -700,6 +709,38 @@ class DashboardSession:
             self._queue_frame = 0
         elif spin:
             self._queue_frame = (self._queue_frame + 1) % 4
+
+    def _sync_shared_actions(self) -> None:
+        from jailbee.dashboard.notifications import QueueEntry
+
+        action_entries = getattr(self.client, "action_entries", None)
+        if action_entries is None:
+            return
+        entries = []
+        for item in action_entries().values():
+            if self.scope is not None and not self.scope.allows(item.prefix):
+                continue
+            entries.append(
+                QueueEntry(
+                    item.entry_id,
+                    "jailbee " + " ".join(item.argv),
+                    item.target,
+                    state=(
+                        "interrupted"
+                        if item.state == "interrupted"
+                        else "running"
+                        if not item.finished
+                        else "done"
+                        if item.status == 0
+                        else "failed"
+                    ),
+                    status=item.status,
+                    output=item.output,
+                    critical=item.critical,
+                )
+            )
+        self.queue.sync_shared(entries)
+        self.queue_changed()
 
     def _without_dismissed(self, groups: list[RepoGroup]) -> list[RepoGroup]:
         """``groups`` minus the advisories dismissed since the snapshot was gathered.
@@ -957,7 +998,7 @@ class DashboardSession:
             )
             for i, run in enumerate(runs)
         ]
-        self._action_interactions.update(dict.fromkeys(ids, self._interaction))
+        self.questions.dispatched(ids)
         self.queue_changed()
         # A critical action's result is the modal's (or, once sent to the
         # background, the queue's): no output screen of its own on the end.
@@ -993,8 +1034,7 @@ class DashboardSession:
     def _settle_entries(self, ids: Sequence[int], outcome: ActionOutcome) -> None:
         """Finish the entries of the runs that ran; drop those that never started."""
         for i, entry_id in enumerate(ids):
-            self._action_interactions.pop(entry_id, None)
-            self._answer_interactions.pop(entry_id, None)
+            self.questions.finished(entry_id)
             result = outcome.results[i] if i < len(outcome.results) else None
             output = outcome.outputs[i] if i < len(outcome.outputs) else ""
             if result is None or result.refused is not None:
@@ -1025,12 +1065,11 @@ class DashboardSession:
 
     def user_interacted(self) -> None:
         """Record input without treating refreshes as user activity."""
-        self._interaction += 1
+        self.questions.interacted()
 
     def question_answered(self, entry_id: int) -> None:
         """Keep the user's attention on the entry they just answered."""
-        if self.queue.get(entry_id) is not None:
-            self._answer_interactions[entry_id] = self._interaction
+        self.questions.answered(entry_id)
 
     def question_arrived(
         self, entry_id: int, prompt: Prompt, *, on_top: bool, queue_key: str
@@ -1039,22 +1078,18 @@ class DashboardSession:
         entry = self.queue.get(entry_id)
         if entry is None:
             return False
-        self.queue.set_question(entry_id, prompt)
-        self.queue_changed()
-        show = should_show_question(
-            critical=entry.critical,
-            foreground=entry.foreground,
+        show = self.questions.arrived(
+            entry_id,
+            prompt,
             on_top=on_top,
             overlay="none"
             if self.overlay is None
             else "queue"
             if isinstance(self.overlay, Picker) and self.overlay.purpose == "queue"
             else "other",
-            dispatch_interaction=self._action_interactions.get(entry_id),
-            answer_interaction=self._answer_interactions.get(entry_id),
-            interaction=self._interaction,
             suspended=self._handed_off,
         )
+        self.queue_changed()
 
         if not show:
             self.set_notice(f"'{entry.command}' awaiting answer · {queue_key}: queue")
@@ -1078,7 +1113,7 @@ class DashboardSession:
         self.terminal.show_output(
             entry.command,
             entry.output or (QUEUE_NO_OUTPUT_YET if not entry.finished else ""),
-            failed=entry.state == "failed",
+            failed=entry.state in ("failed", "interrupted"),
             live=True,
             background=True,
             on_close=lambda: self._modal_closed(entry.id),
@@ -1168,7 +1203,7 @@ class DashboardSession:
                 tone="accent"
                 if entry.state == "awaiting"
                 else "error"
-                if entry.state == "failed"
+                if entry.state in ("failed", "interrupted")
                 else None,
             )
             for entry in reversed(list(self.queue))
@@ -1234,7 +1269,11 @@ class DashboardSession:
             if entry.value.startswith(QUEUE_JOB_PREFIX):
                 return self.queue_job_picker(entry.value.removeprefix(QUEUE_JOB_PREFIX))
             if entry.value == QUEUE_DISMISS_FINISHED:
-                self.queue.dismiss_finished()
+                for queued in list(self.queue):
+                    if queued.finished and self.queue.dismiss(queued.id):
+                        dismiss = getattr(self.client, "dismiss_action", None)
+                        if dismiss is not None and queued.id in self.client.action_entries():
+                            dismiss(queued.id)
                 return self.queue_picker()
             if entry.value == "close" or not entry.value.isdigit():
                 return None
@@ -1251,13 +1290,19 @@ class DashboardSession:
             text = found.output or (QUEUE_NO_OUTPUT_YET if not found.finished else "")
             self._following = None if found.finished else entry_id
             self.terminal.show_output(
-                found.command, text, failed=found.state == "failed", live=not found.finished
+                found.command,
+                text,
+                failed=found.state in ("failed", "interrupted"),
+                live=not found.finished,
             )
             return self.queue_entry_picker(entry_id)
         if entry.value == "dismiss":
             if not self.queue.dismiss(entry_id):
                 self.set_notice("A running action cannot be dismissed")
                 return self.queue_entry_picker(entry_id)
+            dismiss = getattr(self.client, "dismiss_action", None)
+            if dismiss is not None and entry_id in self.client.action_entries():
+                dismiss(entry_id)
             return self.queue_picker()
         return None
 
@@ -1610,6 +1655,7 @@ class DashboardSession:
                 run_questions=self.terminal.run_actions,
                 changed=self.queue_changed,
                 done=finished,
+                dismiss_shared=getattr(self.client, "dismiss_action", None),
             )
         except ValueError:
             self.set_notice("That container is already being created")

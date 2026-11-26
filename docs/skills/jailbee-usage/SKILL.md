@@ -1887,7 +1887,14 @@ timeout; `Abort command` / Ctrl-C in the question cancels it. A closed prompt
 channel removes the command's question, even beneath another screen. Returning from
 tmux opens the queue for new questions, not a question modal. Quitting with
 pending questions confirms how many commands will be aborted; with none,
-there is no extra confirmation. Each modal accepts its first answer or Later/Abort
+there is no extra confirmation. Background actions now run in the per-user
+state service: entries and live output are shared across dashboards in the same
+repo scope, including output so far on reconnect. Dismissing a finished entry
+clears it everywhere. Entries persist in the state database; entries left live
+at a service restart become interrupted and count as failures needing attention.
+Critical foreground output belongs only to the originating dashboard. This first
+slice cancels service-hosted questions; shared question delivery and action-aware
+service lifetime follow separately. Each modal accepts its first answer or Later/Abort
 choice only; repeated input queued for it cannot dismiss another screen.
 Output, URLs and failure reasons stay in the
 queue. PR creations use it too; only the standalone manager hands over a terminal. The

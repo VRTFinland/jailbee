@@ -13,6 +13,7 @@ retains pre-worker failures, including spawn errors, since no job can report the
 
 from __future__ import annotations
 
+import secrets
 from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Literal
@@ -25,7 +26,7 @@ if TYPE_CHECKING:
 
 from jailbee.dashboard.runner import OUTPUT_DROPPED_MARKER, OUTPUT_KEEP_CHARS
 
-EntryState = Literal["running", "awaiting", "done", "failed"]
+EntryState = Literal["running", "awaiting", "done", "failed", "interrupted"]
 
 
 def is_critical(argv: Sequence[str]) -> bool:
@@ -91,7 +92,7 @@ class QueueEntry:
     @property
     def needs_attention(self) -> bool:
         """Failed, or blocked on a question the user has not answered."""
-        return self.state in ("failed", "awaiting")
+        return self.state in ("failed", "awaiting", "interrupted")
 
 
 # The background jobs the queue lists: those that move a container to being
@@ -149,7 +150,7 @@ class NotificationQueue:
 
     def __init__(self) -> None:
         self._entries: dict[int, QueueEntry] = {}
-        self._next_id = 1
+        self._shared_ids: set[int] = set()
         self.jobs: tuple[JobRow, ...] = ()
 
     def job(self, target: str) -> JobRow | None:
@@ -172,10 +173,31 @@ class NotificationQueue:
     def get(self, entry_id: int) -> QueueEntry | None:
         return self._entries.get(entry_id)
 
+    def sync_shared(self, entries: Iterable[QueueEntry]) -> None:
+        """Replace entries mirrored from the state service, preserving local foreground state."""
+        shared = {entry.id: entry for entry in entries}
+        for entry_id in self._shared_ids - shared.keys():
+            self._entries.pop(entry_id, None)
+        for entry_id, entry in shared.items():
+            local = self._entries.get(entry_id)
+            self._entries[entry_id] = replace(
+                entry,
+                command=local.command if local is not None else entry.command,
+                state=(
+                    local.state
+                    if local is not None and local.pending_question is not None
+                    else entry.state
+                ),
+                foreground=(local.foreground if local is not None else False),
+                pending_question=local.pending_question if local is not None else None,
+            )
+        self._shared_ids = set(shared)
+
     def start(self, command: str, target: str, *, critical: bool = False) -> int:
         """A new running entry; returns its id. A critical one starts in the foreground."""
-        entry_id = self._next_id
-        self._next_id += 1
+        entry_id = secrets.randbits(63) or 1
+        while entry_id in self._entries:
+            entry_id = secrets.randbits(63) or 1
         self._entries[entry_id] = QueueEntry(
             entry_id, command, target, critical=critical, foreground=critical
         )
@@ -205,6 +227,12 @@ class NotificationQueue:
             body = text.removeprefix(OUTPUT_DROPPED_MARKER)
             text = OUTPUT_DROPPED_MARKER + body[-OUTPUT_KEEP_CHARS:]
         self._entries[entry_id] = replace(entry, output=text)
+
+    def replace_output(self, entry_id: int, text: str) -> None:
+        """Mirror the service's authoritative capped output without appending it twice."""
+        entry = self._entries.get(entry_id)
+        if entry is not None:
+            self._entries[entry_id] = replace(entry, output=text)
 
     def set_awaiting(self, entry_id: int, awaiting: bool) -> None:
         """A prompt-channel question opened (``awaiting``) or was answered."""
@@ -267,5 +295,6 @@ class NotificationQueue:
             running=sum(e.state == "running" for e in entries)
             + sum(not j.failed for j in self.jobs),
             pending=sum(e.state == "awaiting" for e in entries),
-            failed=sum(e.state == "failed" for e in entries) + sum(j.failed for j in self.jobs),
+            failed=sum(e.state in ("failed", "interrupted") for e in entries)
+            + sum(j.failed for j in self.jobs),
         )

@@ -1532,3 +1532,24 @@ def test_v28_database_migrates_to_v29_with_where_each_session_started() -> None:
         assert (row.cwd, row.git_branch) == ("/p", "main")
         meta = session.get(SchemaMeta, 1)
         assert meta is not None and meta.version == CURRENT_SCHEMA_VERSION
+
+
+def test_v30_database_preserves_existing_data_and_adds_action_entries() -> None:
+    from jailbee.db import _ensure_schema
+    from jailbee.db.models import SchemaMeta
+
+    engine = create_engine("sqlite:///:memory:")
+    SQLModel.metadata.create_all(engine)
+    with Session(engine) as session:
+        session.add(SchemaMeta(id=1, version=30))
+        session.commit()
+    with engine.begin() as conn:
+        conn.exec_driver_sql("DROP TABLE IF EXISTS action_entry")
+        conn.exec_driver_sql("CREATE TABLE preserved (value TEXT)")
+        conn.exec_driver_sql("INSERT INTO preserved VALUES ('kept')")
+    _ensure_schema(engine)
+    with engine.connect() as conn:
+        assert conn.exec_driver_sql("SELECT value FROM preserved").scalar_one() == "kept"
+        assert conn.exec_driver_sql("SELECT count(*) FROM action_entry").scalar_one() == 0
+    with Session(engine) as session:
+        assert session.get(SchemaMeta, 1).version == 31

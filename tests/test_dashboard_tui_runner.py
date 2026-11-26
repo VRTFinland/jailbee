@@ -58,9 +58,9 @@ def test_quit_driver_waits_for_mounted_question_before_exiting(mocker, tmp_path)
     """Pin the real runner's current-but-still-mounting question before quit."""
     app = make_app(mocker, [_group(tmp_path)])
     app.threaded_actions = True
-    app.action_runner = drunner.run_action
+    app.session.client.action_runner = drunner.run_action
     spawn = Spawns([_prompt(default=False, destructive=True)])
-    app.action_spawn = spawn
+    app.session.client.action_spawn = spawn
 
     async def main():
         mounting = asyncio.Event()
@@ -102,7 +102,7 @@ def test_quit_driver_waits_for_mounted_question_before_exiting(mocker, tmp_path)
 def test_exit_while_prompt_is_mounting_does_not_report_an_exception(mocker, tmp_path, kind, caplog):
     app = make_app(mocker, [_group(tmp_path)])
     app.threaded_actions = True
-    app.action_runner = drunner.run_action
+    app.session.client.action_runner = drunner.run_action
     prompt = _prompt(
         kind=kind,
         default=False if kind == "confirm" else None,
@@ -110,7 +110,7 @@ def test_exit_while_prompt_is_mounting_does_not_report_an_exception(mocker, tmp_
         options=(WireOption("0", "first", "first", ""),) if "choose" in kind else (),
     )
     spawn = Spawns([prompt])
-    app.action_spawn = spawn
+    app.session.client.action_spawn = spawn
     errors = mocker.spy(app, "_handle_exception")
 
     async def main():
@@ -160,8 +160,8 @@ def _drive(
     """A real threaded runner over ``spawn``; ``script(app, pilot)`` plays the user."""
     app = make_app(mocker, [_group(tmp_path)])
     app.threaded_actions = True
-    app.action_runner = drunner.run_action
-    app.action_spawn = spawn
+    app.session.client.action_runner = drunner.run_action
+    app.session.client.action_spawn = spawn
 
     async def main() -> None:
         async with app.run_test() as pilot:
@@ -244,9 +244,9 @@ def test_outbox_publish_uses_runner_modal_and_keeps_queue_result(mocker, tmp_pat
         ssh_policy=RemoteSSHConfig(),
     )
     app.threaded_actions = True
-    app.action_runner = drunner.run_action
+    app.session.client.action_runner = drunner.run_action
     spawn = Spawns([_prompt(question="Publish proposal?", default=False)])
-    app.action_spawn = spawn
+    app.session.client.action_spawn = spawn
     hand_off = mocker.patch.object(app, "hand_off", side_effect=AssertionError("terminal hand-off"))
 
     async def main():
@@ -285,9 +285,9 @@ def test_global_lifecycle_runs_without_a_repo_and_uses_prompt_channel(mocker, in
     client.resumable_repos = ["alpha"]
     app = make_app(mocker, [], client=client)
     app.threaded_actions = True
-    app.action_runner = drunner.run_action
+    app.session.client.action_runner = drunner.run_action
     spawn = Spawns([_prompt(question="Proceed on the host?", default=False)])
-    app.action_spawn = spawn
+    app.session.client.action_spawn = spawn
     hand_off = mocker.patch.object(app, "hand_off", side_effect=AssertionError("terminal hand-off"))
 
     async def main():
@@ -354,8 +354,8 @@ def test_contextual_question_actions_are_keyboard_accessible(mocker, tmp_path, k
     )
     spawn = Spawns([prompt])
     app = make_app(mocker, [_group(tmp_path)])
-    app.action_runner = drunner.run_action
-    app.action_spawn = spawn
+    app.session.client.action_runner = drunner.run_action
+    app.session.client.action_spawn = spawn
     app.threaded_actions = True
 
     async def main():
@@ -444,8 +444,8 @@ def test_teardown_with_contextual_question_does_not_log_callback_error(mocker, t
     spawn = Spawns([_prompt()])
     app = make_app(mocker, [_group(tmp_path)])
     app.threaded_actions = True
-    app.action_runner = drunner.run_action
-    app.action_spawn = spawn
+    app.session.client.action_runner = drunner.run_action
+    app.session.client.action_spawn = spawn
 
     async def main():
         async with app.run_test() as pilot:
@@ -550,8 +550,8 @@ def test_remote_dashboard_action_audit_record_carries_the_ssh_client(mocker, tmp
         remote_client="SHA256:abc",
     )
     app.threaded_actions = True
-    app.action_runner = drunner.run_action
-    app.action_spawn = Spawns()
+    app.session.client.action_runner = drunner.run_action
+    app.session.client.action_spawn = Spawns()
 
     async def main() -> None:
         async with app.run_test() as pilot:

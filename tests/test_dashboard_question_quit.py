@@ -23,7 +23,7 @@ def test_quit_confirms_and_cancels_pending_command(mocker, tmp_path):
         return drunner.RunResult(status=0)
 
     app = make_app(mocker, [RepoGroup("alpha", str(tmp_path), None, [ci("alpha-a", "alpha")])])
-    app.action_runner = run
+    app.session.client.action_runner = run
     app.threaded_actions = True
 
     async def scenario():

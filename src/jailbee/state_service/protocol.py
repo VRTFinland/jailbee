@@ -13,7 +13,7 @@ import json
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import TypeAdapter, ValidationError
 
@@ -69,7 +69,12 @@ from jailbee.update_check import UpdateNotice
 # 42 adds None entries for local-only config/journal error recovery in resumable_repos.
 # 43 adds ContainerInfo.start_identity for precise host-side boot recovery.
 # 44 distinguishes registered repos with unloadable configs from true orphans.
-PROTOCOL = 44
+# 45 adds action hosting messages. 46 adds action scope and dismissal.
+# 47 adds an atomic action replay boundary.
+PROTOCOL = 47
+
+# Allows escaped output tails and ordinary snapshots while bounding incoming lines.
+MAX_WIRE_LINE_BYTES = 16 * 1024 * 1024
 
 
 class ProtocolError(ValueError):
@@ -83,6 +88,8 @@ class Hello:
     protocol: int
     version: str
     cwd_root: str | None = None
+    dashboard_id: str | None = None
+    excluded_prefixes: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -134,9 +141,115 @@ class GatherError:
     message: str
 
 
-Message = Hello | Active | Refresh | Shutdown | Snapshot | GatherError
+@dataclass(frozen=True)
+class RunAction:
+    entry_id: int
+    argv: list[str]
+    cwd: str
+    target: str
+    critical: bool
+    origin: str
+    transport: Literal["none", "ssh", "web"]
+    repo_root: str
+    prefix: str
+    address_flags: list[str] = field(default_factory=list)
+    cwd_root: str | None = None
+    excluded_prefixes: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class ActionEntry:
+    entry_id: int
+    argv: list[str]
+    cwd: str
+    target: str
+    critical: bool
+    origin: str
+    transport: Literal["none", "ssh", "web"]
+    repo_root: str
+    prefix: str
+    output: str = ""
+    status: int | None = None
+    finished: bool = False
+    refused: str | None = None
+    error: str | None = None
+    cancelled: bool = False
+    declined: bool = False
+    state: Literal["running", "awaiting", "done", "failed", "interrupted"] = "running"
+    cwd_root: str | None = None
+    excluded_prefixes: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class ActionSyncStart:
+    """Begin a complete in-scope action replay."""
+
+
+@dataclass(frozen=True)
+class ActionSyncEnd:
+    """Commit the preceding action replay."""
+
+
+@dataclass(frozen=True)
+class ActionOutput:
+    entry_id: int
+    chunk: str
+
+
+@dataclass(frozen=True)
+class DismissAction:
+    entry_id: int
+
+
+@dataclass(frozen=True)
+class ActionDismissed:
+    entry_id: int
+
+
+@dataclass(frozen=True)
+class ActionRejected:
+    entry_id: int
+    reason: str
+
+
+@dataclass(frozen=True)
+class ActionFinish:
+    entry_id: int
+    status: int | None = None
+    refused: str | None = None
+    error: str | None = None
+    cancelled: bool = False
+    declined: bool = False
+
+
+Message = (
+    Hello
+    | Active
+    | Refresh
+    | Shutdown
+    | Snapshot
+    | GatherError
+    | RunAction
+    | ActionEntry
+    | ActionSyncStart
+    | ActionSyncEnd
+    | ActionOutput
+    | ActionFinish
+    | ActionRejected
+    | DismissAction
+    | ActionDismissed
+)
 
 _NAMES: dict[type[Any], str] = {
+    RunAction: "run_action",
+    ActionEntry: "action_entry",
+    ActionSyncStart: "action_sync_start",
+    ActionSyncEnd: "action_sync_end",
+    ActionOutput: "action_output",
+    ActionFinish: "action_finish",
+    ActionRejected: "action_rejected",
+    DismissAction: "dismiss_action",
+    ActionDismissed: "action_dismissed",
     Hello: "hello",
     Active: "active",
     Refresh: "refresh",

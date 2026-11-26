@@ -32,7 +32,7 @@ def test_background_question_waits_in_queue_until_selected(mocker, tmp_path, ans
 
     app = make_app(mocker, [RepoGroup("alpha", str(tmp_path), None, [ci("alpha-a", "alpha")])])
     app.threaded_actions = True
-    app.action_runner = run
+    app.session.client.action_runner = run
 
     async def scenario():
         async with app.run_test() as pilot:
@@ -89,7 +89,7 @@ def test_two_pending_questions_are_answered_independently(mocker, tmp_path, firs
 
     app = make_app(mocker, [RepoGroup("alpha", str(tmp_path), None, [ci("alpha-a", "alpha")])])
     app.threaded_actions = True
-    app.action_runner = run
+    app.session.client.action_runner = run
 
     async def scenario():
         async with app.run_test() as pilot:
@@ -127,7 +127,7 @@ def test_only_the_critical_action_whose_modal_is_foreground_opens_its_question(m
 
     app = make_app(mocker, [RepoGroup("alpha", str(tmp_path), None, [ci("alpha-a", "alpha")])])
     app.threaded_actions = True
-    app.action_runner = run
+    app.session.client.action_runner = run
 
     async def scenario():
         async with app.run_test() as pilot:
@@ -164,7 +164,7 @@ def test_critical_question_still_opens_after_another_live_output_was_closed(mock
 
     app = make_app(mocker, [RepoGroup("alpha", str(tmp_path), None, [ci("alpha-a", "alpha")])])
     app.threaded_actions = True
-    app.action_runner = run
+    app.session.client.action_runner = run
 
     async def scenario():
         async with app.run_test() as pilot:
@@ -231,8 +231,10 @@ def test_dead_child_clears_pending_question(mocker, tmp_path, caplog, while_moun
     app.threaded_actions = True
     from functools import partial
 
-    app.action_runner = partial(drunner.run_action) if wrapped else drunner.run_action
-    app.action_spawn = spawn
+    app.session.client.action_runner = (
+        partial(drunner.run_action) if wrapped else drunner.run_action
+    )
+    app.session.client.action_spawn = spawn
 
     async def scenario():
         mounting = asyncio.Event()
@@ -290,7 +292,7 @@ def test_critical_question_waits_when_another_screen_is_on_top(mocker, tmp_path)
         return drunner.RunResult(status=0)
 
     app = make_app(mocker, [RepoGroup("alpha", str(tmp_path), None, [ci("alpha-a", "alpha")])])
-    app.action_runner = run
+    app.session.client.action_runner = run
     app.threaded_actions = True
 
     async def scenario():
@@ -325,7 +327,7 @@ def test_exit_cancels_all_deferred_commands(mocker, tmp_path):
 
     app = make_app(mocker, [RepoGroup("alpha", str(tmp_path), None, [ci("alpha-a", "alpha")])])
     app.threaded_actions = True
-    app.action_runner = run
+    app.session.client.action_runner = run
 
     async def scenario():
         async with app.run_test() as pilot:
