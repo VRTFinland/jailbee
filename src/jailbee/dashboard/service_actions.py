@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import secrets
 import time
 from collections.abc import Sequence
@@ -38,6 +39,9 @@ class ActionClient(Protocol):
 
     @property
     def dashboard_id(self) -> str | None: ...
+
+    @property
+    def excluded_prefixes(self) -> Sequence[str]: ...
 
     def run_action(self, request: RunAction) -> None: ...
 
@@ -96,6 +100,8 @@ def run_actions(
             transport=transport,
             repo_root=root,
             prefix=prefix or root,
+            excluded_prefixes=list(client.excluded_prefixes),
+            environment=dict(os.environ),
         )
         if entry_id in client.action_entries():
             results.append(RunResult(error="invalid or duplicate action id"))

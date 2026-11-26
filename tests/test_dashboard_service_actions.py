@@ -88,6 +88,7 @@ def test_capped_service_tail_replaces_local_output_instead_of_appending_old_text
 
     class Client:
         dashboard_id = "origin"
+        excluded_prefixes = ()
 
         def __init__(self):
             self.sent = False
@@ -160,6 +161,7 @@ def test_batch_resumes_after_disconnect_without_resubmitting_accepted_action(tmp
 
     class Client:
         dashboard_id = "origin"
+        excluded_prefixes = ()
 
         def __init__(self):
             self.entries = {}
@@ -221,6 +223,7 @@ def test_disconnect_timeout_returns_partial_output(tmp_path, monkeypatch):
 
     class Client:
         dashboard_id = "origin"
+        excluded_prefixes = ()
 
         def action_connection(self):
             return None
@@ -333,6 +336,7 @@ def test_acknowledged_action_missing_from_replay_fails_without_resubmitting(tmp_
 
     class Client:
         dashboard_id = "origin"
+        excluded_prefixes = ()
         calls = 0
         sends = 0
 
@@ -395,6 +399,7 @@ def test_finished_snapshot_settles_while_disconnected(tmp_path, monkeypatch):
 
     class Client:
         dashboard_id = "origin"
+        excluded_prefixes = ()
         sent = False
 
         def action_connection(self):

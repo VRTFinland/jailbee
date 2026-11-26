@@ -374,11 +374,17 @@ def _now() -> datetime:
     return datetime.now().astimezone()
 
 
-def open_state_client(cwd_root: Path | None) -> StateClient:
+def open_state_client(
+    cwd_root: Path | None, *, excluded_prefixes: Sequence[str] = ()
+) -> StateClient:
     """A started `StateClient` for this dashboard (the tests' seam)."""
     from jailbee.state_service.client import StateClient
 
-    client = StateClient(cwd_root, dashboard_id=uuid.uuid4().hex)
+    client = StateClient(
+        cwd_root,
+        dashboard_id=uuid.uuid4().hex,
+        excluded_prefixes=excluded_prefixes,
+    )
     client.start()
     return client
 
@@ -485,7 +491,7 @@ def open_dashboard(cwd_root: Path | None, *, scope: RemoteRepoScope | None = Non
     if config_notice:
         column_notice = "; ".join(filter(None, (column_notice, config_notice)))
 
-    client = open_state_client(cwd_root)
+    client = open_state_client(cwd_root, excluded_prefixes=sorted(scope.excluded) if scope else ())
     try:
         with console.status("⏳ Surveying containers…"):
             client.wait_first_snapshot(STARTUP_TIMEOUT_SECONDS)
