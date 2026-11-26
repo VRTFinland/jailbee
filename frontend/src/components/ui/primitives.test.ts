@@ -229,6 +229,12 @@ describe("ListRow", () => {
             expect(router.currentRoute.value.fullPath).toBe("/c/dev-plan")
         })
 
+        it("can name a route with its supporting status and metadata", () => {
+            const {wrapper} = linked({title: "Fix login", to: "/c/a", linkLabel: "Fix login live claude"})
+            expect(wrapper.get("a").attributes("aria-label")).toBe("Fix login live claude")
+            expect(wrapper.get("a").text()).toBe("Fix login")
+        })
+
         it("puts aria-current on the link, not the list item", () => {
             const {wrapper} = linked({title: "a", to: "/c/a", selected: true})
             expect(wrapper.get("a").attributes("aria-current")).toBe("true")

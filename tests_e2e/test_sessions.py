@@ -57,6 +57,57 @@ def assert_no_horizontal_scroll(page: Page) -> None:
     assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
 
 
+@pytest.mark.parametrize("theme", ["light", "dark", "eink"])
+def test_container_rows_search_and_paging_match_the_gallery(
+    session_page: Page, server: E2EServer, tmp_path: Path, theme: str
+) -> None:
+    page = session_page
+    page.evaluate("t => localStorage.setItem('jailbee.theme', t)", theme)
+    page.goto(f"{server.url}/#/containers/work-main")
+    page.reload()
+    row = page.get_by_role("listitem").filter(has=page.get_by_role("link", name=SESSION_TITLE))
+    expect(row).to_be_visible()
+    chip = row.get_by_text("live", exact=True)
+    expect(row.locator("svg path")).to_have_count(1)
+    expect(row.get_by_role("link")).to_have_accessible_name(
+        re.compile(r"Fix the login bug in the auth module live claude .+claude-opus-5-5")
+    )
+    search = page.get_by_role("searchbox", name="Search earlier sessions")
+    expect(search).to_be_visible()
+    previous = page.get_by_role("button", name="Previous earlier sessions")
+    expect(previous).to_be_disabled()
+    css = (
+        "el => { const s = getComputedStyle(el); return [s.backgroundColor, s.color, "
+        "s.borderRadius, s.borderColor, s.minHeight] }"
+    )
+    row_look = row.evaluate(css)
+    chip_look = chip.locator("..").evaluate(css)
+    field_look = search.evaluate(css)
+    button_look = previous.evaluate(css)
+    assert_no_horizontal_scroll(page)
+    page.screenshot(path=tmp_path / f"container-{theme}.png", full_page=True)
+
+    # The metadata is still part of the route's hit target, not just the title.
+    meta, box = row.locator(".meta").bounding_box(), row.bounding_box()
+    assert meta and box
+    row.click(position={"x": meta["x"] - box["x"] + 4, "y": meta["y"] - box["y"] + 4})
+    expect(page.get_by_role("heading", name=SESSION_TITLE, exact=True)).to_be_visible()
+
+    page.goto(f"{server.url}/#/ui")
+    label = {"light": "Light", "dark": "Dark", "eink": "E-ink"}[theme]
+    panel = page.get_by_role("region", name=f"{label} theme, normal profile", exact=True)
+    reference_row = panel.get_by_role("listitem").filter(has_text="fix-issue-165")
+    assert row_look == reference_row.evaluate(css)
+    assert chip_look == panel.locator('[data-status="running"]').first.evaluate(css)
+    assert field_look == panel.get_by_role("textbox", name="Container name", exact=True).evaluate(
+        css
+    )
+    assert button_look == panel.get_by_role("button", name="tonal disabled", exact=True).evaluate(
+        css
+    )
+    panel.screenshot(path=tmp_path / f"gallery-{theme}.png")
+
+
 def test_repo_and_container_list_sessions_and_open_their_transcript(session_page: Page) -> None:
     page = session_page
     page.get_by_role("link", name="work", exact=True).click()
@@ -74,7 +125,9 @@ def test_repo_and_container_list_sessions_and_open_their_transcript(session_page
     page.get_by_role("link", name="main", exact=True).click()
     expect(page.get_by_role("heading", name="work-main", exact=True)).to_be_visible()
     expect(page.get_by_role("link", name=OTHER_TITLE)).to_have_count(0)
-    expect(page.get_by_role("link", name=SESSION_TITLE)).to_contain_text("live")
+    expect(
+        page.get_by_role("listitem").filter(has=page.get_by_role("link", name=SESSION_TITLE))
+    ).to_contain_text("live")
     assert_no_horizontal_scroll(page)
     open_session(page)
     expect(page.get_by_text("Done.", exact=True)).to_be_visible()
@@ -255,7 +308,9 @@ def test_a_containers_live_sessions_show_while_its_history_is_still_loading(
     page.get_by_role("link", name="work", exact=True).click()
     page.get_by_role("link", name="main", exact=True).click()
 
-    expect(page.get_by_role("link", name=SESSION_TITLE)).to_contain_text("live")
+    expect(
+        page.get_by_role("listitem").filter(has=page.get_by_role("link", name=SESSION_TITLE))
+    ).to_contain_text("live")
     expect(page.get_by_text("Loading earlier sessions…", exact=True)).to_be_visible()
     expect(page.get_by_role("link", name=OTHER_TITLE)).to_have_count(0)
     assert len(held) == 1, "the history request is still unanswered"
