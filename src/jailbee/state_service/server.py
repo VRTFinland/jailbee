@@ -231,7 +231,7 @@ class StateServer:
                         return
                     question = self._questions.get(entry.entry_id)
                     if question is not None and not self._send_action(
-                        client, question[0], replay=True
+                        client, self._question_for_client(client, question[0]), replay=True
                     ):
                         return
                     await asyncio.wait_for(writer.drain(), DRAIN_TIMEOUT_SECONDS)
@@ -277,6 +277,27 @@ class StateServer:
             else:
                 writer.close()
 
+    def _check_policy(self, client: _Client, argv: list[str]) -> Any:
+        from jailbee.dashboard.commands import check_dashboard_command
+        from jailbee.global_config import default_global_config_path, load_global_config
+
+        policy = None
+        if client.transport != "none":
+            config, _ = load_global_config(default_global_config_path())
+            policy = getattr(config.remote, client.transport)
+        check_dashboard_command(
+            argv, policy, transport=client.transport, excluded_prefixes=client.excluded_prefixes
+        )
+        return policy
+
+    def _question_for_client(self, client: _Client, question: ActionQuestion) -> ActionQuestion:
+        entry = self._actions[question.entry_id]
+        try:
+            self._check_policy(client, entry.argv)
+        except (ValueError, OSError):
+            return replace(question, can_answer=False, reason="answer in a local dashboard")
+        return question
+
     def _start_action(self, client: _Client, request: RunAction) -> None:
         from jailbee.dashboard.runner import popen_spawn, run_action
 
@@ -290,18 +311,9 @@ class StateServer:
                 client, ActionRejected(request.entry_id, "invalid or duplicate action id")
             )
             return
-        from jailbee.dashboard.commands import check_dashboard_command
-        from jailbee.global_config import default_global_config_path, load_global_config
-        from jailbee.remote_ssh.router import RouteError
-
-        policy = None
         try:
-            if client.transport != "none":
-                config, _ = load_global_config(default_global_config_path())
-                policy = getattr(config.remote, client.transport)
-            check_dashboard_command(request.argv, policy, transport=client.transport,
-                                    excluded_prefixes=client.excluded_prefixes)
-        except (RouteError, ValueError, OSError) as exc:
+            policy = self._check_policy(client, request.argv)
+        except (ValueError, OSError) as exc:
             self._send_action(client, ActionRejected(request.entry_id, str(exc)))
             return
         entry = ActionEntry(
@@ -413,6 +425,11 @@ class StateServer:
             or pending[0].question_id != answer.question_id
         ):
             return
+        try:
+            self._check_policy(client, entry.argv)
+        except (ValueError, OSError) as exc:
+            self._send_action(client, ActionRejected(answer.entry_id, str(exc)))
+            return
         self._resolve_question(answer.entry_id, answer.value, client.dashboard_id)
 
     def _resolve_question(self, entry_id: int, value: Any, answered_by: str | None) -> None:
@@ -450,7 +467,8 @@ class StateServer:
         entry = self._actions[message.entry_id] if not isinstance(message, ActionEntry) else message
         for recipient in list(self._clients):
             if self._in_scope(entry, recipient):
-                self._send_action(recipient, message)
+                outgoing = self._question_for_client(recipient, message) if isinstance(message, ActionQuestion) else message
+                self._send_action(recipient, outgoing)
 
     def _dismiss_action(self, client: _Client, entry_id: int) -> None:
         entry = self._actions.get(entry_id)

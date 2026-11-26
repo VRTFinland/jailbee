@@ -199,6 +199,8 @@ class ActionQuestion:
     entry_id: int
     question_id: int
     prompt: Prompt
+    can_answer: bool = True
+    reason: str | None = None
 
 
 @dataclass(frozen=True)
