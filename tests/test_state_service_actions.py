@@ -614,8 +614,15 @@ def test_running_action_is_interrupted_after_restart(runtime_dir, tmp_path):
         client.wait_first_snapshot(3)
         client.run_action(
             RunAction(
-                345, ["ls"], str(tmp_path), "target", False, "dashboard", "none",
-                str(tmp_path), "repo",
+                345,
+                ["ls"],
+                str(tmp_path),
+                "target",
+                False,
+                "dashboard",
+                "none",
+                str(tmp_path),
+                "repo",
             )
         )
         _until(lambda: 345 in client.action_entries())
