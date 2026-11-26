@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from textual.widgets import Input, OptionList
+from textual.widgets import Button, Input, OptionList
 
 from jailbee.dashboard import model as dmodel
 from jailbee.dashboard import runner as drunner
@@ -343,6 +343,54 @@ def test_cancelling_a_modal_is_a_cancel_for_the_child(mocker, tmp_path):
         await pilot.press("ctrl+c")
 
     _drive(mocker, tmp_path, spawn, script)
+    assert isinstance(spawn.child.answers[0], Cancel)
+
+
+@pytest.mark.parametrize("kind", ["confirm", "choose_one", "choose_many", "text", "secret"])
+@pytest.mark.parametrize("control", ["later", "abort-command"])
+def test_contextual_question_actions_are_keyboard_accessible(mocker, tmp_path, kind, control):
+    prompt = _prompt(
+        kind=kind,
+        options=(WireOption("0", "first", "first", ""),) if "choose" in kind else (),
+    )
+    spawn = Spawns([prompt])
+    app = make_app(mocker, [_group(tmp_path)])
+    app.action_runner = drunner.run_action
+    app.action_spawn = spawn
+    app.threaded_actions = True
+
+    async def main():
+        async with app.run_test() as pilot:
+            app.session.run_dashboard_command("alpha-x", "container", ["start", "alpha-x"])
+            await _until(
+                pilot,
+                lambda: isinstance(app.screen, pm.PromptModal) and app.screen.is_mounted,
+                "contextual question",
+            )
+            await pilot.pause()
+            await pilot.press("tab")
+            assert isinstance(app.focused, Button)
+            assert app.focused.id == "later"
+            if control == "abort-command":
+                await pilot.press("tab")
+                assert app.focused.id == control
+            await pilot.press("enter")
+            if control == "later":
+                await _until(pilot, lambda: not app.modal_open, "question deferred")
+                assert not spawn.child.answers
+                (entry,) = app.session.queue
+                assert entry.pending_question is not None
+                assert entry.pending_question.question == prompt.question
+                assert entry.pending_question.kind == kind
+                assert entry.state == "awaiting"
+                await pilot.press("Q", "enter")
+                await _until(
+                    pilot, lambda: isinstance(app.screen, pm.PromptModal), "reopened question"
+                )
+                await pilot.press("ctrl+c")
+            await _until(pilot, lambda: _finished(app), "aborted command")
+
+    asyncio.run(asyncio.wait_for(main(), 20))
     assert isinstance(spawn.child.answers[0], Cancel)
 
 

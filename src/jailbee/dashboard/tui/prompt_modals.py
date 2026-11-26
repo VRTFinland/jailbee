@@ -156,7 +156,9 @@ class ConfirmModal(PromptModal):
         if event.key in ("y", "n"):
             event.stop()
             self.dismiss(event.key == "y")
-        elif event.key in ("left", "right", "tab", "shift+tab"):
+        elif event.key in ("left", "right") or (
+            self.entry is None and event.key in ("tab", "shift+tab")
+        ):
             event.stop()
             event.prevent_default()
             choices = self.query_one(OptionList)
@@ -203,7 +205,7 @@ class ChooseManyModal(PromptModal):
         self.query(SelectionList).focus()
 
     def on_key(self, event: events.Key) -> None:
-        if event.key == "enter":
+        if event.key == "enter" and isinstance(self.focused, SelectionList):
             event.stop()
             chosen = set(self.query_one(SelectionList).selected)
             # Wire order is free; keep the options' own order.
