@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from textual.widgets import Input, OptionList
+from textual.widgets import Button, Input, OptionList
 
 from jailbee.dashboard import model as dmodel
 from jailbee.dashboard import runner as drunner
@@ -99,7 +99,7 @@ def test_quit_driver_waits_for_mounted_question_before_exiting(mocker, tmp_path)
 
 
 @pytest.mark.parametrize("kind", ["confirm", "choose_one", "choose_many", "text", "secret"])
-def test_exit_while_prompt_is_mounting_does_not_report_an_exception(mocker, tmp_path, kind):
+def test_exit_while_prompt_is_mounting_does_not_report_an_exception(mocker, tmp_path, kind, caplog):
     app = make_app(mocker, [_group(tmp_path)])
     app.threaded_actions = True
     app.action_runner = drunner.run_action
@@ -131,7 +131,7 @@ def test_exit_while_prompt_is_mounting_does_not_report_an_exception(mocker, tmp_
 
         mocker.patch.object(modal_type, "on_mount", held_mount)
         async with app.run_test():
-            app.run_actions([drunner.ActionRun(["merge", "alpha-x"], tmp_path)], lambda _: None)
+            app.session.run_dashboard_command("alpha-x", "container", ["start", "alpha-x"])
             await mounting.wait()
             try:
                 app.exit()
@@ -145,6 +145,7 @@ def test_exit_while_prompt_is_mounting_does_not_report_an_exception(mocker, tmp_
 
     asyncio.run(asyncio.wait_for(main(), _RUN_SECONDS))
     errors.assert_not_called()
+    assert not [record for record in caplog.records if record.levelno >= 40]
     assert isinstance(spawn.child.answers[0], Cancel)
     spawn.child._thread.join(_JOIN_SECONDS)
     assert not spawn.child._thread.is_alive()
@@ -296,14 +297,12 @@ def test_global_lifecycle_runs_without_a_repo_and_uses_prompt_channel(mocker, in
             await _apply(pilot, app, Pick(index))
             await _until(
                 pilot,
-                lambda: any(e.pending_question for e in app.session.queue),
-                "queued host question",
+                lambda: isinstance(app.screen, pm.ConfirmModal),
+                "immediate host confirmation",
             )
-            assert not isinstance(app.screen, pm.ConfirmModal)
-            await pilot.press("Q", "enter")
-            await _until(
-                pilot, lambda: isinstance(app.screen, pm.ConfirmModal), "host confirmation"
-            )
+            (entry,) = app.session.queue
+            assert entry.pending_question is not None
+            assert entry.state == "awaiting"
             assert app.screen.prompt.question == "Proceed on the host?"
             await pilot.press("y")
             await _until(pilot, lambda: _finished(app), "host lifecycle result")
@@ -337,12 +336,70 @@ def test_cancelling_a_modal_is_a_cancel_for_the_child(mocker, tmp_path):
     spawn = Spawns([_prompt()])
 
     async def script(app, pilot):
-        await _until(pilot, lambda: isinstance(app.screen, pm.ConfirmModal), "the modal")
-        await pilot.press("escape")
+        await _confirm_modal(pilot, app)
+        await pilot.press("ctrl+c")
         await _until(pilot, lambda: _finished(app), "the finished entry")
         await pilot.press("ctrl+c")
 
     _drive(mocker, tmp_path, spawn, script)
+    assert isinstance(spawn.child.answers[0], Cancel)
+
+
+@pytest.mark.parametrize("kind", ["confirm", "choose_one", "choose_many", "text", "secret"])
+@pytest.mark.parametrize("control", ["later", "abort-command"])
+def test_contextual_question_actions_are_keyboard_accessible(mocker, tmp_path, kind, control):
+    prompt = _prompt(
+        kind=kind,
+        options=(WireOption("0", "first", "first", ""),) if "choose" in kind else (),
+    )
+    spawn = Spawns([prompt])
+    app = make_app(mocker, [_group(tmp_path)])
+    app.action_runner = drunner.run_action
+    app.action_spawn = spawn
+    app.threaded_actions = True
+
+    async def main():
+        async with app.run_test() as pilot:
+            app.session.run_dashboard_command("alpha-x", "container", ["start", "alpha-x"])
+            await _until(
+                pilot,
+                lambda: isinstance(app.screen, pm.PromptModal) and app.screen.is_mounted,
+                "contextual question",
+            )
+            await pilot.pause()
+            if kind == "confirm":
+                await pilot.press("right")
+                assert app.screen.query_one(OptionList).highlighted == 1
+                await pilot.press("left")
+                assert app.screen.query_one(OptionList).highlighted == 0
+            await pilot.press("tab")
+            assert isinstance(app.focused, Button)
+            assert app.focused.id == "later"
+            await pilot.press("shift+tab")
+            assert not isinstance(app.focused, Button)
+            await pilot.press("tab")
+            assert isinstance(app.focused, Button)
+            assert app.focused.id == "later"
+            if control == "abort-command":
+                await pilot.press("tab")
+                assert app.focused.id == control
+            await pilot.press("enter")
+            if control == "later":
+                await _until(pilot, lambda: not app.modal_open, "question deferred")
+                assert not spawn.child.answers
+                (entry,) = app.session.queue
+                assert entry.pending_question is not None
+                assert entry.pending_question.question == prompt.question
+                assert entry.pending_question.kind == kind
+                assert entry.state == "awaiting"
+                await pilot.press("Q", "enter")
+                await _until(
+                    pilot, lambda: isinstance(app.screen, pm.PromptModal), "reopened question"
+                )
+                await pilot.press("ctrl+c")
+            await _until(pilot, lambda: _finished(app), "aborted command")
+
+    asyncio.run(asyncio.wait_for(main(), 20))
     assert isinstance(spawn.child.answers[0], Cancel)
 
 
@@ -383,15 +440,33 @@ def test_secret_is_masked_in_the_dashboard(mocker, tmp_path):
     assert spawn.child.answers[0].value == "s3cret"
 
 
+def test_teardown_with_contextual_question_does_not_log_callback_error(mocker, tmp_path, caplog):
+    spawn = Spawns([_prompt()])
+    app = make_app(mocker, [_group(tmp_path)])
+    app.threaded_actions = True
+    app.action_runner = drunner.run_action
+    app.action_spawn = spawn
+
+    async def main():
+        async with app.run_test() as pilot:
+            app.session.run_dashboard_command("alpha-x", "container", ["start", "alpha-x"])
+            await _confirm_modal(pilot, app)
+        # run_test tears down the screens before resolving the pending answer.
+        await asyncio.sleep(0)
+
+    asyncio.run(asyncio.wait_for(main(), 20))
+    assert not [record for record in caplog.records if record.levelno >= 40]
+
+
 def test_quitting_with_a_question_pending_cancels_it_and_the_app_exits(mocker, tmp_path):
     spawn = Spawns([_prompt()])
 
     async def script(app, pilot):
         await _confirm_modal(pilot, app)
-        app._after("quit")  # what the quit key does
+        app.exit(0)  # force teardown cancels even an open question
 
     app = _drive(mocker, tmp_path, spawn, script)  # wait_for: a hang fails the test
-    assert app.quit_requested
+    assert not app.quit_requested
     assert isinstance(spawn.child.answers[0], Cancel)  # the child was told, so it exited
     spawn.child._thread.join(_JOIN_SECONDS)
     assert not spawn.child._thread.is_alive()

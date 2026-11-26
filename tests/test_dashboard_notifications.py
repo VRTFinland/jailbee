@@ -1122,9 +1122,13 @@ def test_a_question_drains_the_output_before_it():
     from jailbee.dashboard.tui.app import _OnAppThread
 
     inner = _Recorder()
-    relay = _OnAppThread(inner, lambda fn: fn(), lambda fn: None)
+    posted = []
+    relay = _OnAppThread(inner, lambda fn: fn(), posted.append)
     relay.output(0, "before\n")
     relay.question(0, True)
+    assert inner.calls == []
+    for callback in posted:
+        callback()
 
     assert inner.calls == [("output", 0, "before\n"), ("question", 0, True)]
 

@@ -757,8 +757,11 @@ and keeps drawing while it runs; the status line names the running command.
   at a terminal arrives over the prompt channel. A background action's question
   waits in Notifications (`Q`): a short, silent notice names the command.
   Select its awaiting entry with Enter or a click to answer; the command keeps
-  waiting until then, and several commands can wait independently. A critical
-  action whose output modal is in the foreground still asks immediately.
+  waiting until then without a timeout, and several commands can wait independently.
+  A question opens at once while you are with its action: its critical output
+  modal is on top, or no key, click or other overlay has followed dispatch or
+  the previous answer to that command. Periodic refreshes do not count.
+  Every question shows its command, target and output tail.
   The question uses the same modal in either case:
   a compact "No" / "Yes" list for a confirmation, a list for a single choice,
   a checkbox list for a multiple choice (Space toggles, Enter confirms; none
@@ -770,9 +773,14 @@ and keeps drawing while it runs; the status line names the running command.
   neither answer row is coloured red. The dashboard asks exactly what the CLI
   would ask: a value a repo config settles without asking is not asked here
   either.
-- **Cancel means cancel.** Esc or Ctrl-C in a modal has the effect of Esc or
-  Ctrl-C at the CLI prompt. Quitting the dashboard with a question open
-  cancels it, and the command exits instead of waiting.
+- **Later is not cancellation.** Every action question offers `Later` (also
+  Esc): the modal closes, but the command keeps waiting and its question can
+  be reopened from the queue. `Abort command` (also Ctrl-C within the modal)
+  sends the CLI prompt's cancel answer. Dashboard pickers and confirmations
+  before dispatch keep their existing behaviour. Quitting with pending
+  questions asks how many commands will be aborted; declining keeps them
+  waiting, confirming cancels them all. With no pending question, quitting
+  needs no extra confirmation.
 - **Output goes to the notification queue.** Every action the dashboard
   runs this way becomes an entry in its notification queue: the command, its
   container or repo, its state (running, awaiting answer, done, failed) and
@@ -805,8 +813,9 @@ and keeps drawing while it runs; the status line names the running command.
   A zero pending count is omitted, other zero counts stay dim, and a narrow title
   shortens before the badge.
   Coming back from a tmux hand-off opens the queue at once
-  when something *new* needs attention (a failed job row that was already
-  there does not reopen it); a click
+  when something *new* needs attention, including a pending question, but never
+  opens a question modal by itself (a failed job row that was already there
+  does not reopen it); a click
   on it, or `Q`, opens the queue list (a click outside closes it). Choosing an
   entry offers `Show output` (`o`: the full output on a scrollable screen;
   Enter, Esc or `q` closes it) and, once it has finished, `Dismiss` (`d`);

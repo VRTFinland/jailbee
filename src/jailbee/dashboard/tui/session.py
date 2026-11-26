@@ -138,6 +138,7 @@ from jailbee.dashboard.notifications import (
     QueueEntry,
     is_critical,
     job_rows,
+    should_show_question,
 )
 from jailbee.dashboard.outbox import OutboxState
 from jailbee.dashboard.outbox_flow import LOADING as OUTBOX_LOADING
@@ -212,6 +213,7 @@ if TYPE_CHECKING:
     from jailbee.egress_scope import EntryRow
     from jailbee.incus import Incus
     from jailbee.orchestration.view import GrantView
+    from jailbee.prompt_channel import Prompt
     from jailbee.state_service.client import StateClient
 
 
@@ -583,9 +585,13 @@ class DashboardSession:
         self.overlay: Overlay | None = None
         # Every action started through the action runner, until dismissed.
         self.queue = NotificationQueue()
+        self._interaction = 0
+        self._action_interactions: dict[int, int] = {}
+        self._answer_interactions: dict[int, int] = {}
         self._queue_frame = 0
         self._following: int | None = None  # the entry whose output screen follows it live
         self._modal_entry: int | None = None  # the critical entry whose modal is open
+        self._handed_off = False
         # Grant edits made here, shown until the gathered snapshot catches up (see _patch_grant).
         self._grant_patches: dict[str, _GrantPatch] = {}
         self._grant_pending: dict[str, float] = {}
@@ -951,6 +957,7 @@ class DashboardSession:
             )
             for i, run in enumerate(runs)
         ]
+        self._action_interactions.update(dict.fromkeys(ids, self._interaction))
         self.queue_changed()
         # A critical action's result is the modal's (or, once sent to the
         # background, the queue's): no output screen of its own on the end.
@@ -986,6 +993,8 @@ class DashboardSession:
     def _settle_entries(self, ids: Sequence[int], outcome: ActionOutcome) -> None:
         """Finish the entries of the runs that ran; drop those that never started."""
         for i, entry_id in enumerate(ids):
+            self._action_interactions.pop(entry_id, None)
+            self._answer_interactions.pop(entry_id, None)
             result = outcome.results[i] if i < len(outcome.results) else None
             output = outcome.outputs[i] if i < len(outcome.outputs) else ""
             if result is None or result.refused is not None:
@@ -1013,6 +1022,43 @@ class DashboardSession:
             self.terminal.update_output(why)
 
     # -- critical actions: the modal and the hand-off block ---------------------
+
+    def user_interacted(self) -> None:
+        """Record input without treating refreshes as user activity."""
+        self._interaction += 1
+
+    def question_answered(self, entry_id: int) -> None:
+        """Keep the user's attention on the entry they just answered."""
+        if self.queue.get(entry_id) is not None:
+            self._answer_interactions[entry_id] = self._interaction
+
+    def question_arrived(
+        self, entry_id: int, prompt: Prompt, *, on_top: bool, queue_key: str
+    ) -> bool:
+        """Store a question and decide whether its action is visible to the user."""
+        entry = self.queue.get(entry_id)
+        if entry is None:
+            return False
+        self.queue.set_question(entry_id, prompt)
+        self.queue_changed()
+        show = should_show_question(
+            critical=entry.critical,
+            foreground=entry.foreground,
+            on_top=on_top,
+            overlay="none"
+            if self.overlay is None
+            else "queue"
+            if isinstance(self.overlay, Picker) and self.overlay.purpose == "queue"
+            else "other",
+            dispatch_interaction=self._action_interactions.get(entry_id),
+            answer_interaction=self._answer_interactions.get(entry_id),
+            interaction=self._interaction,
+            suspended=self._handed_off,
+        )
+
+        if not show:
+            self.set_notice(f"'{entry.command}' awaiting answer · {queue_key}: queue")
+        return show
 
     def question_in_foreground(self, entry_id: int) -> bool:
         """Whether this entry owns the critical action modal currently open."""
@@ -1071,6 +1117,18 @@ class DashboardSession:
     def _entry_question(self, entry_id: int, asking: bool) -> None:
         self.queue.set_awaiting(entry_id, asking)
         self.queue_changed()
+
+    @property
+    def handed_off(self) -> bool:
+        return self._handed_off
+
+    def begin_hand_off(self) -> None:
+        """Defer all questions while the terminal is handed away."""
+        self._handed_off = True
+
+    def end_hand_off(self, attention_before: frozenset[tuple[str, str | int]]) -> None:
+        self._handed_off = False
+        self.after_hand_off(attention_before)
 
     def after_hand_off(self, attention_before: frozenset[tuple[str, str | int]]) -> None:
         """Back from a tmux hand-off: show the queue if something new waits on the user.
@@ -1183,7 +1241,7 @@ class DashboardSession:
             selected = self.queue.get(int(entry.value))
             if selected is not None and selected.pending_question is not None:
                 self.terminal.show_question(selected.id)
-                return self.queue_picker(start_index=picker.start_index)
+                return self.queue_picker(start_index=picker.entries.index(entry))
             return self.queue_entry_picker(int(entry.value))
         entry_id = int(picker.carry[0])
         found = self.queue.get(entry_id)

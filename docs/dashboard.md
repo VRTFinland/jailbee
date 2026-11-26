@@ -68,9 +68,15 @@ finished one):
 Background commands leave their questions in the queue without interrupting
 what you are doing. A silent notice names the command and `Q`; select its
 "awaiting answer" entry with Enter or a click to open the question modal.
-Several commands can wait independently. A critical action whose output modal
-is in the foreground still asks immediately. Esc or Ctrl-C cancels the question
-and its command; quitting cancels all pending questions.
+Several commands can wait independently, without a timeout. A question opens
+immediately while you are with its action: its critical output modal is on top,
+or you have not pressed a key, clicked or opened another overlay since starting
+it or answering its previous question. Refreshes do not count as interaction.
+Each question shows the command, its target and the tail of its output.
+**Later**, also Esc, closes it without answering; reopen it from the queue when
+ready. **Abort command**, also Ctrl-C within the question, cancels the command.
+Returning from a tmux hand-off opens the queue for new attention items, never
+a question modal by itself.
 
 Creating a container queues any existing-branch confirmation there too;
 declining shows the "Pick a different name" hint, not a failure. If
@@ -110,10 +116,13 @@ list. (Source of truth: `KEY_BINDINGS` in
 | `F5` / `Ctrl-R` | force a full refresh |
 | `h` / `?` | help |
 | `q` | quit (closes an overlay first) |
-| `Ctrl-C` | quit immediately |
+| `Ctrl-C` | quit (Abort command within an action question) |
 
-Quitting cancels pending action questions, including a modal that is still
-opening; no answer is accepted on behalf of the user.
+Quitting with pending action questions asks for confirmation and names how
+many commands will be aborted. Declining leaves them waiting; confirming
+cancels them, including a modal that is still opening. With no pending
+questions, quitting needs no extra confirmation. No answer is accepted on
+behalf of the user.
 
 ## Menu map
 

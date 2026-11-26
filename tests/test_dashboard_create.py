@@ -166,7 +166,7 @@ def test_real_cli_existing_branch_is_recognized_as_needing_a_question(existing_b
     assert needs_terminal(result)
 
 
-@pytest.mark.parametrize("answer", ["y", "n", "escape"])
+@pytest.mark.parametrize("answer", ["y", "n", "ctrl+c"])
 def test_existing_branch_create_asks_in_a_modal_and_preserves_decline_hint(
     mocker, tmp_path, existing_branch, answer
 ):

@@ -1290,8 +1290,9 @@ happened.
 
 Prompt-channel confirmations show two compact rows, "No" then "Yes", with
 only a full-width highlight marking the answer Enter chooses. Up/Down moves;
-Tab, Shift-Tab, Left and Right also switch rows; y/n answers immediately;
-Esc or Ctrl-C cancels. The highlight starts on the command's default ("No"
+Tab, Shift-Tab, Left and Right also switch rows; y/n answers immediately.
+Esc means `Later`, leaving the action question pending; Ctrl-C means
+`Abort command`. The highlight starts on the command's default ("No"
 if absent). Destructive questions always start on "No" and have a red frame
 and `DESTRUCTIVE:` title, not a red answer row.
 
@@ -1996,10 +1997,16 @@ Closing the dashboard box leaves the work running (the delete busy line says so)
 and reports that same summary as a notice.
 PR-creation verification is background work too. Dashboard publications run through
 the prompt channel, locally and over SSH: CLI questions wait in Notifications
-until selected, without interrupting another task. A critical action whose output
-modal is in the foreground asks immediately. Several questions can wait independently;
-a short notice names each command and `Q`, without a bell. Esc or Ctrl-C in a
-question modal cancels that command; quitting cancels every pending question. Declining
+until selected, without interrupting another task. A question asks immediately
+while the user is with its action: its critical output modal is on top, or
+no key, click or other overlay followed dispatch or the previous answer.
+Refreshes do not count. Several questions can wait independently without a
+timeout; a short notice names each command and `Q`, without a bell. Each
+question modal shows the command, target and output tail. `Later` / Esc leaves
+the question pending; `Abort command` / Ctrl-C within the question cancels
+that command. Returning from tmux opens the queue for new questions, never a
+question modal. Quitting with pending questions confirms the number of
+commands to abort; with none it asks nothing extra. Declining
 or cancelling never reports success, and the full output stays in the notification
 queue while the status notice shows only the outcome. Closing the dashboard box
 with Esc leaves confirmed publications running, including later PR creations in

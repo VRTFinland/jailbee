@@ -26,7 +26,6 @@ from jailbee.config.models_remote import RemotePolicy
 from jailbee.dashboard import runner as drunner
 from jailbee.dashboard.commands import Transport
 from jailbee.dashboard.hit import Hit
-from jailbee.dashboard.notifications import should_show_question
 from jailbee.dashboard.runner import ActionOutcome, ActionRun
 from jailbee.dashboard.tui import scrollbar
 from jailbee.dashboard.tui.frame import DashboardView
@@ -45,7 +44,7 @@ from jailbee.dashboard.tui.native import (
 )
 from jailbee.dashboard.tui.outbox_box import OutboxBox
 from jailbee.dashboard.tui.overlay import overlay_key
-from jailbee.dashboard.tui.prompt_modals import OutputScreen, modal_for
+from jailbee.dashboard.tui.prompt_modals import LATER, OutputScreen, modal_for
 from jailbee.dashboard.tui.session import (
     DOUBLE_CLICK_KINDS,
     OVERLAY_GLOBAL_TOKENS,
@@ -56,13 +55,13 @@ from jailbee.dashboard.tui.session import (
 )
 from jailbee.dashboard.tui.terminal import terminal_title_scope, title_sequence
 from jailbee.dashboard.tui.widgets import DashboardFrame, DetailsPanel, FleetTable
+from jailbee.prompt_channel import Prompt
 from jailbee.remote_ssh.repo_scope import RemoteRepoScope
 
 if TYPE_CHECKING:
     from textual.driver import Driver
 
     from jailbee.incus import Incus
-    from jailbee.prompt_channel import Prompt
 
 TICK_SECONDS = 0.25
 
@@ -103,9 +102,10 @@ class _OnAppThread:
     Output never blocks the runner's pump: chunks pile up under a lock and at
     most one flush is posted, which hands the app thread their coalesced text
     (a blocking hand-off would stall the child once its pipe fills while the
-    app thread is busy, e.g. in a tmux hand-off). A question blocks, after
-    draining the output before it; :meth:`drain` settles what is still pending
-    before the batch finishes.
+    app thread is busy, e.g. in a tmux hand-off). Question announcements
+    are posted too, so the prompt handler can capture suspension at arrival
+    before waiting on the app thread. They drain earlier output first;
+    :meth:`drain` settles what is still pending before the batch finishes.
     """
 
     def __init__(
@@ -120,7 +120,6 @@ class _OnAppThread:
         self._lock = threading.Lock()
         self._pending: list[tuple[int, str]] = []
         self._scheduled = False
-        self.asking_entry: int | None = None
 
     def entry_id(self, index: int) -> int:
         return self._inner.entry_id(index)
@@ -147,10 +146,12 @@ class _OnAppThread:
     def question(self, index: int, asking: bool) -> None:
         def ask() -> None:
             self.drain()
-            self.asking_entry = self._inner.entry_id(index) if asking else None
             self._inner.question(index, asking)
 
-        self._on_app_thread(ask)
+        if asking:
+            self._post(ask)
+        else:
+            self._on_app_thread(ask)
 
 
 class DashboardApp(App[int], inherit_bindings=False):
@@ -217,6 +218,7 @@ class DashboardApp(App[int], inherit_bindings=False):
         self._pending_prompts: set[asyncio.Future[Any]] = set()
         self._prompts_closed = False
         self._entry_answers: dict[int, asyncio.Future[Any]] = {}
+        self._disconnected_entries: set[int] = set()
         self._shown_questions: set[int] = set()
         self._output_screen: OutputScreen | None = None  # the one a live entry follows
         self._critical_screen: OutputScreen | None = None
@@ -237,6 +239,7 @@ class DashboardApp(App[int], inherit_bindings=False):
         """Run ``fn`` on the real terminal with the dashboard suspended."""
         client = self.session.client
         attention_before = self.session.queue.attention_items()
+        self.session.begin_hand_off()
         # Nothing of this dashboard is on screen while `fn` runs: let the
         # shared service stop gathering on its behalf.
         client.set_active(False)
@@ -250,8 +253,7 @@ class DashboardApp(App[int], inherit_bindings=False):
             # The snapshot is as old as the command was long.
             client.set_active(True)
             client.refresh()
-            if not self.modal_open:  # an open question is its own modal
-                self.session.after_hand_off(attention_before)
+            self.session.end_hand_off(attention_before)
             # `fn` may have set its own OSC 2 title: rewrite ours on the next frame.
             self._last_title = None
             self._painted = None
@@ -286,9 +288,11 @@ class DashboardApp(App[int], inherit_bindings=False):
                     run=self.action_runner,
                     transport=session.transport,
                     policy=session.ssh_policy,
-                    on_prompt=lambda prompt: self._ask_from_worker(
-                        prompt, None if relay is None else relay.asking_entry
+                    on_prompt=self._ask_from_worker,
+                    on_entry_prompt=lambda entry_id, prompt: self._ask_from_worker(
+                        prompt, entry_id
                     ),
+                    on_entry_disconnect=self._disconnect_entry,
                     progress=relay,
                     client=self.remote_client,
                     **extra,
@@ -320,6 +324,8 @@ class DashboardApp(App[int], inherit_bindings=False):
         background: bool = False,
         on_close: Callable[[], None] | None = None,
     ) -> None:
+        if not background:
+            self.session.user_interacted()
         screen = OutputScreen(title, text, failed=failed, background=background)
         if live:  # only a live screen is ever rewritten; a plain one stacked on top leaves it be
             self._output_screen = screen
@@ -358,17 +364,30 @@ class DashboardApp(App[int], inherit_bindings=False):
         except (Exception, asyncio.CancelledError):
             logger.debug("app-thread post dropped", exc_info=True)
 
+    def _disconnect_entry(self, entry_id: int) -> None:
+        def cancel() -> None:
+            self._disconnected_entries.add(entry_id)
+            answer = self._entry_answers.get(entry_id)
+            if answer is not None:
+                self._resolve_answer(answer, None)
+
+        self._on_app_thread(cancel)
+
     def _ask_from_worker(self, prompt: Prompt, entry_id: int | None = None) -> Any:
         """Block the worker until the UI answers, possibly later from the queue."""
         if self._prompts_closed or threading.get_ident() == self._ui_thread:
             return None
         try:
-            return self.call_from_thread(self._ask, prompt, entry_id)
+            return self.call_from_thread(self._ask, prompt, entry_id, self.session.handed_off)
         except (Exception, asyncio.CancelledError):
             return None  # the dashboard is closing: cancel the question
 
-    async def _ask(self, prompt: Prompt, entry_id: int | None = None) -> Any:
-        if self._prompts_closed:
+    async def _ask(
+        self, prompt: Prompt, entry_id: int | None = None, handed_off: bool = False
+    ) -> Any:
+        if self._prompts_closed or entry_id in self._disconnected_entries:
+            if entry_id is not None:
+                self._disconnected_entries.discard(entry_id)
             return None
         answer: asyncio.Future[Any] = asyncio.get_running_loop().create_future()
         self._pending_prompts.add(answer)
@@ -377,23 +396,29 @@ class DashboardApp(App[int], inherit_bindings=False):
             self.push_screen(modal_for(prompt), lambda value: self._resolve_answer(answer, value))
         else:
             self._entry_answers[entry.id] = answer
-            self.session.queue.set_question(entry.id, prompt)
-            self.session.queue_changed()
-            if should_show_question(
-                critical_foreground=self.session.question_in_foreground(entry.id)
-                and self.screen is self._critical_screen
+            if self.session.question_arrived(
+                entry.id,
+                prompt,
+                on_top=not handed_off
+                and (
+                    self.session.question_in_foreground(entry.id)
+                    and self.screen is self._critical_screen
+                    if entry.foreground
+                    else not self.modal_open
+                ),
+                queue_key="Q",
             ):
                 self.show_question(entry.id)
-            else:
-                self.session.set_notice(f"'{entry.command}' awaiting answer · Q: queue")
+            if handed_off and not self.session.handed_off and self.session.overlay is None:
+                self.session.open_queue()
+                self.refresh_frame()
         try:
             return await answer
         finally:
             self._pending_prompts.discard(answer)
             if entry is not None:
                 self._entry_answers.pop(entry.id, None)
-                self.session.queue.set_awaiting(entry.id, False)
-                self.session.queue_changed()
+                self._disconnected_entries.discard(entry.id)
 
     @staticmethod
     def _resolve_answer(answer: asyncio.Future[Any], value: Any) -> None:
@@ -412,9 +437,19 @@ class DashboardApp(App[int], inherit_bindings=False):
 
         def resolve(value: Any) -> None:
             self._shown_questions.discard(entry_id)
-            self._resolve_answer(answer, value)
+            if value is not LATER:
+                if not answer.done():
+                    self.session.question_answered(entry_id)
+                self._resolve_answer(answer, value)
 
-        self.push_screen(modal_for(entry.pending_question), resolve)
+        modal = modal_for(entry.pending_question, entry=entry)
+
+        def close_resolved(_future: asyncio.Future[Any]) -> None:
+            if self.screen_stack and entry_id in self._shown_questions and self.screen is modal:
+                modal.dismiss(None)
+
+        answer.add_done_callback(close_resolved)
+        self.push_screen(modal, resolve)
 
     def _cancel_pending_prompts(self) -> None:
         """Answer every open question with a cancel, so no child waits on a dead UI."""
@@ -455,6 +490,11 @@ class DashboardApp(App[int], inherit_bindings=False):
         # Keys and pastes are routed here, one at a time, never through the focus chain:
         # Textual would pick a key's widget on arrival, before the keys ahead of it in
         # the same read had opened or closed anything.
+        if (
+            isinstance(event, (events.Key, events.Paste, events.MouseDown))
+            and not event.is_forwarded
+        ):
+            self.session.user_interacted()
         if self.modal_open and isinstance(event, (events.Key, events.Paste)):
             # A question or output screen has the keyboard: Textual's own routing.
             await super().on_event(event)
@@ -613,13 +653,27 @@ class DashboardApp(App[int], inherit_bindings=False):
 
     def _after(self, outcome: Outcome) -> None:
         if outcome == "quit":
-            self.quit_requested = True
-            self.exit(0)
+            count = sum(entry.pending_question is not None for entry in self.session.queue)
+            if count:
+                noun = "command is" if count == 1 else "commands are"
+                prompt = Prompt(
+                    0,
+                    "confirm",
+                    f"{count} {noun} waiting for an answer. Quitting aborts them. Quit?",
+                )
+                self.push_screen(modal_for(prompt), self._confirm_quit)
+            else:
+                self._confirm_quit(True)
             return
         if outcome == "toggle-mouse":
             self.toggle_mouse()
             return
         self.refresh_frame()
+
+    def _confirm_quit(self, confirmed: bool | None) -> None:
+        if confirmed:
+            self.quit_requested = True
+            self.exit(0)
 
     def toggle_mouse(self) -> None:
         """`M`: mouse reporting on or off for this session."""
@@ -632,6 +686,7 @@ class DashboardApp(App[int], inherit_bindings=False):
         self.refresh_frame()
 
     def on_click(self, event: events.Click) -> None:
+        self.session.user_interacted()
         if not self.mouse_on or self.modal_open:
             return
         box = self.frame.native_box

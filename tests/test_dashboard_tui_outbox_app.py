@@ -188,10 +188,15 @@ def test_publish_job_polled_and_status_shown(quiet, jobs):
 
     async def scenario(pilot):  # type: ignore[no-untyped-def]
         await pilot.press("p")
-        await pilot.pause(0.4)  # the poll interval delivers the plan
+        async with asyncio.timeout(5):
+            while "Publish pr/a.json?" not in screen_text(app):
+                await pilot.pause(0.01)
+        await pilot.pause()
         asked = app.controller.state.question
         await pilot.press("up", "up", "enter")  # Cancel is the default; Publish is first
-        await pilot.pause(0.4)
+        async with asyncio.timeout(5):
+            while "published 2 action(s)" not in screen_text(app):
+                await pilot.pause(0.01)
         return asked, screen_text(app)
 
     asked, text = drive(app, scenario)
