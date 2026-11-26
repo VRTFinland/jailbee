@@ -60,13 +60,18 @@ def test_key_after_dispatch_defers_question(mocker, tmp_path):
     asyncio.run(scenario())
 
 
-def test_followup_opens_after_answer_and_timer_does_not_disarm(mocker, tmp_path):
+@pytest.mark.parametrize("user_moves_on", [False, True])
+def test_followup_opens_only_without_interaction_after_answer(mocker, tmp_path, user_moves_on):
     release = Event()
+    first_answered = Event()
+    release_followup = Event()
     answers = []
 
     def run(argv, *, on_prompt, **kwargs):
         assert release.wait(5)
         answers.append(on_prompt(Prompt(1, "text", "First?")))
+        first_answered.set()
+        assert release_followup.wait(5)
         answers.append(on_prompt(Prompt(2, "text", "Second?")))
         return drunner.RunResult(status=0)
 
@@ -84,9 +89,26 @@ def test_followup_opens_after_answer_and_timer_does_not_disarm(mocker, tmp_path)
                     while not isinstance(app.screen, pm.TextModal):
                         await pilot.pause(0.01)
                 await pilot.press("a", "enter")
+                assert await asyncio.to_thread(first_answered.wait, 5)
+                assert not app.modal_open
+                if user_moves_on:
+                    await pilot.press("down")
+                else:
+                    app._timer_tick()
+                release_followup.set()
                 async with asyncio.timeout(5):
-                    while not (isinstance(app.screen, pm.TextModal) and answers):
+                    while not any(
+                        e.pending_question and e.pending_question.question == "Second?"
+                        for e in app.session.queue
+                    ):
                         await pilot.pause(0.01)
+                if user_moves_on:
+                    assert not app.modal_open
+                    await pilot.press("Q", "enter")
+                async with asyncio.timeout(5):
+                    while not isinstance(app.screen, pm.TextModal):
+                        await pilot.pause(0.01)
+                assert app.screen.prompt.question == "Second?"
                 await pilot.press("b", "enter")
                 async with asyncio.timeout(5):
                     while len(answers) < 2:
@@ -94,6 +116,7 @@ def test_followup_opens_after_answer_and_timer_does_not_disarm(mocker, tmp_path)
                 assert answers == ["a", "b"]
             finally:
                 release.set()
+                release_followup.set()
 
     asyncio.run(scenario())
 

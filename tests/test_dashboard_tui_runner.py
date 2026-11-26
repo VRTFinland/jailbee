@@ -296,15 +296,11 @@ def test_global_lifecycle_runs_without_a_repo_and_uses_prompt_channel(mocker, in
             await pilot.pause()
             await _apply(pilot, app, Pick(index))
             await _until(
-                pilot,
-                lambda: any(e.pending_question for e in app.session.queue),
-                "queued host question",
+                pilot, lambda: isinstance(app.screen, pm.ConfirmModal), "immediate host confirmation"
             )
-            assert not isinstance(app.screen, pm.ConfirmModal)
-            await pilot.press("Q", "enter")
-            await _until(
-                pilot, lambda: isinstance(app.screen, pm.ConfirmModal), "host confirmation"
-            )
+            (entry,) = app.session.queue
+            assert entry.pending_question is not None
+            assert entry.state == "awaiting"
             assert app.screen.prompt.question == "Proceed on the host?"
             await pilot.press("y")
             await _until(pilot, lambda: _finished(app), "host lifecycle result")
@@ -338,8 +334,8 @@ def test_cancelling_a_modal_is_a_cancel_for_the_child(mocker, tmp_path):
     spawn = Spawns([_prompt()])
 
     async def script(app, pilot):
-        await _until(pilot, lambda: isinstance(app.screen, pm.ConfirmModal), "the modal")
-        await pilot.press("escape")
+        await _confirm_modal(pilot, app)
+        await pilot.press("ctrl+c")
         await _until(pilot, lambda: _finished(app), "the finished entry")
         await pilot.press("ctrl+c")
 
@@ -369,6 +365,16 @@ def test_contextual_question_actions_are_keyboard_accessible(mocker, tmp_path, k
                 "contextual question",
             )
             await pilot.pause()
+            if kind == "confirm":
+                await pilot.press("right")
+                assert app.screen.query_one(OptionList).highlighted == 1
+                await pilot.press("left")
+                assert app.screen.query_one(OptionList).highlighted == 0
+            await pilot.press("tab")
+            assert isinstance(app.focused, Button)
+            assert app.focused.id == "later"
+            await pilot.press("shift+tab")
+            assert not isinstance(app.focused, Button)
             await pilot.press("tab")
             assert isinstance(app.focused, Button)
             assert app.focused.id == "later"
