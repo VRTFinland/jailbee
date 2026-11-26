@@ -24,11 +24,19 @@ before editing `## Unreleased`.
   widths, and Stylelint enforcement of design tokens (colours, sizes, shadows and
   motion) in browser tests with explicit migration-only exceptions, and a design
   guide for contributors and agents in `frontend/DESIGN.md`. The title bar,
-  front page and container lists now use the shared buttons, icons, rows and
-  status chips, with shared list status wording, context and activity emphasis,
-  opaque floating menu controls, and their layout, filters and live updates preserved.
-  Settings, quick preferences and prompt navigation share the same dialog and
-  control primitives, with history, reading position and measured menu paging preserved
+  front page, repository view and container lists now use the shared buttons,
+  icons, rows and status chips, with shared list status wording, context and activity
+  emphasis, opaque floating menu controls, and their layout, filters and live updates preserved.
+  The container view uses the same rows, a labelled search field, tonal history
+  paging buttons and vector live-session chips while preserving session ordering,
+  search, pagination and orchestration links.
+  Login and security-key setup use the shared fields and buttons, preserving PIN,
+  authenticator-code, one-time-link and security-key flows.
+  The transcript reader uses tonal prompts and tool disclosures, shared jump
+  dialogs and buttons, vector page controls with full-size hit areas behind
+  compact chrome, and preserves page steps, guide lines and reading positions. Settings, quick preferences and prompt
+  navigation share the same dialog and control primitives, with history,
+  reading position and measured menu paging preserved
   ([#167](https://github.com/VRTFinland/jailbee/issues/167)).
 - Web dashboard reader improvements: compact breadcrumb title bars and session details,
   an in-context settings overlay, configurable e-ink page controls and page step,

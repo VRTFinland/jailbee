@@ -195,6 +195,16 @@ def browser_errors(
 
 
 @pytest.fixture
+def page(context: BrowserContext, make_server: Callable[..., E2EServer]) -> Iterator[Page]:
+    # Depend on make_server so live pages cannot reconnect after server teardown.
+    # Close through the plugin's context wrapper to retain failure screenshots
+    # and traces, rather than closing the page before the recorder sees it.
+    page = context.new_page()
+    yield page
+    context.close()
+
+
+@pytest.fixture
 def logged_in(server: E2EServer, page: Page) -> Page:
     log_in_with_pin(page, server.url, server.pin.current)
     return page

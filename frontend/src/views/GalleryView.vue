@@ -4,6 +4,8 @@
 // whole system is judged on one screen. Behind login; linked from no menu.
 // Portalled overlays preserve the sample panel's theme and display profile.
 import {reactive} from "vue"
+import Disclosure from "../components/ui/Disclosure.vue"
+import TranscriptEntry from "../components/ui/TranscriptEntry.vue"
 import Button from "../components/ui/Button.vue"
 import Dialog from "../components/ui/Dialog.vue"
 import Field from "../components/ui/Field.vue"
@@ -197,6 +199,7 @@ function typeStyle(token: string): Record<string, string> {
                                 </template>
                             </ListRow>
                             <ListRow title="dev-ork" secondary="orchestrator · 3 min"
+                                link-label="dev-ork running working orchestrator 3 min"
                                 :to="{name: 'gallery', query: {row: 'dev-ork'}}">
                                 <p class="row-line">Orchestrator · 2 children</p>
                                 <dl class="row-cells">
@@ -262,6 +265,26 @@ function typeStyle(token: string): Record<string, string> {
                                 {value: 'destroy', label: 'Destroy', variant: 'danger', icon: 'remove'}]">
                                 <template #trigger><Button>Container actions</Button></template>
                             </Menu>
+                        </div>
+                    </div>
+
+                    <div class="group">
+                        <h3 class="group-title">Reader</h3>
+                        <TranscriptEntry kind="user">Make the title bar one row.</TranscriptEntry>
+                        <TranscriptEntry>I'll update the reader and run the suite.</TranscriptEntry>
+                        <TranscriptEntry kind="user" meta>Agent context</TranscriptEntry>
+                        <TranscriptEntry kind="thinking">Considering the next step.</TranscriptEntry>
+                        <TranscriptEntry kind="orphan">An unattached tool result.</TranscriptEntry>
+                        <Button variant="text" truncate>A long prompt excerpt that stays on one line instead of expanding the jump navigation</Button>
+                        <Disclosure label="Bash: make web-e2e" />
+                        <Disclosure label="Bash: failed command" error />
+                        <Disclosure label="Bash: expanded command" :open="true" />
+                        <div class="reader-controls">
+                            <Button compact variant="text">3 / 18</Button>
+                            <Button narrow variant="text">33 / 180</Button>
+                            <IconButton compact icon="back" label="Previous page (compact)" />
+                            <IconButton compact icon="forward" label="Next page (compact)" />
+                            <IconButton compact icon="back" label="Previous page (compact, disabled)" disabled />
                         </div>
                     </div>
 
@@ -351,6 +374,12 @@ function typeStyle(token: string): Record<string, string> {
     line-height: var(--md-type-body-small-line-height);
     color: var(--md-on-surface-variant);
     overflow-wrap: anywhere;
+}
+.reader-controls {
+    display: flex;
+    align-items: center;
+    gap: var(--md-space-8);
+    margin-top: var(--md-space-24);
 }
 .samples {
     display: flex;

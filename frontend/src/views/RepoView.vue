@@ -5,6 +5,7 @@ import {useRoute, useRouter} from "vue-router"
 import {apiFetch, Unauthorized} from "../api"
 import PageNav from "../components/PageNav.vue"
 import RepoList from "../components/RepoList.vue"
+import ListRow from "../components/ui/ListRow.vue"
 import {useDashboard} from "../dashboard"
 import {usePager} from "../composables/usePager"
 import type {SessionList, SessionSummary} from "../protocol"
@@ -63,14 +64,10 @@ onMounted(async () => {
         <p v-else-if="sessions === null" class="muted">Loading…</p>
         <p v-else-if="sessions.length === 0" class="muted">No sessions.</p>
         <ul v-else class="sessions">
-            <li v-for="s in sessions" :key="`${s.agent}/${s.session_id}`" class="session">
-                <router-link
-                    :to="{
-                        name: 'session',
-                        params: {prefix, agent: s.agent, sessionId: s.session_id},
-                    }"
-                >
-                    <span class="title">{{ s.title || "Untitled session" }}</span>
+            <ListRow v-for="s in sessions" :key="`${s.agent}/${s.session_id}`" class="session" wrap
+                :title="s.title || 'Untitled session'"
+                :to="{name: 'session', params: {prefix, agent: s.agent, sessionId: s.session_id}}">
+                <template #secondary>
                     <span class="meta">
                         <span class="agent">{{ s.agent }}</span>
                         <span class="container" :class="{unattributed: !s.container}">{{
@@ -81,8 +78,8 @@ onMounted(async () => {
                         }}</time>
                         <span v-if="s.models.length" class="models">{{ s.models.join(", ") }}</span>
                     </span>
-                </router-link>
-            </li>
+                </template>
+            </ListRow>
         </ul>
         <PageNav :pager="pager" />
     </div>
@@ -92,66 +89,42 @@ onMounted(async () => {
 .page {
     max-width: 48rem;
     margin: 0 auto;
-    padding: var(--space-3);
+    padding: var(--md-space-16);
 }
-.bar {
-    display: flex;
-    align-items: baseline;
-    gap: var(--space-3);
-    padding-bottom: var(--space-2);
-    border-bottom: 1px solid var(--border);
-}
-.bar h1 {
-    font-size: 1.25rem;
-    margin: 0;
-    font-family: var(--font-mono);
-}
-.back {
-    color: var(--muted);
-    text-decoration: none;
+h2 {
+    font-size: var(--md-type-title-medium-size);
+    line-height: var(--md-type-title-medium-line-height);
+    font-weight: var(--md-type-title-medium-weight);
 }
 .notice {
-    margin: var(--space-3) 0;
-    padding: var(--space-2) var(--space-3);
-    background: var(--notice-bg);
-    border-radius: var(--radius);
+    margin: var(--md-space-16) 0;
+    padding: var(--md-space-8) var(--md-space-16);
+    background: var(--md-primary-container);
+    color: var(--md-on-primary-container);
+    border-radius: var(--md-shape-medium);
 }
 .muted {
-    color: var(--muted);
+    color: var(--md-on-surface-variant);
 }
 .sessions {
     list-style: none;
-    margin: var(--space-3) 0 0;
+    margin: var(--md-space-16) 0 0;
     padding: 0;
-}
-.session a {
-    display: block;
-    min-height: 3.5rem; /* a large touch target */
-    padding: var(--space-3);
-    margin-bottom: var(--space-2);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    background: var(--surface);
-    color: inherit;
-    text-decoration: none;
-}
-.title {
-    display: block;
-    word-break: break-word;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--md-space-8);
 }
 .meta {
     display: flex;
     flex-wrap: wrap;
-    gap: var(--space-1) var(--space-3);
-    margin-top: var(--space-1);
-    font-size: 0.85rem;
-    color: var(--muted);
+    gap: var(--md-space-4) var(--md-space-16);
+    overflow-wrap: anywhere;
 }
 .models {
-    font-family: var(--font-mono);
+    font-family: var(--md-font-mono);
 }
 .container:not(.unattributed) {
-    font-family: var(--font-mono);
+    font-family: var(--md-font-mono);
 }
 .unattributed {
     font-style: italic;

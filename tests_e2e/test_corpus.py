@@ -98,7 +98,7 @@ def test_tool_calls_fold_and_expand_to_their_results(reader: Page, session: dict
     for marker in session["markers"]:
         expect(transcript).to_contain_text(marker)
     if "tool_error" in session["shapes"]:
-        expect(reader.locator(".tool-summary.error").first).to_be_visible()
+        expect(reader.locator(".tool-summary[data-error]").first).to_be_visible()
         expect(reader.locator(".tool-result.error").first).to_be_visible()
     if "long_output" in session["shapes"]:
         expect(reader.locator(".tool-result .truncated")).to_have_count(1)

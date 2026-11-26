@@ -31,6 +31,7 @@ describe("ToolCall", () => {
         const toggle = wrapper.get("button.tool-summary")
         expect(toggle.text()).toContain("Bash: run the tests")
         expect(toggle.attributes("aria-expanded")).toBe("false")
+        expect(toggle.find("svg[aria-hidden='true']").exists()).toBe(true)
         expect(wrapper.find(".tool-input").exists()).toBe(false)
         expect(wrapper.text()).not.toContain("42 passed")
     })
@@ -55,7 +56,7 @@ describe("ToolCall", () => {
 
     it("marks an error result on the folded line", () => {
         const wrapper = mount(ToolCall, {props: {call, result: {...result, is_error: true}}})
-        expect(wrapper.get("button.tool-summary").classes()).toContain("error")
+        expect(wrapper.get("button.tool-summary").attributes("data-error")).toBe("true")
     })
 
     it("lists a subagent the call started", () => {

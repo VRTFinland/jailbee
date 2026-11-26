@@ -117,6 +117,7 @@ it.each([
     "z-index: var(--md-layer-dialog); padding: 0 var(--md-space-16); gap: var(--md-space-8);",
     "border: 1px solid var(--md-outline); outline: 2px solid currentColor;",
     "border-width: 0 1px 2px; border-style: solid;",
+    "border-collapse: collapse; border-spacing: 0;",
     "margin: 0 auto; background: none; color: inherit;",
     "padding-bottom: calc(var(--md-space-16) + env(safe-area-inset-bottom));",
     "inset: 0; width: 100%; grid-template-columns: minmax(5rem, 1fr);",

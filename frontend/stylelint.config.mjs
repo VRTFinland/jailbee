@@ -4,14 +4,6 @@ export default {
     // component globs. Remove each with its migration (tickets 08-13); ticket 14
     // removes the list.
     ignoreFiles: [
-        "src/views/RepoView.vue", // 09: repository
-        "src/views/ContainerView.vue", // 10: container
-        "src/views/LoginView.vue", // 12: login and setup
-        "src/views/SetupView.vue",
-        "src/components/PageGuide.vue", // 13: transcript reader
-        "src/components/PageNav.vue",
-        "src/components/ToolCall.vue",
-        "src/views/SessionView.vue",
         "src/styles/highlight.css",
     ],
     plugins: ["./stylelint/design-tokens.mjs"],

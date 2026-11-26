@@ -7,15 +7,21 @@ import type {IconName} from "./material-symbols/paths"
 withDefaults(defineProps<{
     variant?: "primary" | "tonal" | "text" | "danger"
     type?: "button" | "submit"
+    /** Compact reader chrome; the hit area still extends to 44px above it. */
+    compact?: boolean
+    /** One-line excerpt for prompt navigation; the full text stays its name. */
+    truncate?: boolean
+    /** Narrow page counters retain a full hit target without wide pill insets. */
+    narrow?: boolean
     disabled?: boolean
     /** A leading icon, decorative: the content names the button. */
     icon?: IconName
-}>(), {variant: "tonal", type: "button", disabled: false, icon: undefined})
+}>(), {variant: "tonal", type: "button", compact: false, disabled: false, icon: undefined})
 defineEmits<{click: [event: MouseEvent]}>()
 </script>
 
 <template>
-    <button :type="type" class="button ui-state-layer ui-focus-ring" :data-variant="variant" :disabled="disabled"
+    <button :type="type" class="button ui-state-layer ui-focus-ring" :data-variant="variant" :data-compact="compact || undefined" :data-truncate="truncate || undefined" :data-narrow="narrow || undefined" :disabled="disabled"
         @click="$emit('click', $event)">
         <Icon v-if="icon" :name="icon" size="small" />
         <span class="button-label"><slot /></span>
@@ -23,6 +29,7 @@ defineEmits<{click: [event: MouseEvent]}>()
 </template>
 
 <style src="./state-layer.css"></style>
+<style src="./compact.css"></style>
 
 <style scoped>
 .button {
@@ -75,6 +82,20 @@ defineEmits<{click: [event: MouseEvent]}>()
     border-color: var(--md-hairline);
     background: var(--md-surface);
     color: var(--md-on-surface);
+}
+.button[data-narrow] {
+    min-width: var(--md-target-min);
+    padding-inline: var(--md-space-4);
+}
+.button[data-truncate] {
+    min-width: 0;
+    max-width: 100%;
+    justify-content: flex-start;
+}
+.button[data-truncate] .button-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 .button-label {
     min-width: 0;
