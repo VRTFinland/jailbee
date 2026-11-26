@@ -67,11 +67,14 @@ def parse_headers(headers: Mapping[str, str]) -> dict[str, Any] | None:
     def flag(name: str) -> bool | None:
         return None if name not in h else h[name].strip().lower() == "true"
 
+    primary, secondary = window("primary"), window("secondary")
+    if primary is None and secondary is None:
+        return None
     return {
         "plan": h.get("plan-type"),
         "active_limit": h.get("active-limit"),
-        "primary": window("primary"),
-        "secondary": window("secondary"),
+        "primary": primary,
+        "secondary": secondary,
         "credits": {
             "has_credits": flag("credits-has-credits"),
             "unlimited": flag("credits-unlimited"),

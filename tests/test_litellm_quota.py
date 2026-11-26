@@ -363,6 +363,29 @@ def test_http_failure_can_fall_back_to_a_quota_route(config, monkeypatch, capsys
     assert captured.err == ""
 
 
+@pytest.mark.parametrize(
+    "headers",
+    [
+        {"llm_provider-x-codex-unrecognized": "value"},
+        {"llm_provider-x-codex-primary-window-minutes": "inf"},
+    ],
+)
+def test_unusable_quota_headers_do_not_hide_http_failure(config, monkeypatch, capsys, headers):
+    def urlopen(request, timeout):
+        reply_headers = Message()
+        for name, value in headers.items():
+            reply_headers[name] = value
+        raise urllib.error.HTTPError(request.full_url, 429, "secret", reply_headers, None)
+
+    monkeypatch.setattr(litellm_quota.urllib.request, "urlopen", urlopen)
+
+    assert litellm_quota.quota() == 4
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "HTTP 429" in captured.err
+
+
 @pytest.mark.parametrize("status", [401, 429, 500])
 def test_http_failure_is_reported_instead_of_no_quota(config, monkeypatch, capsys, status):
     def urlopen(request, timeout):
