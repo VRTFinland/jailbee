@@ -45,6 +45,7 @@ from jailbee.state_service.protocol import (
     ProtocolError,
     Refresh,
     RunAction,
+    RunActionBatch,
     ServiceActivity,
     Shutdown,
     Snapshot,
@@ -296,6 +297,8 @@ class StateServer:
                     await writer.drain()
                 elif client is None:
                     continue
+                elif isinstance(message, RunActionBatch):
+                    self._start_batch(client, message)
                 elif isinstance(message, RunAction):
                     self._start_action(client, message)
                 elif isinstance(message, DismissAction):
@@ -366,22 +369,22 @@ class StateServer:
             return replace(question, can_answer=False, reason="answer in a local dashboard")
         return question
 
-    def _start_action(self, client: _Client, request: RunAction) -> None:
-        from jailbee.dashboard.runner import ActionCancellation, popen_spawn, run_action
-
+    def _prepare_action(
+        self, client: _Client, request: RunAction
+    ) -> tuple[ActionEntry, Any] | None:
         if self._draining:
             self._send_action(client, ActionRejected(request.entry_id, "state service is draining"))
-            return
+            return None
         if not client.dashboard_id or request.origin != client.dashboard_id:
             self._send_action(
                 client, ActionRejected(request.entry_id, "dashboard identity mismatch")
             )
-            return
+            return None
         if request.entry_id <= 0 or request.entry_id >= 2**63 or request.entry_id in self._actions:
             self._send_action(
                 client, ActionRejected(request.entry_id, "invalid or duplicate action id")
             )
-            return
+            return None
         try:
             policy = self._check_policy(client, request.argv)
             root, prefix, cwd = request.repo_root, request.prefix, request.cwd
@@ -393,7 +396,7 @@ class StateServer:
                     root, prefix = self._remote_repo(client, request.repo_root, request.cwd)
         except (ValueError, OSError) as exc:
             self._send_action(client, ActionRejected(request.entry_id, str(exc)))
-            return
+            return None
         entry = ActionEntry(
             request.entry_id,
             request.argv,
@@ -414,9 +417,24 @@ class StateServer:
                 else list(request.excluded_prefixes)
             ),
         )
+        return entry, policy
+
+    def _start_action(self, client: _Client, request: RunAction) -> None:
+        prepared = self._prepare_action(client, request)
+        if prepared is None:
+            return
+        entry, policy = prepared
         self._actions[entry.entry_id] = entry
         self._broadcast_action(entry)
         self._action_changed(entry)
+        self._launch_action(client, request, entry, policy)
+
+    def _launch_action(
+        self, client: _Client, request: RunAction, entry: ActionEntry, policy: Any
+    ) -> asyncio.Task[None]:
+        from jailbee.dashboard.runner import ActionCancellation, popen_spawn, run_action
+
+        cwd = entry.cwd
         loop = asyncio.get_running_loop()
 
         def send_output(chunk: str) -> None:
@@ -489,6 +507,47 @@ class StateServer:
             self._wake.set()
 
         task.add_done_callback(action_done)
+        return task
+
+    def _start_batch(self, client: _Client, batch: RunActionBatch) -> None:
+        requests = batch.requests
+        if not requests:
+            return
+        ids = [request.entry_id for request in requests]
+        if len(set(ids)) != len(ids):
+            self._send_action(client, ActionRejected(ids[0], "invalid or duplicate action id"))
+            return
+        prepared = []
+        for request in requests:
+            item = self._prepare_action(client, request)
+            if item is None:
+                if request is not requests[0]:
+                    self._send_action(client, ActionRejected(ids[0], "batch rejected"))
+                return
+            prepared.append(item)
+        for entry, _policy in prepared:
+            self._actions[entry.entry_id] = entry
+            self._broadcast_action(entry)
+            self._action_changed(entry)
+
+        async def run_batch() -> None:
+            for _index, (request, (entry, policy)) in enumerate(
+                zip(requests, prepared, strict=True)
+            ):
+                if self._stopping:
+                    break
+                await self._launch_action(client, request, entry, policy)
+                finished = self._actions.get(entry.entry_id)
+                if finished is None or finished.error is not None or finished.refused is not None:
+                    break
+            else:
+                return
+            for remaining in requests[_index + (0 if self._stopping else 1) :]:
+                self._action_finish(ActionFinish(remaining.entry_id, error="batch stopped"), True)
+
+        task = asyncio.create_task(run_batch())
+        self._action_tasks.add(task)
+        task.add_done_callback(self._action_tasks.discard)
 
     async def _ask_question(
         self, entry_id: int, prompt: Prompt, disconnected: threading.Event

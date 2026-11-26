@@ -130,8 +130,7 @@ class FakeStateClient:
         self.action_spawn = None
         self.app: tapp.DashboardApp | None = None
 
-    def run_action(self, request):  # type: ignore[no-untyped-def]
-        """Simulate the action-host boundary, including the temporary requester prompt seam."""
+    def _register_action(self, request):  # type: ignore[no-untyped-def]
         self.action_requests.append(request)
         entry = ActionEntry(
             request.entry_id,
@@ -145,6 +144,13 @@ class FakeStateClient:
             request.prefix,
         )
         self._action_entries[entry.entry_id] = entry
+        return entry
+
+    def run_action(self, request, *, registered=False, synchronous=False):  # type: ignore[no-untyped-def]
+        """Simulate the action-host boundary, including the requester prompt seam."""
+        entry = (
+            self._action_entries[request.entry_id] if registered else self._register_action(request)
+        )
         app = self.app
 
         def output(chunk):  # type: ignore[no-untyped-def]
@@ -214,7 +220,7 @@ class FakeStateClient:
             )
             disconnect()
 
-        if app is not None and app.threaded_actions:
+        if not synchronous and app is not None and app.threaded_actions:
             threading.Thread(target=run, daemon=True).start()
         else:
             run()
@@ -229,6 +235,27 @@ class FakeStateClient:
 
     def action_entries(self):  # type: ignore[no-untyped-def]
         return self._action_entries.copy()
+
+    def run_action_batch(self, batch):  # type: ignore[no-untyped-def]
+        for request in batch.requests:
+            self._register_action(request)
+
+        def run():
+            for index, request in enumerate(batch.requests):
+                self.run_action(request, registered=True, synchronous=True)
+                entry = self._action_entries[request.entry_id]
+                if entry.refused is not None or entry.error is not None:
+                    for remaining in batch.requests[index + 1 :]:
+                        entry = self._action_entries[remaining.entry_id]
+                        self._action_entries[remaining.entry_id] = replace(
+                            entry, finished=True, state="interrupted", error="batch stopped"
+                        )
+                    break
+
+        if self.app is None or self.app.threaded_actions:
+            threading.Thread(target=run, daemon=True).start()
+        else:
+            run()
 
     def release_test_questions(self):  # type: ignore[no-untyped-def]
         for event, answer in list(self._question_waiters.values()):

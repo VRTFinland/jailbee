@@ -181,24 +181,24 @@ def test_batch_resumes_after_disconnect_without_resubmitting_accepted_action(tmp
         def action_entries(self):
             return self.entries.copy()
 
-        def run_action(self, request):
-            self.sent.append(request.entry_id)
-            self.entries[request.entry_id] = ActionEntry(
-                request.entry_id,
-                request.argv,
-                request.cwd,
-                request.target,
-                False,
-                request.origin,
-                request.transport,
-                request.repo_root,
-                request.prefix,
-                finished=True,
-                status=0,
-                output="ok",
-            )
-            if len(self.sent) == 1:
-                raise BrokenPipeError("ambiguous send")
+        def run_action_batch(self, batch):
+            for request in batch.requests:
+                self.sent.append(request.entry_id)
+                self.entries[request.entry_id] = ActionEntry(
+                    request.entry_id,
+                    request.argv,
+                    request.cwd,
+                    request.target,
+                    False,
+                    request.origin,
+                    request.transport,
+                    request.repo_root,
+                    request.prefix,
+                    finished=True,
+                    status=0,
+                    output="ok",
+                )
+            raise BrokenPipeError("ambiguous send")
 
     class Progress:
         def entry_id(self, index):
@@ -216,6 +216,145 @@ def test_batch_resumes_after_disconnect_without_resubmitting_accepted_action(tmp
     )
     assert client.sent == [1, 2]
     assert [result.status for result in outcome.results] == [0, 0]
+
+
+def test_batch_retries_if_successful_send_was_not_accepted(tmp_path, monkeypatch):
+    from jailbee.state_service.protocol import ActionEntry
+
+    monkeypatch.setattr("jailbee.dashboard.service_actions.POLL_SECONDS", 0)
+
+    class Client:
+        dashboard_id = "origin"
+        excluded_prefixes = ()
+
+        def __init__(self):
+            self.calls = 0
+            self.generation = 1
+            self.entries = {}
+
+        def action_connection(self):
+            return self.generation
+
+        def status(self):
+            return None
+
+        def action_rejection(self, entry_id):
+            return None
+
+        def action_entries(self):
+            return self.entries.copy()
+
+        def run_action_batch(self, batch):
+            self.calls += 1
+            if self.calls == 1:
+                self.generation = 2
+                return
+            for request in batch.requests:
+                self.entries[request.entry_id] = ActionEntry(
+                    request.entry_id,
+                    request.argv,
+                    request.cwd,
+                    request.target,
+                    False,
+                    request.origin,
+                    request.transport,
+                    request.repo_root,
+                    request.prefix,
+                    finished=True,
+                    status=0,
+                )
+
+    class Progress:
+        def entry_id(self, index):
+            return index + 1
+
+        def output(self, index, chunk):
+            pass
+
+        def question(self, index, asking):
+            pass
+
+    client = Client()
+    with ThreadPoolExecutor() as pool:
+        future = pool.submit(
+            run_actions,
+            client,
+            [ActionRun(["ls"], tmp_path)] * 2,
+            Progress(),
+            groups=[],
+            transport="none",
+        )
+        try:
+            outcome = future.result(timeout=3)
+        finally:
+            if not future.done():
+                client.generation = None
+                monkeypatch.setattr(
+                    "jailbee.dashboard.service_actions.RECONNECT_TIMEOUT_SECONDS", 0
+                )
+    assert client.calls == 2
+    assert [result.status for result in outcome.results] == [0, 0]
+
+
+def test_batch_does_not_resubmit_when_only_later_entry_replays(tmp_path, monkeypatch):
+    from jailbee.state_service.protocol import ActionEntry
+
+    monkeypatch.setattr("jailbee.dashboard.service_actions.POLL_SECONDS", 0)
+
+    class Client:
+        dashboard_id = "origin"
+        excluded_prefixes = ()
+
+        def __init__(self):
+            self.calls = 0
+            self.generation = 1
+            self.entries = {}
+
+        def action_connection(self):
+            return self.generation
+
+        def status(self):
+            return None
+
+        def action_rejection(self, entry_id):
+            return None
+
+        def action_entries(self):
+            return self.entries.copy()
+
+        def run_action_batch(self, batch):
+            self.calls += 1
+            request = batch.requests[1]
+            self.entries[request.entry_id] = ActionEntry(
+                request.entry_id,
+                request.argv,
+                request.cwd,
+                request.target,
+                False,
+                request.origin,
+                request.transport,
+                request.repo_root,
+                request.prefix,
+            )
+            self.generation = 2
+            raise BrokenPipeError("ambiguous send")
+
+    class Progress:
+        def entry_id(self, index):
+            return index + 1
+
+        def output(self, index, chunk):
+            pass
+
+        def question(self, index, asking):
+            pass
+
+    client = Client()
+    outcome = run_actions(
+        client, [ActionRun(["ls"], tmp_path)] * 2, Progress(), groups=[], transport="none"
+    )
+    assert client.calls == 1
+    assert outcome.results[0].error == "action missing after state service reconnect"
 
 
 def test_disconnect_timeout_returns_partial_output(tmp_path, monkeypatch):
@@ -288,16 +427,15 @@ def test_real_service_replays_accepted_action_and_continues_batch(runtime_dir, t
         def __getattr__(self, name):
             return getattr(client, name)
 
-        def run_action(self, request):
-            client.run_action(request)
-            if request.entry_id == 101:
-                assert started.wait(3)
-                generation = client.action_connection()
-                client._sock.shutdown(socket.SHUT_RDWR)
-                _until(lambda: client.action_connection() not in (None, generation))
-                assert 101 in client.action_entries()
-                release.set()
-                raise BrokenPipeError("send outcome unknown")
+        def run_action_batch(self, request):
+            client.run_action_batch(request)
+            assert started.wait(3)
+            generation = client.action_connection()
+            client._sock.shutdown(socket.SHUT_RDWR)
+            _until(lambda: client.action_connection() not in (None, generation))
+            assert 101 in client.action_entries()
+            release.set()
+            raise BrokenPipeError("send outcome unknown")
 
     class Progress:
         def entry_id(self, index):

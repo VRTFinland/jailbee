@@ -15,7 +15,7 @@ from jailbee.dashboard.notifications import NotificationQueue
 from jailbee.dashboard.runner import ActionOutcome, ActionRun, RunProgress, RunResult, _TailBuffer
 from jailbee.state_service import StateServiceUnavailable
 from jailbee.state_service.client import DISCONNECTED
-from jailbee.state_service.protocol import ActionEntry, RunAction
+from jailbee.state_service.protocol import ActionEntry, RunAction, RunActionBatch
 
 POLL_SECONDS = 0.05
 RECONNECT_TIMEOUT_SECONDS = 30.0
@@ -44,6 +44,8 @@ class ActionClient(Protocol):
     def excluded_prefixes(self) -> Sequence[str]: ...
 
     def run_action(self, request: RunAction) -> None: ...
+
+    def run_action_batch(self, request: RunActionBatch) -> None: ...
 
     def action_entries(self) -> dict[int, ActionEntry]: ...
 
@@ -74,6 +76,7 @@ def run_actions(
     outcome_text = _TailBuffer()
     outputs: list[str] = []
     results: list[RunResult] = []
+    requests: list[RunAction] = []
     for index, item in enumerate(runs):
         entry_id = progress.entry_id(index)
         root = str(item.cwd.resolve())
@@ -103,23 +106,36 @@ def run_actions(
             excluded_prefixes=list(client.excluded_prefixes),
             environment=dict(os.environ),
         )
-        if entry_id in client.action_entries():
+        requests.append(request)
+    batch_sent = False
+    batch_acknowledged = False
+    batch_generation: int | None = None
+    for index, request in enumerate(requests):
+        entry_id = request.entry_id
+        if entry_id in client.action_entries() and not batch_sent:
             results.append(RunResult(error="invalid or duplicate action id"))
             outputs.append("")
             break
         last_output = ""
-        sent = False
-        sent_generation: int | None = None
-        acknowledged = False
+        sent = batch_sent
+        sent_generation: int | None = batch_generation
+        acknowledged = batch_acknowledged
         uncertain_generation: int | None = None
         disconnected_at: float | None = None
         while True:
             generation = client.action_connection()
-            snapshot = client.action_entries().get(entry_id)
+            entries = client.action_entries()
+            snapshot = entries.get(entry_id)
+            if len(requests) > 1 and any(item.entry_id in entries for item in requests):
+                batch_acknowledged = True
+                acknowledged = True
+                sent = batch_sent = True
             rejection = client.action_rejection(entry_id)
             if snapshot is not None:
                 acknowledged = True
                 sent = True
+                if len(requests) > 1:
+                    batch_sent = True
                 uncertain_generation = None
             elif rejection is not None:
                 results.append(RunResult(refused=rejection))
@@ -140,16 +156,28 @@ def run_actions(
                 time.sleep(POLL_SECONDS)
                 continue
             disconnected_at = None
-            if acknowledged and snapshot is None and sent_generation != generation:
+            # Batch entries are published together before any action starts;
+            # a replay containing only other IDs must not cause a resubmit.
+            if (
+                acknowledged
+                and snapshot is None
+                and (sent_generation != generation or batch_acknowledged)
+            ):
                 results.append(RunResult(error="action missing after state service reconnect"))
                 outputs.append(last_output)
                 outcome_text.append(last_output)
                 return ActionOutcome(results, outcome_text.text(), outputs)
             if sent and not acknowledged and sent_generation != generation:
                 sent = False
+                batch_sent = False
             if not sent:
                 try:
-                    client.run_action(request)
+                    if len(requests) == 1:
+                        client.run_action(request)
+                    else:
+                        client.run_action_batch(RunActionBatch(requests))
+                        batch_sent = True
+                        batch_generation = generation
                     sent = True
                     sent_generation = generation
                 except (OSError, StateServiceUnavailable):

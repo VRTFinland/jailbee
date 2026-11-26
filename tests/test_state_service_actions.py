@@ -784,6 +784,199 @@ def test_remote_cannot_spoof_registered_repo_scope(runtime_dir, tmp_path, monkey
         client.close()
 
 
+def test_batch_continues_after_origin_dashboard_closes(runtime_dir, tmp_path):
+    from jailbee.state_service import paths
+    from jailbee.state_service.protocol import RunActionBatch
+
+    started = threading.Event()
+    release = threading.Event()
+    second = threading.Event()
+
+    class Child:
+        stdout = None
+
+        def __init__(self, sock, first):
+            sock.close()
+            self.first = first
+            (started if first else second).set()
+
+        def wait(self):
+            if self.first:
+                assert release.wait(10)
+            return 0
+
+        def kill(self):
+            release.set()
+
+    paths.ensure_runtime_dir()
+    server = StateServer(
+        FakeGatherer(),
+        version="v1",
+        action_spawn=lambda argv, **kw: Child(kw["prompt_sock"], "first" in argv),
+    )
+    thread = threading.Thread(
+        target=lambda: asyncio.run(server.serve(paths.socket_path())), daemon=True
+    )
+    thread.start()
+    track_server(server, thread)
+    _until(paths.socket_path().exists)
+    client = StateClient(
+        None, dashboard_id="one", version="v1", spawn=lambda: None, backoff=(0.05,)
+    )
+    client.start()
+    try:
+        client.wait_first_snapshot(3)
+        requests = [
+            RunAction(i, [name], str(tmp_path), "x", False, "one", "none", str(tmp_path), "repo")
+            for i, name in [(101, "first"), (102, "second")]
+        ]
+        client.run_action_batch(RunActionBatch(requests))
+        assert started.wait(10)
+        _until(lambda: set(client.action_entries()) >= {101, 102})
+        assert not second.is_set()
+        client.close()
+        release.set()
+        assert second.wait(10)
+    finally:
+        release.set()
+        client.close()
+
+
+def test_batch_shutdown_never_starts_pending_action(runtime_dir, tmp_path):
+    from jailbee.state_service import paths
+    from jailbee.state_service.protocol import RunActionBatch, Shutdown
+
+    started = threading.Event()
+    release = threading.Event()
+    spawns = []
+
+    class Child:
+        stdout = None
+
+        def __init__(self, sock):
+            sock.close()
+            spawns.append(1)
+            started.set()
+
+        def wait(self):
+            assert release.wait(10)
+            return 0
+
+        def kill(self):
+            release.set()
+
+    paths.ensure_runtime_dir()
+    server = StateServer(
+        FakeGatherer(), version="v1", action_spawn=lambda *a, **kw: Child(kw["prompt_sock"])
+    )
+    thread = threading.Thread(
+        target=lambda: asyncio.run(server.serve(paths.socket_path())), daemon=True
+    )
+    thread.start()
+    track_server(server, thread)
+    _until(paths.socket_path().exists)
+    client = StateClient(
+        None, dashboard_id="one", version="v1", spawn=lambda: None, backoff=(0.05,)
+    )
+    client.start()
+    try:
+        client.wait_first_snapshot(3)
+        requests = [
+            RunAction(i, ["ls"], str(tmp_path), "x", False, "one", "none", str(tmp_path), "repo")
+            for i in (101, 102)
+        ]
+        client.run_action_batch(RunActionBatch(requests))
+        assert started.wait(10)
+        client._send(Shutdown())
+        thread.join(10)
+        assert not thread.is_alive()
+        assert len(spawns) == 1
+    finally:
+        release.set()
+        client.close()
+
+
+def test_batch_continues_after_nonzero_exit(runtime_dir, tmp_path):
+    from jailbee.state_service import paths
+    from jailbee.state_service.protocol import RunActionBatch
+
+    spawns = []
+
+    class Child:
+        stdout = None
+
+        def __init__(self, sock):
+            sock.close()
+            spawns.append(1)
+            self.status = 7 if len(spawns) == 1 else 0
+
+        def wait(self):
+            return self.status
+
+        def kill(self):
+            pass
+
+    paths.ensure_runtime_dir()
+    server = StateServer(
+        FakeGatherer(), version="v1", action_spawn=lambda *a, **kw: Child(kw["prompt_sock"])
+    )
+    thread = threading.Thread(
+        target=lambda: asyncio.run(server.serve(paths.socket_path())), daemon=True
+    )
+    thread.start()
+    track_server(server, thread)
+    _until(paths.socket_path().exists)
+    client = StateClient(
+        None, dashboard_id="one", version="v1", spawn=lambda: None, backoff=(0.05,)
+    )
+    client.start()
+    try:
+        client.wait_first_snapshot(3)
+        requests = [
+            RunAction(i, ["ls"], str(tmp_path), "x", False, "one", "none", str(tmp_path), "repo")
+            for i in (101, 102)
+        ]
+        client.run_action_batch(RunActionBatch(requests))
+        _until(
+            lambda: bool(client.action_entries().get(102) and client.action_entries()[102].finished)
+        )
+        assert [client.action_entries()[i].status for i in (101, 102)] == [7, 0]
+    finally:
+        client.close()
+
+
+def test_batch_rejects_duplicate_ids_without_starting_any_action(runtime_dir, tmp_path):
+    from jailbee.state_service import paths
+    from jailbee.state_service.protocol import RunActionBatch
+
+    spawned = []
+    paths.ensure_runtime_dir()
+    server = StateServer(
+        FakeGatherer(), version="v1", action_spawn=lambda *a, **kw: spawned.append(1)
+    )
+    thread = threading.Thread(
+        target=lambda: asyncio.run(server.serve(paths.socket_path())), daemon=True
+    )
+    thread.start()
+    track_server(server, thread)
+    _until(paths.socket_path().exists)
+    client = StateClient(
+        None, dashboard_id="one", version="v1", spawn=lambda: None, backoff=(0.05,)
+    )
+    client.start()
+    try:
+        client.wait_first_snapshot(3)
+        request = RunAction(
+            101, ["ls"], str(tmp_path), "x", False, "one", "none", str(tmp_path), "repo"
+        )
+        client.run_action_batch(RunActionBatch([request, request]))
+        _until(lambda: client.action_rejection(101) is not None)
+        assert not spawned
+        assert not client.action_entries()
+    finally:
+        client.close()
+
+
 def test_action_streams_output_and_result(runtime_dir, tmp_path):
     class Child:
         def __init__(self, prompt_sock):

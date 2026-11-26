@@ -16,6 +16,70 @@ from tests.dashboard_fixtures import ci
 from tests.dashboard_pilot import SyncJobs, bare_session, box_text, drive, patch_pause
 
 
+def test_batch_fake_exposes_all_entries_before_first_finishes(tmp_path):
+    import threading
+
+    from jailbee.dashboard.runner import RunResult
+    from jailbee.state_service.protocol import RunAction, RunActionBatch
+    from tests.dashboard_pilot import FakeStateClient
+
+    started = threading.Event()
+    release = threading.Event()
+    ran = []
+    client = FakeStateClient([])
+
+    def run(argv, **kwargs):
+        ran.append(argv[0])
+        started.set()
+        assert release.wait(10)
+        return RunResult(status=0)
+
+    client.action_runner = run
+    requests = [
+        RunAction(i, [str(i)], str(tmp_path), "x", False, "origin", "none", str(tmp_path), "repo")
+        for i in (1, 2)
+    ]
+    try:
+        client.run_action_batch(RunActionBatch(requests))
+        assert started.wait(10)
+        assert set(client.action_entries()) == {1, 2}
+        assert ran == ["1"]
+    finally:
+        release.set()
+
+
+@pytest.mark.parametrize("result", ["refused", "error"])
+def test_batch_fake_stops_after_refusal_or_error(tmp_path, result):
+    import threading
+
+    from jailbee.dashboard.runner import RunResult
+    from jailbee.state_service.protocol import RunAction, RunActionBatch
+    from tests.dashboard_pilot import FakeStateClient
+
+    done = threading.Event()
+    ran = []
+    client = FakeStateClient([])
+
+    def run(argv, **kwargs):
+        ran.append(argv[0])
+        return RunResult(**{result: "failure"})
+
+    client.action_runner = run
+    requests = [
+        RunAction(i, [str(i)], str(tmp_path), "x", False, "origin", "none", str(tmp_path), "repo")
+        for i in (1, 2)
+    ]
+    client.run_action_batch(RunActionBatch(requests))
+    for _ in range(1000):
+        if client.action_entries()[2].finished:
+            done.set()
+            break
+        done.wait(0.01)
+    assert done.is_set()
+    assert ran == ["1"]
+    assert client.action_entries()[2].state == "interrupted"
+
+
 def _session(mocker, tmp_path, *states, config=None, **group_kw):
     names = [f"alpha-{c}" for c in "abc"[: len(states)]]
     group = dmodel.RepoGroup(
