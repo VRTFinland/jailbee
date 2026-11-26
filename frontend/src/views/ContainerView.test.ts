@@ -66,6 +66,16 @@ async function mountContainer(fetchMock: ReturnType<typeof vi.fn<typeof fetch>>,
 }
 
 describe("ContainerView", () => {
+    it("marks a live session with a vector and words while keeping history unmarked", async () => {
+        const {wrapper} = await mountContainer(serve())
+        const rows = wrapper.findAll("li.session")
+        expect(rows[0].text()).toContain("live")
+        expect(rows[0].find("svg path").exists()).toBe(true)
+        expect(rows[1].text()).not.toContain("live")
+        expect(wrapper.get('input[type="search"]').attributes("aria-labelledby")).toBeDefined()
+        wrapper.unmount()
+    })
+
     it("pages earlier sessions on the server and leaves live sessions on top", async () => {
         const fetchMock = vi.fn<typeof fetch>((input) => {
             const url = new URL(String(input), "http://localhost")
@@ -258,9 +268,9 @@ describe("ContainerView", () => {
         const rows = wrapper.findAll("li.session")
         expect(rows).toHaveLength(2)
         expect(rows[0].text()).toContain("Fix the login bug")
-        expect(rows[0].find(".live").exists()).toBe(true)
+        expect(rows[0].text().includes("live")).toBe(true)
         expect(rows[1].text()).toContain("Untitled session")
-        expect(rows[1].find(".live").exists()).toBe(false)
+        expect(rows[1].text().includes("live")).toBe(false)
     })
 
     it("opens a row's transcript through the session route", async () => {
@@ -319,7 +329,7 @@ describe("ContainerView", () => {
 
         const rows = wrapper.findAll("li.session")
         expect(rows).toHaveLength(2)
-        expect(rows[0].find(".live").exists()).toBe(true)
+        expect(rows[0].text().includes("live")).toBe(true)
         expect(rows[1].text()).toContain("Untitled session")
     })
 })

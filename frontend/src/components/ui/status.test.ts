@@ -1,7 +1,7 @@
 import {describe, expect, it} from "vitest"
 import {mount} from "@vue/test-utils"
 import StatusChip from "./StatusChip.vue"
-import {agentStatus, containerStatus, listStatuses, rowStatuses} from "./status"
+import {agentStatus, containerStatus, listStatuses, rowStatuses, sessionStatus} from "./status"
 import vocabulary from "./status-vocabulary.json"
 
 // The wire values come from the dashboard core (tests/test_web_status_vocabulary.py
@@ -101,6 +101,13 @@ describe("list status policy", () => {
         expect(listStatuses({state: "Running", phase: "migrating", agent: null})).toEqual([
             {status: "unknown", label: "migrating"},
         ])
+    })
+})
+
+describe("session status policy", () => {
+    it("marks live sessions and leaves earlier sessions unmarked", () => {
+        expect(sessionStatus({live: true})).toEqual({status: "running", label: "live"})
+        expect(sessionStatus({live: false})).toBeNull()
     })
 })
 

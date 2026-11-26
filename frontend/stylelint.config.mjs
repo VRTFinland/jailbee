@@ -5,7 +5,6 @@ export default {
     // removes the list.
     ignoreFiles: [
         "src/views/RepoView.vue", // 09: repository
-        "src/views/ContainerView.vue", // 10: container
         "src/components/QuickSettings.vue", // 11: settings and dialogs
         "src/components/SettingsPanel.vue",
         "src/views/SettingsView.vue",

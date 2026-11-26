@@ -4,6 +4,11 @@ import {computed, nextTick, ref, watch} from "vue"
 import {useRoute, useRouter} from "vue-router"
 import {apiFetch, Unauthorized} from "../api"
 import PageNav from "../components/PageNav.vue"
+import Button from "../components/ui/Button.vue"
+import Field from "../components/ui/Field.vue"
+import ListRow from "../components/ui/ListRow.vue"
+import StatusChip from "../components/ui/StatusChip.vue"
+import {sessionStatus} from "../components/ui/status"
 import {useDashboard} from "../dashboard"
 import {usePager} from "../composables/usePager"
 import type {ContainerSessionHistory, ContainerSessionList} from "../protocol"
@@ -132,52 +137,43 @@ watch([name, historyPage, historyQuery], async ([selected, page, query], previou
             <h2>Children ({{ children.length }})</h2>
             <p v-if="!children.length" class="muted">No children.</p>
             <ul v-else>
-                <li v-for="child in children" :key="child.name">
-                    <router-link :to="{name: 'container', params: {name: child.name}}">{{ child.cells[0] || child.name }}</router-link>
+                <ListRow v-for="child in children" :key="child.name" wrap
+                    :title="child.cells[0] || child.name"
+                    :to="{name: 'container', params: {name: child.name}}">
                     · {{ child.child?.state }}<template v-if="child.child?.runner"> · {{ child.child.runner }}</template>
-                </li>
+                </ListRow>
             </ul>
         </section>
         <h2>Sessions</h2>
         <p v-if="error" class="notice">{{ error }}</p>
         <p v-else-if="live === null" class="muted">Loading…</p>
         <p v-else-if="sessions.length === 0 && !historyPending && !historyFailed && !historyQuery" class="muted">No sessions.</p>
-        <label v-if="live !== null" class="history-search">
-            Search earlier sessions
-            <input v-model="search" type="search" placeholder="Title or session ID" />
-        </label>
+        <Field v-if="live !== null" v-model="search" class="history-search"
+            label="Search earlier sessions" type="search" placeholder="Title or session ID" />
         <p v-if="live !== null && history?.total === 0 && historyQuery" class="muted" role="status">No matches.</p>
         <ul v-if="live !== null && sessions.length" class="sessions">
-            <li
-                v-for="s in sessions"
-                :key="`${s.agent}/${s.session_id}`"
-                class="session"
-                :data-live="s.live"
-            >
-                <router-link
-                    :to="{
-                        name: 'session',
-                        params: {prefix: live.repo, agent: s.agent, sessionId: s.session_id},
-                    }"
-                >
-                    <span class="title">{{ s.title || "Untitled session" }}</span>
+            <ListRow v-for="s in sessions" :key="`${s.agent}/${s.session_id}`"
+                class="session" :data-live="s.live" wrap
+                :to="{name: 'session', params: {prefix: live.repo, agent: s.agent, sessionId: s.session_id}}">
+                <template #title><span class="title">{{ s.title || "Untitled session" }}</span></template>
+                <template #trailing v-if="sessionStatus(s)">
+                    <StatusChip v-bind="sessionStatus(s)!" />
+                </template>
+                <template #secondary>
                     <span class="meta">
-                        <span v-if="s.live" class="live">live</span>
                         <span class="agent">{{ s.agent }}</span>
-                        <time v-if="s.last_activity" :datetime="s.last_activity">{{
-                            when(s.last_activity)
-                        }}</time>
+                        <time v-if="s.last_activity" :datetime="s.last_activity">{{ when(s.last_activity) }}</time>
                         <span v-if="s.models.length" class="models">{{ s.models.join(", ") }}</span>
                     </span>
-                </router-link>
-            </li>
+                </template>
+            </ListRow>
         </ul>
         <p v-if="live !== null && historyPending" class="muted">Loading earlier sessions…</p>
         <p v-else-if="live !== null && historyFailed" class="muted">Earlier sessions could not be loaded.</p>
         <nav v-if="live !== null" class="history-nav" aria-label="Earlier sessions">
-            <button aria-label="Previous earlier sessions" :disabled="historyPending || historyPage === 0" @click="historyPage--">Previous</button>
+            <Button variant="tonal" aria-label="Previous earlier sessions" :disabled="historyPending || historyPage === 0" @click="historyPage--">Previous</Button>
             <span aria-live="polite">Page {{ historyPage + 1 }} of {{ historyPages }}</span>
-            <button aria-label="Next earlier sessions" :disabled="historyPending || historyFailed || historyPage + 1 >= historyPages" @click="historyPage++">Next</button>
+            <Button variant="tonal" aria-label="Next earlier sessions" :disabled="historyPending || historyFailed || historyPage + 1 >= historyPages" @click="historyPage++">Next</Button>
         </nav>
         <PageNav :pager="pager" />
     </div>
@@ -187,110 +183,51 @@ watch([name, historyPage, historyQuery], async ([selected, page, query], previou
 .page {
     max-width: 48rem;
     margin: 0 auto;
-    padding: var(--space-3);
-}
-.bar {
-    display: flex;
-    align-items: baseline;
-    flex-wrap: wrap;
-    overflow-wrap: anywhere;
-    gap: var(--space-3);
-    padding-bottom: var(--space-2);
-    border-bottom: 1px solid var(--border);
-}
-.bar h1 {
-    font-size: 1.25rem;
-    margin: 0;
-    font-family: var(--font-mono);
-}
-.back {
-    color: var(--muted);
-    text-decoration: none;
+    padding: var(--md-space-16);
 }
 .parent,
 .children {
     overflow-wrap: anywhere;
 }
-.children li {
-    margin-block: var(--space-2);
-}
-.parent a,
-.children a {
+.parent a {
     color: inherit;
 }
 .notice {
-    margin: var(--space-3) 0;
-    padding: var(--space-2) var(--space-3);
-    background: var(--notice-bg);
-    border-radius: var(--radius);
+    margin: var(--md-space-16) 0;
+    padding: var(--md-space-8) var(--md-space-16);
+    background: var(--md-primary-container);
+    color: var(--md-on-primary-container);
+    border: 1px solid var(--md-hairline);
+    border-radius: var(--md-shape-medium);
 }
 .muted {
-    color: var(--muted);
+    color: var(--md-on-surface-variant);
 }
 .history-search {
-    display: grid;
-    gap: var(--space-1);
-    margin-block: var(--space-3);
-}
-.history-search input {
-    min-width: 0;
-    width: 100%;
-    box-sizing: border-box;
-    min-height: 2.75rem;
-    padding: var(--space-2);
-    font: inherit;
-    color: var(--text);
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
+    margin-block: var(--md-space-16);
 }
 .history-nav {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: var(--space-3);
-    margin-block: var(--space-3);
+    gap: var(--md-space-16);
+    margin-block: var(--md-space-16);
 }
-.history-nav button {
-    min-height: 2.75rem;
-}
-.sessions {
+.sessions,
+.children ul {
+    display: grid;
+    gap: var(--md-space-8);
     list-style: none;
-    margin: var(--space-3) 0 0;
+    margin: var(--md-space-16) 0 0;
     padding: 0;
-}
-.session a {
-    display: block;
-    min-height: 3.5rem; /* a large touch target */
-    padding: var(--space-3);
-    margin-bottom: var(--space-2);
-    border: 1px solid var(--border);
-    border-left-width: 4px;
-    border-radius: var(--radius);
-    background: var(--surface);
-    color: inherit;
-    text-decoration: none;
-}
-.session[data-live="true"] a {
-    border-left-color: var(--accent);
-}
-.title {
-    display: block;
-    word-break: break-word;
 }
 .meta {
     display: flex;
     flex-wrap: wrap;
-    gap: var(--space-1) var(--space-3);
-    margin-top: var(--space-1);
-    font-size: 0.85rem;
-    color: var(--muted);
-}
-.live {
-    font-weight: 700;
-    color: var(--accent);
+    gap: var(--md-space-4) var(--md-space-16);
+    overflow-wrap: anywhere;
 }
 .models {
-    font-family: var(--font-mono);
+    font-family: var(--md-font-mono);
 }
 </style>

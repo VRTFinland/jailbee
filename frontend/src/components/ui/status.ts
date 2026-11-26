@@ -56,6 +56,11 @@ export function listStatuses(row: Pick<ContainerRow, "state" | "phase" | "agent"
     return chips
 }
 
+/** A session is marked only while live; reuse the running icon and tonal pair. */
+export function sessionStatus(session: {live: boolean}): Status | null {
+    return session.live ? {status: "running", label: "live"} : null
+}
+
 /** A row's chips: the container's, then the agent's when there is one. */
 export function rowStatuses(row: Pick<ContainerRow, "state" | "phase" | "agent">): Status[] {
     const agent = agentStatus(row.agent)
