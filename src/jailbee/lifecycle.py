@@ -3313,7 +3313,11 @@ def boot_container(
     if ensure_running and state == "Running" and not restart:
         # Device edits may have waited out an external stop operation.
         state = next(
-            (raw.get("status", "Stopped") for raw in incus.list_containers() if raw["name"] == name),
+            (
+                raw.get("status", "Stopped")
+                for raw in incus.list_containers()
+                if raw["name"] == name
+            ),
             "Stopped",
         )
     if not (ensure_running and state == "Running" and not restart):

@@ -102,7 +102,7 @@ def test_busy_non_stop_operation_is_not_reported_as_a_shutdown_timeout(mocker, f
     incus = mocker.MagicMock()
     incus.stop.side_effect = [
         IncusError(
-            'Instance is still busy after waiting up to 120s: '
+            "Instance is still busy after waiting up to 120s: "
             'Instance is busy running a "snapshot" operation'
         ),
         None,
