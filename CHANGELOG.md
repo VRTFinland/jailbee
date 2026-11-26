@@ -533,6 +533,11 @@ before editing `## Unreleased`.
 
 ### Fixed
 
+- Pulling a container into a fetched-only base no longer creates the host's
+  local base branch at the container tip without checking the upstream history.
+  It fast-forwards only when the fetched base is included; diverged histories
+  require the existing `--checkout` merge flow. Base-anchor refresh on start
+  also falls back to the fetched upstream ref when no local base exists.
 - Container restarts stop successfully before detaching runtime sockets, so a
   failed or still-running shutdown no longer strands a running container's GUI
   or fails immediately on Incus's "busy running a stop operation" error.

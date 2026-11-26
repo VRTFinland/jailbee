@@ -407,8 +407,11 @@ symref. The CLI and dashboards omit the current base from their suggestions.
 A local branch takes precedence; otherwise the anchor comes from
 `refs/remotes/<upstream>/<base>`. Retarget does not fetch or create a host local
 branch. A later `git pull` may create that local branch when merging the
-container's work back; `git push`, status comparisons and PR publishing can
-use a fetched-only base directly.
+container's work back, but first checks ancestry against the fetched base:
+only a container tip containing that base may fast-forward it. Divergence
+requires `--checkout` to seed the local branch from the fetched base and merge.
+`git push`, status comparisons and PR publishing can use a fetched-only base
+directly; boot-time anchor refresh also falls back to the fetched base.
 
 ## Fast-forward policy
 
