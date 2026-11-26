@@ -44,7 +44,7 @@ from jailbee.dashboard.tui.native import (
 )
 from jailbee.dashboard.tui.outbox_box import OutboxBox
 from jailbee.dashboard.tui.overlay import overlay_key
-from jailbee.dashboard.tui.prompt_modals import OutputScreen, modal_for
+from jailbee.dashboard.tui.prompt_modals import LATER, OutputScreen, modal_for
 from jailbee.dashboard.tui.session import (
     DOUBLE_CLICK_KINDS,
     OVERLAY_GLOBAL_TOKENS,
@@ -417,9 +417,17 @@ class DashboardApp(App[int], inherit_bindings=False):
 
         def resolve(value: Any) -> None:
             self._shown_questions.discard(entry_id)
-            self._resolve_answer(answer, value)
+            if value is not LATER:
+                self._resolve_answer(answer, value)
 
-        self.push_screen(modal_for(entry.pending_question), resolve)
+        modal = modal_for(entry.pending_question, entry=entry)
+
+        def close_resolved(_future: asyncio.Future[Any]) -> None:
+            if entry_id in self._shown_questions and self.screen is modal:
+                modal.dismiss(None)
+
+        answer.add_done_callback(close_resolved)
+        self.push_screen(modal, resolve)
 
     def _cancel_pending_prompts(self) -> None:
         """Answer every open question with a cancel, so no child waits on a dead UI."""

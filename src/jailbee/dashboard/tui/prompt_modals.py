@@ -3,9 +3,9 @@
 One screen per prompt kind of the prompt channel (`jailbee.prompt_channel`):
 confirm, choose one, choose many, text and masked secret. Every screen
 dismisses with the *wire value* of its kind (bool, option id, list of option
-ids, str) or ``None``: Esc and Ctrl-C cancel the question, which is exactly
-what Ctrl-C does at the CLI prompt. The output screen shows an action's
-captured output.
+ids, str) or ``None``. Entry questions also support Later, a distinct sentinel
+that leaves the command waiting; Ctrl-C cancels. Without an entry, Esc still
+cancels. The output screen shows an action's captured output.
 """
 
 from __future__ import annotations
@@ -16,10 +16,12 @@ from rich.text import Text
 from textual import events
 from textual.app import ComposeResult
 from textual.binding import Binding, BindingType
-from textual.containers import Vertical, VerticalScroll
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.suggester import SuggestFromList
-from textual.widgets import Input, OptionList, SelectionList, Static
+from textual.widgets import Button, Input, OptionList, SelectionList, Static
+
+from jailbee.dashboard.notifications import QueueEntry
 from textual.widgets.option_list import Option
 from textual.widgets.selection_list import Selection
 
@@ -40,6 +42,8 @@ PromptModal .error { color: ansi_red; }
 PromptModal .detail { margin: 1 0; }
 PromptModal OptionList, PromptModal SelectionList { height: auto; max-height: 16; }
 PromptModal Input { margin: 1 0 0 0; }
+PromptModal Horizontal { height: auto; }
+PromptModal Button { min-width: 0; }
 OutputScreen { align: center middle; background: ansi_default 40%; }
 OutputScreen > .dialog {
     width: 95%; height: 90%; border: round ansi_blue; background: ansi_default; padding: 0 1;
@@ -59,12 +63,15 @@ def _row_text(option: WireOption) -> Text:
     return Text(row + (f"  {option.description}" if option.description else ""))
 
 
+LATER = object()
+
+
 class PromptModal(ModalScreen[Any]):
     """Base: title, optional repo/container context, cancel on Esc / Ctrl-C."""
 
     DEFAULT_CSS = _CSS
     BINDINGS: ClassVar[list[BindingType]] = [
-        Binding("escape", "cancel", "Cancel", priority=True),
+        Binding("escape", "later", "Later", priority=True),
         Binding("ctrl+c", "cancel", "Cancel", priority=True),
     ]
     hint = "Enter confirms, Esc cancels"
@@ -72,14 +79,29 @@ class PromptModal(ModalScreen[Any]):
     def __init__(self, prompt: Prompt) -> None:
         super().__init__()
         self.prompt = prompt
+        self.entry: QueueEntry | None = None
         if prompt.destructive:
             self.add_class("destructive")
 
     def action_cancel(self) -> None:
         self.dismiss(None)
 
+    def action_later(self) -> None:
+        self.dismiss(LATER if self.entry is not None else None)
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        if event.button.id == "later":
+            self.action_later()
+        elif event.button.id == "abort-command":
+            self.action_cancel()
+
     def compose(self) -> ComposeResult:
         with Vertical(classes="dialog"):
+            if self.entry is not None:
+                yield Static(Text(f"{self.entry.command}  |  {self.entry.target}"), classes="context")
+                if self.entry.output:
+                    yield Static(Text.from_ansi("\n".join(self.entry.output.splitlines()[-3:])), classes="context")
             yield Static(Text(self.heading()), classes="title", markup=False)
             context = self.prompt.context
             if context is not None and (context.repo or context.container):
@@ -90,7 +112,13 @@ class PromptModal(ModalScreen[Any]):
             yield from self.body()
             if self.prompt.error:
                 yield Static(Text(self.prompt.error), classes="error", markup=False)
-            yield Static(self.hint, classes="hint", markup=False)
+            if self.entry is not None:
+                with Horizontal():
+                    yield Button("Later", id="later")
+                    yield Button("Abort command", id="abort-command", variant="error")
+                yield Static("Esc: Later, Ctrl-C: Abort command", classes="hint")
+            else:
+                yield Static(self.hint, classes="hint", markup=False)
 
     def heading(self) -> str:
         return self.prompt.question
@@ -279,7 +307,7 @@ class OutputScreen(ModalScreen[None]):
             self.dismiss(None)
 
 
-def modal_for(prompt: Prompt) -> PromptModal:
+def modal_for(prompt: Prompt, *, entry: QueueEntry | None = None) -> PromptModal:
     """The screen for ``prompt``'s kind."""
     kinds: dict[str, type[PromptModal]] = {
         "confirm": ConfirmModal,
@@ -288,4 +316,6 @@ def modal_for(prompt: Prompt) -> PromptModal:
         "text": TextModal,
         "secret": TextModal,
     }
-    return kinds[prompt.kind](prompt)
+    modal = kinds[prompt.kind](prompt)
+    modal.entry = entry
+    return modal
