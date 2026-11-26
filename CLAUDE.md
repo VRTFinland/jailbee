@@ -102,9 +102,13 @@ isolated per-branch development environments using Incus system containers. See
   render what `StateClient` holds. The state service also hosts background
   dashboard actions through `dashboard.runner` (the existing subprocess boundary),
   publishes their notification entries/output, and persists entries in the state
-  database. Frontends keep presentation state only; attach-style terminal
-  hand-offs stay local. Answer arbitration and question routing belong to the
-  frontend-agnostic dashboard core, not `dashboard.tui`.
+  database. The service owns prompt-channel waits, first-answer arbitration,
+  remote authorization and live-work lifetime; dashboard disconnection never
+  cancels its questions. Frontends keep presentation state only; attach-style
+  terminal hand-offs stay local. The interaction-based deferral rule stays in
+  the frontend-agnostic dashboard core and is applied by the originating
+  dashboard, not by observers. See `docs/architecture.md#dashboard-state-service`
+  for persistence, retention and upgrade-drain semantics.
 - **`jailbee.dashboard` is a package: shared core first, terminal frontend
   in `tui/`.** `model`, `columns`, `menus`, `dispatch` and the moved
   `accounts`/`egress`/`overlays`/… modules are frontend-agnostic; the state

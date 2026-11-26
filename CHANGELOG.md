@@ -18,10 +18,18 @@ before editing `## Unreleased`.
   follows repository visibility, and records sends in the device audit log
   ([#171](https://github.com/VRTFinland/jailbee/issues/171)).
 - Background dashboard actions run in the shared state service. Dashboards in
-  the same repository scope share notification entries, live output and
-  dismissal; a newly connected dashboard sees the output so far. Entries stay
-  in the state database until dismissed, and work left running by a service
-  restart appears as interrupted and needs attention
+  the same repository scope share notification entries, live output, pending
+  questions and dismissal; a newly connected dashboard sees the output so far.
+  Any permitted dashboard can answer a question: the first answer wins and an
+  open question elsewhere closes with a notice. Only the originating dashboard
+  opens questions and critical output automatically. Closing a dashboard cancels
+  nothing, and the service stays alive while an action runs or a question waits.
+  Remote start, answer and abort requests follow the transport's host-side policy;
+  disallowed questions remain visible read-only. The state database retains the
+  newest 100 finished entries for up to seven days, while live entries are never
+  pruned; unfinished work after a service restart appears as interrupted and
+  needs attention. A newer dashboard can wait for an older service to drain or
+  explicitly replace it and interrupt its work
   ([#169](https://github.com/VRTFinland/jailbee/issues/169)).
 - `jailbee litellm quota [-P PROFILE] [--json]` inside a container shows the
   ChatGPT subscription's usage limits (plan, used percent and reset time per
@@ -35,10 +43,9 @@ before editing `## Unreleased`.
   Each question shows the command, target and output tail, with `Later` (Esc)
   to keep it waiting and `Abort command` (Ctrl-C) to cancel explicitly; a closed
   command channel removes its question, including beneath another screen.
-  Returning from tmux opens the queue for new questions, not a question modal;
-  quitting with pending questions confirms how many commands will be aborted.
+  Returning from tmux opens the queue for new questions, not a question modal.
   Rapid answer-key or Later/Abort bursts settle each question only once without
-  closing another screen or crashing the quit confirmation.
+  closing another screen.
   The queue counts pending questions separately from failures: `?` and "awaiting
   answer" use the theme accent, while red `✗` stays reserved for failures
   ([#168](https://github.com/VRTFinland/jailbee/issues/168)).
@@ -484,6 +491,19 @@ before editing `## Unreleased`.
 
 ### Changed
 
+- `jailbee inbox send message --kind done` refuses locally with exit 1 when
+  called inside a linked worktree or while the container repository has linked
+  worktrees registered. The controller removes them before reporting completion;
+  other message kinds remain available. The child skill now puts subagent-to-controller
+  reporting first, and the child preamble tells the controller to pass that rule on.
+- Claude containers default to unattended mode for both `claude` and `claude-jb`:
+  bypass permissions without the acceptance dialog, no AskUserQuestion or
+  EnterPlanMode tools, automatic rejection of remaining permission prompts,
+  and numbered ❓ questions in managed-policy memory. ExitPlanMode remains
+  available for user-entered plan mode. Run `jb apply`, restart running
+  containers for the policy mounts, and start a new agent session; set
+  `agents.claude.unattended: false` to retain the previous behaviour
+  ([#171](https://github.com/VRTFinland/jailbee/issues/171)).
 - `jailbee git retarget` accepts already-fetched upstream branches as bases,
   without creating a local host branch. Its CLI, dashboard and shell-completion
   candidates now match the new-container base picker (local branches first,

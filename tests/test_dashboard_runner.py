@@ -84,6 +84,7 @@ def _run(
     on_prompt: Any = lambda p: True,
     audit: list[dict[str, Any]] | None = None,
     client: str | None = "dev-1",
+    environment: dict[str, str] | None = None,
 ) -> tuple[runner.RunResult, list[str]]:
     out: list[str] = []
     records = audit if audit is not None else []
@@ -97,6 +98,7 @@ def _run(
         client=client,
         spawn=spawn,
         audit=records.append,
+        environment=environment,
     )
     return result, out
 
@@ -115,6 +117,18 @@ def test_missing_policy_refuses(tmp_path: Path) -> None:
     spawn = Spawns()
     result, _ = _run(["ls"], spawn, tmp_path, policy=None)
     assert result.refused and spawn.calls == []
+
+
+def test_run_action_uses_explicit_environment_base(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("ACTION_BASE", "stale")
+    spawn = Spawns()
+    environment = {"ACTION_BASE": "current", "DISPLAY": ":1"}
+
+    result, _ = _run(["ls"], spawn, tmp_path, transport="none", environment=environment)
+
+    assert result.status == 0
+    assert spawn.calls[0]["env"]["ACTION_BASE"] == "current"
+    assert "PATH" not in spawn.calls[0]["env"]
 
 
 @pytest.mark.parametrize(
@@ -275,6 +289,49 @@ def test_real_child_asks_through_the_channel(
     assert questions == ["Proceed?"]
     assert result.status == 7
     assert "answer True" in "".join(out)
+
+
+def test_cancellation_stops_child_and_descendant(tmp_path):
+    import select
+
+    parent, child_sock = socket.socketpair()
+    code = (
+        "import subprocess, sys, time\n"
+        "p = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])\n"
+        "print(p.pid, flush=True)\n"
+        "time.sleep(60)\n"
+    )
+    child = runner.popen_spawn(
+        [sys.executable, "-c", code], cwd=tmp_path, env=os.environ, prompt_sock=child_sock
+    )
+    descendant = None
+    try:
+        assert child.stdout is not None
+        assert select.select([child.stdout], [], [], 10)[0]
+        descendant = int(child.stdout.readline())
+        child.kill()
+        child.wait()
+        assert select.select([child.stdout], [], [], 3)[0]
+        assert child.stdout.read() == b""
+        try:
+            status = Path(f"/proc/{descendant}/stat").read_text()
+        except (FileNotFoundError, ProcessLookupError):
+            status = None
+        assert status is None or status.split(") ", 1)[1][0] == "Z"
+        descendant = None
+    finally:
+        if descendant is not None:
+            try:
+                os.kill(descendant, 9)
+            except ProcessLookupError:
+                pass
+        try:
+            child.kill()
+        except ProcessLookupError:
+            pass
+        parent.close()
+        if child.stdout is not None:
+            child.stdout.close()
 
 
 def test_run_actions_runs_each_in_order_with_headers_and_stops_at_a_refusal(tmp_path):

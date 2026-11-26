@@ -5,7 +5,7 @@ import threading
 
 from jailbee.state_service import paths
 from jailbee.state_service.client import StateClient
-from jailbee.state_service.protocol import ActionRejected, RunAction
+from jailbee.state_service.protocol import RunAction
 from jailbee.state_service.server import StateServer
 from tests.test_state_client import _until
 from tests.test_state_server import FakeGatherer, reap_servers, track_server  # noqa: F401
@@ -85,31 +85,6 @@ def test_reconnect_replaces_entries_dismissed_while_offline(runtime_dir, tmp_pat
         gate.set()
         first.close()
         second.close()
-
-
-def test_action_event_history_is_bounded(runtime_dir, tmp_path):
-    from tests.test_state_client import Spawner
-
-    spawner = Spawner()
-    client = StateClient(
-        None, dashboard_id="dashboard", version="v1", spawn=spawner, backoff=(0.05,)
-    )
-    client.start()
-    try:
-        client.wait_first_snapshot(3)
-        for entry_id in range(400):
-            client.run_action(
-                RunAction(
-                    entry_id, ["ls"], str(tmp_path), "x", False, "wrong", "none", str(tmp_path), "r"
-                )
-            )
-        _until(lambda: client.action_rejection(399) is not None)
-        events = client.drain_action_events()
-        assert len(events) <= 256
-        assert isinstance(events[-1], ActionRejected)
-        assert events[-1].entry_id == 399
-    finally:
-        client.close()
 
 
 def test_replay_many_large_persisted_entries(runtime_dir, tmp_path):

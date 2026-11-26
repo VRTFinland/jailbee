@@ -44,6 +44,26 @@ def stop(data: dict[str, Any], role: str) -> dict[str, Any] | None:
     }
 
 
+def permission_request(data: dict[str, Any], *, unattended: bool) -> dict[str, Any] | None:
+    """Reject unattended prompts, keeping user-entered plan approval interactive."""
+    if not unattended or data.get("tool_name") == "ExitPlanMode":
+        return None
+    return {
+        "hookSpecificOutput": {
+            "hookEventName": "PermissionRequest",
+            "decision": {
+                "behavior": "deny",
+                "message": (
+                    "Permission prompts are auto-rejected in JailBee containers in unattended "
+                    "mode. Find a safer form, for example avoid cd with relative rm paths. "
+                    "If the action is unavoidable, ask the user in ❓ question format "
+                    "instead of opening a dialog."
+                ),
+            },
+        }
+    }
+
+
 def read_input() -> dict[str, Any]:
     try:
         raw = sys.stdin.read(65537)

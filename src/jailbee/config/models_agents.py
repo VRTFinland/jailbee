@@ -726,6 +726,15 @@ class ClaudeAgentConfig(AgentConfig):
     meaning to any other agent's.
     """
 
+    unattended: bool = Field(
+        default=True,
+        description=(
+            "Run Claude and claude-jb in bypass permissions mode without the acceptance "
+            "dialog, remove AskUserQuestion and EnterPlanMode, reject remaining permission "
+            "prompts, and ask questions in numbered question blocks. Set false for the "
+            "previous behaviour. Takes effect for new sessions after jailbee apply."
+        ),
+    )
     plugins_enabled: bool = Field(
         default=True,
         description=(

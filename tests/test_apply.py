@@ -340,7 +340,7 @@ def test_run_apply_restages_instructions_for_running_container_without_restart(
     source = ai.source_path()
     source.parent.mkdir(parents=True)
     source.write_bytes(b"Keep the host policy.\n")
-    directory = ai.staging_dir("claude", "CLAUDE.md")
+    directory = Path(ai.profile_devices(cfg)["agent-instructions-claude"]["source"])
     directory.mkdir(parents=True)
     target = directory / "CLAUDE.md"
     target.write_bytes(b"Old verbose preamble\n\nKeep the host policy.\n")

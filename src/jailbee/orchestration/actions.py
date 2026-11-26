@@ -302,8 +302,8 @@ def child_preamble(orchestrator_short: str, *, restarted: bool = False) -> str:
         "Message the orchestrator only when it must act or decide "
         "(question, blocked, a scope change, done); send no progress notes. "
         "Within your container you are the controller: run long builds and tests "
-        "yourself. Your own subagents never use `jailbee inbox`; tell them to "
-        "report back to you, not to the orchestrator."
+        "yourself. Tell every subagent you dispatch to return its result to you; "
+        "only you use `jailbee inbox`."
     )
 
 

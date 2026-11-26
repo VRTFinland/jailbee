@@ -1,9 +1,14 @@
 ---
 name: jailbee-orchestration-child
-description: Use when `JAILBEE_ROLE=child` is set or your first prompt says you are a child container of a JailBee orchestrator. Covers reporting back, asking questions and finishing cleanly. Trigger on "you are a child container", "report done to the orchestrator", "ask the orchestrator", "olet lapsikontti", "ilmoita valmis orkestraattorille".
+description: For the top-level agent in a JailBee child container, identified by `JAILBEE_ROLE=child`, its first prompt or adoption. Covers reporting back, asking questions and finishing cleanly. Trigger on "you are a child container", "report done to the orchestrator", "ask the orchestrator", "olet lapsikontti", "ilmoita valmis orkestraattorille".
 ---
 
 # Working as a child container
+
+**If an agent dispatched you**, return your result, question or blocker to it
+through your normal return value; the inbox belongs to the top-level agent,
+even when `JAILBEE_ROLE=child` is set. The rest of this skill is for that
+container controller.
 
 **First:** If `JAILBEE_ROLE=child`, the role marker identifies you as a child,
 or a staging command refuses you as a child, do not stage GitHub writes. Send
@@ -35,12 +40,6 @@ General development practice (style, tests, commits) comes from the project's
 own instructions.
 
 ## Your own subagents
-
-**If you are a subagent** dispatched by the child's agent (an implementer,
-reviewer or any other helper), this skill's inbox protocol is not yours, even
-though `JAILBEE_ROLE=child` is set: do not use `jailbee inbox` at all. Return
-your result, question or blocker to the agent that dispatched you, through
-your normal return value.
 
 As the child's top-level agent, you are the controller of your container.
 Where the project's instructions reserve work for "the controller" (long
@@ -118,6 +117,13 @@ the tree dirty and your `done` is refused. Use an absolute path under
 used as the status reply's `ref`.
 
 ## Done means committed
+
+Send `done` from the main checkout after removing every linked worktree with
+`git worktree remove <path>`. The CLI refuses `done` locally with exit 1 when
+run inside a linked worktree or while the container repository still has one
+registered; nothing is sent and no request id is printed. Return to your
+controller if it dispatched you. `question`, `note` and `blocked` remain
+available from linked worktrees.
 
 Before `done`, everything is committed on a branch (not a detached HEAD) and
 `git status` is clean. Otherwise the broker replies `status refused`:

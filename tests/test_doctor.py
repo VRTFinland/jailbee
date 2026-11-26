@@ -4073,32 +4073,44 @@ def instruction_paths(tmp_path, monkeypatch):
         / "claude"
         / "by-file"
         / "CLAUDE.md"
+        / "unattended"
         / "CLAUDE.md"
     )
     source.parent.mkdir(parents=True)
     return source, target
 
 
+@pytest.mark.parametrize("unattended", [False, True])
 @pytest.mark.parametrize(
-    "case", ["opted_out", "no_agent", "no_source", "synced", "stale", "removed"]
+    "case", ["opted_out", "no_agent", "no_source", "synced", "stale", "removed", "wrong_policy"]
 )
-def test_agent_instructions_check(make_cfg, tmp_path, instruction_paths, case):
+def test_agent_instructions_check(make_cfg, tmp_path, instruction_paths, case, unattended):
     from jailbee.agent_instructions import sync_global_instructions
     from jailbee.doctor import _check_agent_instructions
+    from tests.conftest import with_agent
 
     source, target = instruction_paths
-    cfg = make_cfg(tmp_path / "repo", agents={"claude": {"enabled": case != "no_agent"}})
+    target = target.parent.parent / ("unattended" if unattended else "interactive") / "CLAUDE.md"
+    cfg = make_cfg(
+        tmp_path / "repo",
+        agents={"claude": {"enabled": case != "no_agent", "unattended": unattended}},
+    )
     if case == "opted_out":
         cfg._agent_instructions = False
-    if case in {"synced", "stale", "removed"}:
+    if case in {"synced", "stale", "removed", "wrong_policy"}:
         source.write_bytes(b"policy\n")
-    if case in {"synced", "removed", "no_source"}:
+    if case in {"synced", "removed", "no_source", "wrong_policy"}:
         sync_global_instructions(cfg)
+    if case == "wrong_policy":
+        other_cfg = with_agent(cfg, "claude", unattended=not unattended)
+        sync_global_instructions(other_cfg)
+        other = target.parent.parent / ("interactive" if unattended else "unattended")
+        target.write_bytes((other / "CLAUDE.md").read_bytes())
     if case == "removed":
         source.unlink()
     result = _check_agent_instructions(cfg)
     assert result.name == "agent instructions"
-    assert result.ok is (case not in {"stale", "removed"})
+    assert result.ok is (case not in {"stale", "removed", "wrong_policy"})
     if case == "opted_out":
         assert "agent_instructions: false" in result.detail
     elif case == "no_agent":

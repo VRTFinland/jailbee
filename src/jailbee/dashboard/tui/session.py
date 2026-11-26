@@ -205,7 +205,7 @@ from jailbee.remote_ssh.repo_scope import RemoteRepoScope
 from jailbee.remote_ssh.router import RouteError
 from jailbee.remote_ssh.session import host_restricted
 from jailbee.state_service import StateServiceUnavailable
-from jailbee.tui import console, error
+from jailbee.tui import error
 from jailbee.update_check import dismiss as dismiss_update
 
 if TYPE_CHECKING:
@@ -374,11 +374,17 @@ def _now() -> datetime:
     return datetime.now().astimezone()
 
 
-def open_state_client(cwd_root: Path | None) -> StateClient:
+def open_state_client(
+    cwd_root: Path | None, *, excluded_prefixes: Sequence[str] = ()
+) -> StateClient:
     """A started `StateClient` for this dashboard (the tests' seam)."""
     from jailbee.state_service.client import StateClient
 
-    client = StateClient(cwd_root, dashboard_id=uuid.uuid4().hex)
+    client = StateClient(
+        cwd_root,
+        dashboard_id=uuid.uuid4().hex,
+        excluded_prefixes=excluded_prefixes,
+    )
     client.start()
     return client
 
@@ -485,10 +491,9 @@ def open_dashboard(cwd_root: Path | None, *, scope: RemoteRepoScope | None = Non
     if config_notice:
         column_notice = "; ".join(filter(None, (column_notice, config_notice)))
 
-    client = open_state_client(cwd_root)
+    client = open_state_client(cwd_root, excluded_prefixes=sorted(scope.excluded) if scope else ())
     try:
-        with console.status("⏳ Surveying containers…"):
-            client.wait_first_snapshot(STARTUP_TIMEOUT_SECONDS)
+        client.wait_first_snapshot(STARTUP_TIMEOUT_SECONDS)
     except StateServiceUnavailable as exc:
         client.close()
         error(f"dashboard refresh failed: {exc}")
@@ -725,15 +730,7 @@ class DashboardSession:
                     item.entry_id,
                     "jailbee " + " ".join(item.argv),
                     item.target,
-                    state=(
-                        "interrupted"
-                        if item.state == "interrupted"
-                        else "running"
-                        if not item.finished
-                        else "done"
-                        if item.status == 0
-                        else "failed"
-                    ),
+                    state=item.state,
                     status=item.status,
                     output=item.output,
                     critical=item.critical,

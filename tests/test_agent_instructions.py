@@ -21,7 +21,7 @@ def homes(tmp_path, monkeypatch):
 
 @pytest.fixture
 def claude_cfg(make_cfg, tmp_path):
-    return make_cfg(tmp_path / "repo", agents={"claude": {"enabled": True}})
+    return make_cfg(tmp_path / "repo", agents={"claude": {"enabled": True, "unattended": False}})
 
 
 def staged(data_home: Path) -> Path:
@@ -32,8 +32,39 @@ def staged(data_home: Path) -> Path:
         / "claude"
         / "by-file"
         / "CLAUDE.md"
+        / "interactive"
         / "CLAUDE.md"
     )
+
+
+def test_unattended_question_contract_and_opt_out(homes, claude_cfg):
+    unattended = with_agent(claude_cfg, "claude", unattended=True)
+    ai.sync_global_instructions(unattended)
+    device = ai.profile_devices(unattended)["agent-instructions-claude"]
+    policy = Path(device["source"]) / "CLAUDE.md"
+    text = policy.read_text()
+    for contract in (
+        "❓ **Q<n>** - **<title>**: body",
+        "a) option",
+        "➡️ <letter>: rationale",
+        "unique across the conversation",
+        "12a",
+        "Q12a",
+        '"yes" accepts the recommendation',
+        "Do not use dialogs",
+        "No options means an open question",
+    ):
+        assert contract in text
+    ai.sync_global_instructions(claude_cfg)
+    _, data_home = homes
+    assert "❓" not in staged(data_home).read_text()
+    assert policy.read_text() == text
+    interactive_device = ai.profile_devices(claude_cfg)["agent-instructions-claude"]
+    interactive_dir = Path(interactive_device["source"])
+    assert {entry.name for entry in interactive_dir.iterdir()} == {
+        "CLAUDE.md",
+        "managed-settings.d",
+    }
 
 
 def test_paths_follow_xdg(homes):
@@ -215,7 +246,7 @@ def test_unreadable_source_warns_and_keeps_previous(homes, claude_cfg, capsys):
 def test_disabled_agent_in_this_repo_leaves_host_staging_alone(homes, make_cfg, tmp_path):
     source, data_home = homes
     source.write_bytes(b"policy")
-    enabled = make_cfg(tmp_path / "b", agents={"claude": {"enabled": True}})
+    enabled = make_cfg(tmp_path / "b", agents={"claude": {"enabled": True, "unattended": False}})
     ai.sync_global_instructions(enabled)
     source.unlink()
     disabled = make_cfg(tmp_path / "a", agents={"claude": {"enabled": False}})

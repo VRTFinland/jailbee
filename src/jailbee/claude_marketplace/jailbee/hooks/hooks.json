@@ -6,6 +6,9 @@
     "SessionEnd": [
       {"hooks": [{"type": "command", "command": "jailbee inbox hook session-end"}]}
     ],
+    "PermissionRequest": [
+      {"hooks": [{"type": "command", "command": "jailbee inbox hook permission-request"}]}
+    ],
     "Stop": [
       {"hooks": [{"type": "command", "command": "jailbee inbox hook stop"}]}
     ]
