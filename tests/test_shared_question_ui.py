@@ -14,6 +14,37 @@ from tests.dashboard_fixtures import ci
 from tests.dashboard_pilot import make_app
 
 
+def test_refresh_after_pilot_teardown_is_safe(mocker, tmp_path):
+    app = make_app(mocker, [RepoGroup("alpha", str(tmp_path), None, [])])
+
+    async def scenario():
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            close_all = app._close_all
+
+            async def close_then_refresh():
+                await close_all()
+                app._painted = None
+                app.refresh_frame()
+
+            app._close_all = close_then_refresh
+
+    asyncio.run(scenario())
+
+
+def test_incus_wrapper_blocks_bare_binary_even_with_custom_path(monkeypatch, tmp_path):
+    from jailbee.incus import Incus
+
+    binary = tmp_path / "incus"
+    marker = tmp_path / "invoked"
+    binary.write_text(f"#!/bin/sh\nprintf invoked > {marker}\n")
+    binary.chmod(0o755)
+    monkeypatch.setenv("PATH", str(tmp_path))
+    with pytest.raises(AssertionError, match=r"unmocked.*incus"):
+        Incus().list_containers()
+    assert not marker.exists()
+
+
 def test_observer_sees_pending_question_and_resolution_closes_modal(mocker, tmp_path):
     app = make_app(mocker, [RepoGroup("alpha", str(tmp_path), None, [])])
     client = app.session.client

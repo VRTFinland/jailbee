@@ -191,6 +191,29 @@ def test_handler_exception_kills_child_and_is_audited(tmp_path: Path) -> None:
     assert audit[0]["outcome"] == "error"
 
 
+def test_handler_exception_survives_child_already_gone(tmp_path: Path) -> None:
+    class GoneChild(FakeChild):
+        def kill(self) -> None:
+            raise ProcessLookupError()
+
+    def spawn(argv: Any, *, cwd: Path, env: Any, prompt_sock: socket.socket) -> GoneChild:
+        return GoneChild(prompt_sock, [_confirm()], 0)
+
+    def boom(p: Prompt) -> Any:
+        raise KeyboardInterrupt("original")
+
+    with pytest.raises(KeyboardInterrupt, match="original"):
+        runner.run_action(
+            ["ls"],
+            transport="none",
+            policy=None,
+            cwd=tmp_path,
+            on_prompt=boom,
+            on_output=lambda _: None,
+            spawn=spawn,
+        )
+
+
 def test_spawn_failure_is_reported(tmp_path: Path) -> None:
     def failing(argv: Any, **kw: Any) -> Any:
         kw["prompt_sock"].close()
@@ -291,13 +314,77 @@ def test_real_child_asks_through_the_channel(
     assert "answer True" in "".join(out)
 
 
+def test_interrupt_runs_python_finally_cleanup(tmp_path):
+    import select
+
+    parent, child_sock = socket.socketpair()
+    marker = tmp_path / "cleanup"
+    code = (
+        "import pathlib, sys, time\n"
+        "try:\n"
+        " print('ready', flush=True)\n"
+        " while True: time.sleep(1)\n"
+        "finally:\n"
+        " pathlib.Path(sys.argv[1]).write_text('cleaned')\n"
+    )
+    child = runner.popen_spawn(
+        [sys.executable, "-c", code, str(marker)],
+        cwd=tmp_path,
+        env=os.environ,
+        prompt_sock=child_sock,
+    )
+    try:
+        assert child.stdout is not None
+        assert select.select([child.stdout], [], [], 10)[0]
+        assert child.stdout.readline() == b"ready\n"
+        child.kill()
+        child.wait()
+        assert marker.read_text() == "cleaned"
+    finally:
+        parent.close()
+        if child.stdout is not None:
+            child.stdout.close()
+
+
+@pytest.mark.parametrize("ignore", [False, True])
+def test_interrupt_gives_child_a_chance_to_exit(tmp_path, ignore):
+    import select
+    import signal
+
+    parent, child_sock = socket.socketpair()
+    handler = "signal.SIG_IGN" if ignore else "lambda *_: sys.exit(0)"
+    code = (
+        "import signal, sys, time\n"
+        f"signal.signal(signal.SIGINT, {handler})\n"
+        "print('ready', flush=True)\n"
+        "while True: time.sleep(1)\n"
+    )
+    child = runner.popen_spawn(
+        [sys.executable, "-c", code], cwd=tmp_path, env=os.environ, prompt_sock=child_sock
+    )
+    try:
+        assert child.stdout is not None
+        assert select.select([child.stdout], [], [], 10)[0]
+        assert child.stdout.readline() == b"ready\n"
+        child.kill()
+        assert child.wait() == (-signal.SIGKILL if ignore else 0)
+    finally:
+        parent.close()
+        if child.stdout is not None:
+            child.stdout.close()
+
+
 def test_cancellation_stops_child_and_descendant(tmp_path):
     import select
+    import time
 
     parent, child_sock = socket.socketpair()
     code = (
         "import subprocess, sys, time\n"
-        "p = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])\n"
+        "p = subprocess.Popen([sys.executable, '-c', "
+        "\"import time; print('ready', flush=True); time.sleep(60)\"], "
+        "stdout=subprocess.PIPE)\n"
+        "assert p.stdout.readline() == b'ready\\n'\n"
         "print(p.pid, flush=True)\n"
         "time.sleep(60)\n"
     )
@@ -312,12 +399,17 @@ def test_cancellation_stops_child_and_descendant(tmp_path):
         child.kill()
         child.wait()
         assert select.select([child.stdout], [], [], 3)[0]
-        assert child.stdout.read() == b""
-        try:
-            status = Path(f"/proc/{descendant}/stat").read_text()
-        except (FileNotFoundError, ProcessLookupError):
-            status = None
-        assert status is None or status.split(") ", 1)[1][0] == "Z"
+        child.stdout.read()
+        deadline = time.monotonic() + 5
+        while True:
+            try:
+                status = Path(f"/proc/{descendant}/stat").read_text()
+            except (FileNotFoundError, ProcessLookupError):
+                status = None
+            if status is None or status.split(") ", 1)[1][0] == "Z":
+                break
+            assert time.monotonic() < deadline, "descendant survived interruption"
+            time.sleep(0.05)
         descendant = None
     finally:
         if descendant is not None:

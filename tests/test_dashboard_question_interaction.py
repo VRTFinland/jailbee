@@ -166,7 +166,9 @@ def test_question_arriving_during_blocking_handoff_opens_queue_not_modal(
                 assert await asyncio.to_thread(ready.wait, 5)
                 if relay_before_handoff:
                     release.set()
-                    assert await asyncio.to_thread(arriving.wait, 5)
+                    # Keep the UI thread blocked until the hand-off starts: the
+                    # shared snapshot is already visible before the relay runs.
+                    assert arriving.wait(5)
                 assert app.hand_off(terminal_command) == 0
                 async with asyncio.timeout(5):
                     while not any(e.pending_question for e in app.session.queue):

@@ -777,10 +777,9 @@ and keeps drawing while it runs; the status line names the running command.
   Esc): the modal closes, but the command keeps waiting and its question can
   be reopened from the queue. `Abort command` (also Ctrl-C within the modal)
   sends the CLI prompt's cancel answer. Dashboard pickers and confirmations
-  before dispatch keep their existing behaviour. Quitting with pending
-  questions asks how many commands will be aborted; declining keeps them
-  waiting, confirming cancels them all. With no pending question, quitting
-  needs no extra confirmation.
+  before dispatch keep their existing behaviour. Quitting needs no extra
+  confirmation: actions and pending questions remain in the state service
+  and can be followed or answered from another dashboard.
 - **Output goes to the notification queue.** Every action the dashboard
   runs this way becomes an entry in its notification queue: the command, its
   container or repo, its state (running, awaiting answer, done, failed) and

@@ -17,12 +17,12 @@ before editing `## Unreleased`.
   open question elsewhere closes with a notice. Only the originating dashboard
   opens questions and critical output automatically. Closing a dashboard cancels
   nothing, and the service stays alive while an action runs or a question waits.
-  Remote start, answer and abort requests follow the transport's host-side policy;
+  Remote start, answer, abort and dismissal requests follow the transport's host-side policy;
   disallowed questions remain visible read-only. The state database retains the
-  newest 100 finished entries for up to seven days, while live entries are never
+  newest 100 finished entries per repository for up to seven days, while live entries are never
   pruned; unfinished work after a service restart appears as interrupted and
   needs attention. A newer dashboard can wait for an older service to drain or
-  explicitly replace it and interrupt its work
+  explicitly replace it and interrupt its work with a bounded cleanup grace period
   ([#169](https://github.com/VRTFinland/jailbee/issues/169)).
 - `jailbee litellm quota [-P PROFILE] [--json]` inside a container shows the
   ChatGPT subscription's usage limits (plan, used percent and reset time per

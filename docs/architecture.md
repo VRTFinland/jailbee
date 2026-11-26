@@ -433,8 +433,8 @@ for results; dashboard shutdown cannot abandon its remaining actions. Refusals
 and startup errors stop the batch, while an ordinary nonzero exit does not.
 Entry updates, output chunks and final results travel back over the state
 protocol. Entries are shared with dashboards in scope and stored in the host
-state database. Finished history is limited to the newest 100 entries and seven
-days; running and awaiting entries are retained. On startup, unfinished entries
+state database. Finished history is limited per repository to the newest 100
+entries and seven days; running and awaiting entries are retained. On startup, unfinished entries
 become `interrupted`; pending questions are not persisted. Each action has its own
 thread, separate from the gatherer's executor. Output snapshots are coalesced and
 persisted off the event loop; a storage error cannot suppress completion delivery.
@@ -451,13 +451,18 @@ Questions and answers, including secrets, are never written to the action store.
 
 A connection establishes the requesting transport. The service resolves that
 transport's host-side remote policy and repository visibility before starting an
-action, accepting an answer or aborting a question. Read visibility follows scope,
-not command permission: a disallowed question remains visible read-only. Action
-environments come from each request, not the service's startup shell.
+action, accepting an answer, aborting a question or dismissing a finished entry.
+Read visibility follows scope, not command permission: a disallowed question
+remains visible read-only. Each connection caches read-scope decisions for at
+most five seconds; refresh and reconnect invalidate them immediately. Mutations
+always revalidate current scope and policy. Action environments come from each
+request, not the service's startup shell.
 
 Version replacement queries live work first. Waiting drains the old service:
 new actions are refused while existing actions and questions finish. Explicit
-replacement kills each action's isolated process group, reaps the child and
+replacement sends SIGINT to each action's isolated process group so the CLI's
+Python cleanup handlers run, allows two seconds for cleanup, then uses SIGKILL
+if needed, reaps the child and
 persists interrupted entries before releasing the service lifetime lock. Global
 shutdown and draining are local-client controls; a remote dashboard asks for
 replacement from a local dashboard instead. Upgrade questions use `prompting`;

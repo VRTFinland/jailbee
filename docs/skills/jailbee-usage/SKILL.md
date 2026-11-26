@@ -1914,9 +1914,9 @@ answer). Select an awaiting entry to answer; its modal shows the command,
 target and output tail. `Later` / Esc leaves the command waiting without a
 timeout; `Abort command` / Ctrl-C in the question cancels it. A closed prompt
 channel removes the command's question, even beneath another screen. Returning from
-tmux opens the queue for new questions, not a question modal. Quitting with
-pending questions confirms how many commands will be aborted; with none,
-there is no extra confirmation. Background actions now run in the per-user
+tmux opens the queue for new questions, not a question modal. Quitting asks
+no extra confirmation and leaves actions and pending questions running.
+Background actions run in the per-user
 state service: entries and live output are shared across dashboards in the same
 repo scope, including output so far on reconnect. Dismissing a finished entry
 clears it everywhere. Entries persist in the state database; entries left live

@@ -197,7 +197,20 @@ class _PopenChild:
         return self._proc.wait()
 
     def kill(self) -> None:
-        os.killpg(self._proc.pid, signal.SIGKILL)
+        pgid = self._proc.pid
+        os.killpg(pgid, signal.SIGINT)
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline:
+            self._proc.poll()  # Reap the leader so an empty group disappears.
+            try:
+                os.killpg(pgid, 0)
+            except ProcessLookupError:
+                return
+            time.sleep(0.05)
+        try:
+            os.killpg(pgid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
 
 
 def popen_spawn(
@@ -506,10 +519,13 @@ def run_action(
         record(f"exit:{status}")
         return RunResult(status=status or 1, cancelled=True)
     except BaseException:
-        child.kill()
+        try:
+            child.kill()
+        except ProcessLookupError:
+            pass
+        ui.close()
         child.wait()
         reader.join(timeout=2)
-        ui.close()
         if cancellation is not None:
             cancellation.detach()
         record("error")
