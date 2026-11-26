@@ -12210,6 +12210,69 @@ def agent_open_cmd(
     success(f"Started the agent in window {window} of {full}")
 
 
+@agent_app.command("say")
+def agent_say_cmd(
+    container: Annotated[
+        str | None, typer.Argument(help="Container; asked for when omitted.")
+    ] = None,
+    text: Annotated[str | None, typer.Argument(help="Text, or - to read standard input.")] = None,
+    session: Annotated[str | None, typer.Option("--session", help="Agent session ID.")] = None,
+    config: ConfigOption = None,
+) -> None:
+    """Send a user turn to a live Claude session in tmux."""
+    from jailbee import agent_input, prompting
+    from jailbee.incus import IncusError
+
+    cfg = _load_or_exit(config)
+    incus, full = _resolve_existing(cfg, container)
+    if session is None:
+        try:
+            sessions = agent_input.live_sessions(cfg, incus, full)
+        except agent_input.ContainerNotRunningError as exc:
+            error(str(exc))
+            raise typer.Exit(3) from exc
+        except IncusError as exc:
+            error(str(exc))
+            raise typer.Exit(9) from exc
+        if not sessions:
+            error("No live session")
+            raise typer.Exit(4)
+        session = prompting.choose_one(
+            "session",
+            [
+                prompting.Option(s.session_id, f"{s.session_id} ({s.agent})", str(s.session_id))
+                for s in sessions
+                if s.session_id
+            ],
+            empty_reason="no live session",
+            alternative="--session",
+        )
+    if text == "-":
+        text = sys.stdin.read()
+    elif text is None:
+        text = prompting.ask_text(
+            "text", validate=lambda value: None if value.strip() else "Text is empty"
+        )
+    if not text.strip():
+        error("Text is empty")
+        raise typer.Exit(2)
+    result = agent_input.send(cfg, incus, full, session, text)
+    if result.code == "delivered":
+        success(result.message)
+        return
+    error(result.message)
+    codes = {
+        "container_not_running": 3,
+        "no_live_session": 4,
+        "unsupported_agent": 5,
+        "no_pane": 6,
+        "waiting_at_dialog": 7,
+        "unsent_terminal_input": 8,
+        "delivery_error": 9,
+    }
+    raise typer.Exit(codes.get(result.code, 9))
+
+
 @agent_app.command("show")
 def agent_show_cmd(config: ConfigOption = None) -> None:
     """Show the effective default runner and where it comes from."""

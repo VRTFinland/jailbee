@@ -378,6 +378,7 @@ class RemoteUnlocks:
     network: bool = False
     mounts: bool = False
     orchestration: bool = False
+    agent_chat: bool = False
     # Whether `remote.ssh.waypipe` is on: only worded into the GUI refusal.
     waypipe_available: bool = False
     # The transport named in refusals (`remote.<transport>.network is on`).
@@ -415,6 +416,7 @@ class RemoteUnlocks:
             network=config.network,
             mounts=config.mounts or bool(config.mount_roots),
             orchestration=config.orchestration != "off",
+            agent_chat=config.agent_chat,
             waypipe_available=waypipe_on,
             transport=transport,
         )
@@ -479,6 +481,7 @@ _CONTAINER_COMMANDS = frozenset(
         "job ls",
         "ls",
         "agent show",
+        "agent say",
         # Writes the repo's local-layer `agents.default_runner` and resyncs
         # `claude-jb` defaults in its containers; with `--container` it writes
         # that container's runner label instead. The repo scope check applies.
@@ -800,6 +803,8 @@ def policy_allows(
                 raise RouteError(f"Jailbee command is not allowed: {help_path or '--help'}")
         return help_path
     path = command_path(argv)
+    if path == "agent say" and not unlocks.agent_chat:
+        raise RouteError(f"remote.{unlocks.transport}.agent_chat is off")
     if policy.mode == "allowlist" and path not in policy.allow:
         raise RouteError(f"Jailbee command is not allowed: {path}")
     if path == "dashboard":

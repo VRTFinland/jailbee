@@ -460,3 +460,41 @@ def test_a_batch_of_only_hidden_records_still_advances_the_offset(
         assert message["type"] == "append"
         assert message["entries"] == []
         assert message["offset"] == transcript.stat().st_size
+
+
+def test_follow_reports_chat_changes_without_transcript_writes(started, monkeypatch):
+    from jailbee.web.protocol import ChatAvailability
+
+    client, token = started
+    object.__setattr__(client.app.state.web.deps, "agent_chat", True)
+    status = [ChatAvailability(available=True, code="available", message="Available")]
+    monkeypatch.setattr("jailbee.web.chat.availability", lambda *args: status[0])
+    offset = rest_offset(client)
+    with connect(client, token) as ws:
+        subscribe(ws, offset)
+        while (message := ws.receive_json())["type"] != "append":
+            pass
+        assert message["chat"]["available"] is True
+        status[0] = ChatAvailability(
+            available=False, code="no_live_session", message="No live session"
+        )
+        while (message := ws.receive_json())["type"] != "append":
+            pass
+        assert message["entries"] == []
+        assert message["chat"]["code"] == "no_live_session"
+
+
+def test_user_raw_text_matches_in_rest_and_live_follow(started, transcript, watches):
+    client, token = started
+    text = "**Bold** line\nsecond line  \nthird & <literal>"
+    offset = rest_offset(client)
+    with connect(client, token) as ws:
+        subscribe(ws, offset)
+        wait_until(lambda: len(watches.open) == 1)
+        append(transcript, record(2, "user", text))
+        watches.open[0].fire()
+        while (message := ws.receive_json())["type"] != "append":
+            pass
+        assert message["entries"][0]["text"] == text
+    response = client.get(f"/api/repos/alpha/sessions/claude/{SESSION}")
+    assert response.json()["entries"][-1]["text"] == text

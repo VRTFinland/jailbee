@@ -109,12 +109,24 @@ export interface Status {
 }
 
 /** Entries a followed transcript gained; never empty. */
+export interface ChatAvailability {
+    available: boolean
+    code: string
+    message: string
+}
+
+export interface MessageOutcome {
+    code: string
+    message: string
+}
+
 export interface TranscriptAppend {
     type: "append"
     v: number
     key: FollowKey
     entries: RenderedEntry[]
     offset: number
+    chat?: ChatAvailability
 }
 
 /** A subscription refused (unknown or hidden session): nothing follows. */
@@ -179,6 +191,8 @@ interface RenderedBase {
 export interface RenderedUser extends RenderedBase {
     kind: "user"
     html: string
+    /** Original text, when provided by the server. */
+    text?: string
     /** An agent's own wrapper text (`<command-name>`, `<system-reminder>`, ...). */
     meta: boolean
     /** What a meta record is ("Task notification", "Command: /model", "Shell: ls"). */
@@ -248,6 +262,7 @@ export interface TranscriptView {
     last_activity: string | null
     models: string[]
     entries: RenderedEntry[]
+    chat?: ChatAvailability
     /** Byte offset the entries were read to: where a live subscription resumes. */
     offset: number
 }

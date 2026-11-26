@@ -83,6 +83,7 @@ def serve(
         allow_unauthenticated_remote=config.auth.allow_unauthenticated_remote,
         static_dir=directory,
         repo_scope=RemoteRepoScope.of(config),
+        agent_chat=config.agent_chat,
         warm_session_cache=True,
     )
     app = create_app(deps)

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import Button from "../components/ui/Button.vue"
+import AgentComposer from "../components/AgentComposer.vue"
 import TranscriptEntry from "../components/ui/TranscriptEntry.vue"
 import TitleBar from "../components/TitleBar.vue"
 // One agent session as a readable document. Every `html` field is rendered
@@ -15,6 +16,7 @@ import {usePager} from "../composables/usePager"
 import {useDashboard} from "../dashboard"
 import type {
     EntryContent,
+    MessageOutcome,
     RenderedEntry,
     RenderedSubagent,
     RenderedToolResult,
@@ -28,6 +30,13 @@ import {readItem, writeItem} from "../storage"
 // The sticky header's bottom edge: below an app banner, not just its height.
 const readableTop = ref(0)
 const transcriptEl = ref<HTMLElement | null>(null)
+const composerEl = ref<InstanceType<typeof AgentComposer> | null>(null)
+const composerHeight = ref(0)
+const navHeight = ref(0)
+function measureComposer() {
+    composerHeight.value = composerEl.value?.$el?.getBoundingClientRect().height ?? 0
+    navHeight.value = document.querySelector(".page-nav")?.getBoundingClientRect().height ?? 0
+}
 const pager = usePager(
     () => readableTop.value,
     // The bottom spacer lets a short final reply start below the header; page
@@ -73,6 +82,39 @@ const sessionRef = computed(() => ({
 
 const transcript = ref<TranscriptView | null>(null)
 const error = ref<string | null>(null)
+const sending = ref(false)
+const sendError = ref("")
+const sendStatus = ref("")
+let awaitingText: string | null = null
+let matched = false
+function matchesMessage(entries: RenderedEntry[], text: string): boolean {
+    const normalize = (value: string) => value.replace(/\r\n/g, "\n")
+    return entries.some(entry => entry.kind === "user" && !entry.meta &&
+        entry.text !== undefined && normalize(entry.text) === normalize(text))
+}
+async function sendMessage(text: string) {
+    if (sending.value || awaitingText !== null || !transcript.value?.chat?.available || agentId.value !== null) return
+    sending.value = true
+    sendError.value = ""
+    sendStatus.value = ""
+    awaitingText = text
+    matched = false
+    try {
+        const result = await apiFetch<MessageOutcome>(`/api/repos/${transcriptPath.value}/messages`, {
+            method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({text}),
+        })
+        if (result.code !== "delivered") {
+            awaitingText = null
+            sendError.value = result.message
+        } else if (matched) {
+            awaitingText = null
+            sendStatus.value = "Delivered"
+        } else sendStatus.value = "Waiting for transcript"
+    } catch {
+        awaitingText = null
+        sendError.value = "The message could not be sent."
+    } finally { sending.value = false }
+}
 const thinking = computed(() => settings.showThinking)
 const parentTitle = ref("Parent session")
 const sessionContainer = ref<string | null>(null)
@@ -226,7 +268,13 @@ function markScrollKey(event: KeyboardEvent) {
 }
 
 watch(shown, () => void nextTick(measureVisibility))
-watch(eink, () => void nextTick(measureVisibility))
+watch([eink, () => settings.pageControls], () => void nextTick(() => {
+    const nav = document.querySelector(".page-nav")
+    if (nav) layoutObserver?.observe(nav)
+    measureComposer()
+    pager.measure()
+    measureVisibility()
+}))
 watch(() => settings.showTitleBar, () => void nextTick(measureVisibility))
 
 let layoutObserver: ResizeObserver | null = null
@@ -241,7 +289,11 @@ onMounted(() => {
     window.addEventListener("keydown", jumpKey)
     window.addEventListener("resize", measureVisibility)
     if (typeof ResizeObserver !== "undefined") {
-        layoutObserver = new ResizeObserver(measureVisibility)
+        layoutObserver = new ResizeObserver(() => {
+            measureComposer()
+            pager.measure()
+            measureVisibility()
+        })
         layoutObserver.observe(document.body)
     }
 })
@@ -330,7 +382,12 @@ function startFollowing(view: TranscriptView) {
         },
         view.offset,
         settings.agentContext,
-        {onAppend: (entries) => {
+        {onAppend: (entries, chat) => {
+            if (transcript.value === activeTranscript && transcript.value && chat) transcript.value.chat = chat
+            if (awaitingText !== null && matchesMessage(entries, awaitingText)) {
+                matched = true
+                if (!sending.value) { awaitingText = null; sendStatus.value = "Delivered" }
+            }
             appendQueue = appendQueue.then(async () => {
                 if (!unmounted && transcript.value === activeTranscript) await onLiveAppend(entries)
             })
@@ -431,6 +488,10 @@ async function load() {
         transcript.value = view
         startFollowing(view)
         await nextTick()
+        if (composerEl.value?.$el) layoutObserver?.observe(composerEl.value.$el as Element)
+        measureComposer()
+        const nav = document.querySelector(".page-nav")
+        if (nav) layoutObserver?.observe(nav)
         pager.measure()
         measureVisibility()
         if (!positionReady) {
@@ -484,7 +545,7 @@ watch(
 </script>
 
 <template>
-    <div :style="{'--session-readable-top': `${readableTop}px`}">
+    <div :style="{'--session-readable-top': `${readableTop}px`, '--composer-height': `${composerHeight}px`, '--composer-nav-height': `${navHeight}px`}">
         <TitleBar @readable-top="readableTop = $event" :title="title" :crumbs="crumbs" context="session" :session="transcript ? {agent: transcript.agent, models: transcript.models, id: transcript.session_id} : null" />
         <div class="page">
             <p v-if="dashboard && !dashboard.state.connected" class="notice ui-notice">Connecting…</p>
@@ -567,6 +628,11 @@ watch(
                         </TranscriptEntry>
                     </template>
                 </article>
+                <AgentComposer v-if="agentId === null" ref="composerEl" class="agent-composer"
+                    :class="{'beside-nav': eink && settings.pageControls !== 'bar'}"
+                    :available="transcript.chat?.available ?? false"
+                    :reason="transcript.chat?.message || 'Messaging is unavailable.'"
+                    :sending="sending" :awaiting="sendStatus === 'Waiting for transcript'" :error="sendError" :status="sendStatus" @send="sendMessage" />
                 <Button
                     v-if="jumpLabel"
                     :variant="pending.length > 0 || unseen !== null ? 'tonal' : 'primary'"
@@ -586,7 +652,7 @@ watch(
 
 <style scoped>
 .page {
-    max-width: 48rem;
+    max-width: var(--md-layout-content-max);
     margin: 0 auto;
     /* Even a short final reply can start just below the sticky header. */
     padding: 0 var(--md-space-16);
@@ -595,6 +661,26 @@ watch(
     content: "";
     display: block;
     height: max(calc(var(--md-target-min) + var(--md-space-32)), calc(100dvh - var(--session-readable-top)));
+}
+.agent-composer {
+    position: fixed;
+    left: var(--md-space-16);
+    right: var(--md-space-16);
+    bottom: var(--guard-bottom);
+    max-width: var(--md-layout-content-max);
+    margin: 0 auto;
+    z-index: var(--md-layer-sticky);
+    background: var(--md-surface);
+    padding: var(--md-space-8);
+}
+[data-profile="eink"] .agent-composer {
+    left: max(var(--md-layout-page-tap-zone), var(--md-space-16));
+    right: max(var(--md-layout-page-tap-zone), var(--md-space-16));
+    bottom: calc(var(--guard-bottom) + var(--composer-nav-height) + var(--md-space-24));
+}
+[data-profile="eink"] .agent-composer.beside-nav {
+    right: calc(var(--page-controls-width) + var(--md-space-16));
+    bottom: var(--guard-bottom);
 }
 .muted {
     color: var(--md-on-surface-variant);
@@ -712,12 +798,17 @@ watch(
 .jump-latest {
     position: fixed;
     right: var(--md-space-16);
-    bottom: calc(var(--guard-bottom) + var(--md-space-16));
+    bottom: calc(var(--guard-bottom) + var(--composer-height) + var(--md-space-16));
     z-index: var(--md-layer-raised);
 }
 /* In e-ink the bar owns the bottom edge: the buttons sit above it. */
 [data-profile="eink"] .jump-latest,
 [data-profile="eink"] .new-messages {
-    bottom: calc(var(--guard-bottom) + var(--page-nav-height) + var(--md-space-16));
+    bottom: calc(var(--guard-bottom) + var(--composer-nav-height) + var(--composer-height) + var(--md-space-32));
+    max-width: calc(100vw - var(--md-space-32));
+}
+[data-profile="eink"] .beside-nav ~ .jump-latest {
+    right: calc(var(--page-controls-width) + var(--md-space-16));
+    bottom: calc(var(--guard-bottom) + var(--composer-height) + var(--md-space-16));
 }
 </style>

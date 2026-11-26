@@ -256,6 +256,7 @@ speculatively.
 | `jailbee agent use [PROFILE[/MODEL]] [--clear]` | Write `agents.default_runner` to the repo's host-local config (`claude/opus` = plain Claude, other profile = `claude-jb` on it; model optional), validated against the LiteLLM config, then resync `claude-jb`'s default profile in running containers. `--clear` removes it. Allowed in a restricted remote SSH session. |
 | `jailbee agent use [PROFILE[/MODEL]] --container NAME [--clear]` | Set or remove one container's own runner label (outranks the repo default at its next autostart; running sessions untouched). Without an argument the picker starts with a "repo default" row. |
 | `jailbee agent open [NAME]` | Start the effective agent in a new tmux window of a running container. |
+| `jailbee agent say [NAME] [TEXT] [--session ID]` | Send a user turn to a live Claude tmux session; use `-` as TEXT to read stdin. Refuses dialogs, unsent terminal input and unknown prompt layouts without clearing input. |
 | `jailbee agent show` | Effective default runner and its source (`local`/`repo`/`global`/`legacy`); lists containers whose own runner label overrides it. Host-only. |
 
 ## LiteLLM proxy
@@ -442,6 +443,14 @@ suggestions, in its own style, instead of a generic router message.
 ## Web dashboard
 
 Host-side only; included in every install. Full guide: `docs/web-dashboard.md`.
+The transcript reader can message its live Claude session when
+`remote.web.agent_chat: true` (default false). Messages use the same tmux paste
+boundary as `jailbee agent say`, including multi-line text and busy sessions.
+The composer disables with a reason when unavailable; a refused send keeps its
+text. Delivered appears only when the ordinary user entry reaches the followed
+transcript. Dialogs and unsent terminal input are never cleared. Repository
+visibility applies, and the audit log records the message and device name.
+`remote.ssh.agent_chat` separately gates the host command over SSH.
 Session lists are titled by the first typed prompt, ignoring agent wrappers and
 injected context (including task notifications, `!`-mode input/output and prompt
 hooks); command-only sessions use their first slash command, with title lookup

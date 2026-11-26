@@ -19,7 +19,7 @@ VERSION_FILE = Path(__file__).resolve().parent.parent / "VERSION"
 
 # Explicit host-only branches: unknown names must still be reported as typos.
 HOST_SUBCOMMANDS = {
-    "agent": frozenset({"use", "show", "open"}),
+    "agent": frozenset({"use", "show", "open", "say"}),
     "config": frozenset({"show", "migrate", "edit", "init"}),
     "pr": frozenset({"push", "bind", "unbind", "ls", "open", "fetch"}),
     "issue": frozenset({"apply", "resolve"}),

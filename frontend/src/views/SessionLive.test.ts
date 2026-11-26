@@ -112,6 +112,39 @@ afterEach(() => {
 })
 
 describe("SessionView live follow", () => {
+    it("sends a message and waits for a new matching transcript entry", async () => {
+        transcript.chat = {available: true, code: "available", message: ""}
+        const {wrapper, append, fetchMock} = await mountLive("/repos/alpha/sessions/claude/s-1")
+        fetchMock.mockImplementation(async (url: string) => new Response(JSON.stringify(
+            url.endsWith("/messages") ? {code: "delivered", message: "Pasted"} : transcript,
+        ), {status: 200, headers: {"Content-Type": "application/json"}}))
+        await wrapper.get("textarea").setValue("**bold**\nnext")
+        await wrapper.get('[aria-label="Send message"]').trigger("click")
+        await flushPromises()
+        expect(wrapper.text()).not.toContain("Delivered")
+        await append(sessionKey, [{kind: "user", id: "u2", timestamp: null, html: "<p><strong>bold</strong><br>next</p>", text: "**bold**\nnext", meta: false, label: null, expandable: false}])
+        expect(wrapper.text()).toContain("Delivered")
+        expect(fetchMock.mock.calls.some(call => String(call[0]).endsWith("/messages"))).toBe(true)
+        delete transcript.chat
+    })
+    it("disables messaging when availability is absent", async () => {
+        const {wrapper} = await mountLive("/repos/alpha/sessions/claude/s-1")
+        expect(wrapper.get("textarea").attributes("disabled")).toBeDefined()
+        expect(wrapper.text()).toContain("Messaging is unavailable.")
+    })
+
+    it("retains a refused message and shows its reason", async () => {
+        transcript.chat = {available: true, code: "available", message: ""}
+        const {wrapper, fetchMock} = await mountLive("/repos/alpha/sessions/claude/s-1")
+        fetchMock.mockResolvedValue(new Response(JSON.stringify({code: "no_pane", message: "No live pane"}), {status: 200}))
+        await wrapper.get("textarea").setValue("Keep this")
+        await wrapper.get('[aria-label="Send message"]').trigger("click")
+        await flushPromises()
+        expect(wrapper.text()).toContain("No live pane")
+        expect((wrapper.get("textarea").element as HTMLTextAreaElement).value).toBe("Keep this")
+        delete transcript.chat
+    })
+
     it("subscribes from the offset the transcript was read to", async () => {
         const {sent} = await mountLive("/repos/alpha/sessions/claude/s-1")
         expect(sent).toEqual([
