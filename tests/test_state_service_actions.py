@@ -1681,3 +1681,116 @@ def test_running_action_is_interrupted_after_restart(runtime_dir, tmp_path):
         thread.join(5)
         assert not thread.is_alive()
         assert not leaked_tasks
+
+
+def test_connected_client_sees_finished_action_expire_without_new_commands(
+    runtime_dir, tmp_path, monkeypatch
+):
+    from datetime import UTC, datetime, timedelta
+
+    from sqlalchemy import create_engine
+
+    from jailbee.db import _ensure_schema
+    from jailbee.db.actions import save
+    from jailbee.state_service import paths
+    from jailbee.state_service import server as server_module
+    from jailbee.state_service.protocol import ActionEntry
+
+    now = datetime.now(UTC)
+    current = [now]
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return current[0]
+
+    monkeypatch.setattr(server_module, "datetime", Clock)
+    monkeypatch.setattr(server_module, "ACTION_PRUNE_INTERVAL_SECONDS", 0.1, raising=False)
+    engine = create_engine(f"sqlite:///{tmp_path / 'state.db'}")
+    _ensure_schema(engine)
+    save(
+        engine,
+        ActionEntry(
+            123,
+            ["ls"],
+            str(tmp_path),
+            "target",
+            False,
+            "dashboard",
+            "none",
+            str(tmp_path),
+            "repo",
+            finished=True,
+            state="done",
+            finished_at=now,
+        ),
+    )
+    paths.ensure_runtime_dir()
+    server = StateServer(FakeGatherer(), version="v1", engine=engine)
+    thread = threading.Thread(
+        target=lambda: asyncio.run(server.serve(paths.socket_path())), daemon=True
+    )
+    thread.start()
+    track_server(server, thread)
+    _until(paths.socket_path().exists)
+    client = StateClient(
+        None, dashboard_id="dashboard", version="v1", spawn=lambda: None, backoff=(0.05,)
+    )
+    client.start()
+    try:
+        client.wait_first_snapshot(3)
+        _until(lambda: 123 in client.action_entries())
+        current[0] = now + timedelta(days=8)
+        _until(lambda: 123 not in client.action_entries())
+    finally:
+        client.close()
+
+
+def test_naive_persisted_timestamp_does_not_prevent_service_start(runtime_dir, tmp_path):
+    from datetime import UTC, datetime
+
+    from sqlalchemy import create_engine
+
+    from jailbee.db import _ensure_schema
+    from jailbee.db.actions import save
+    from jailbee.state_service import paths
+    from jailbee.state_service.protocol import ActionEntry
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'state.db'}")
+    _ensure_schema(engine)
+    for entry_id, timestamp in [(123, datetime(2026, 1, 1)), (124, datetime.now(UTC))]:
+        save(
+            engine,
+            ActionEntry(
+                entry_id,
+                ["ls"],
+                str(tmp_path),
+                "target",
+                False,
+                "dashboard",
+                "none",
+                str(tmp_path),
+                "repo",
+                finished=True,
+                state="done",
+                finished_at=timestamp,
+            ),
+        )
+    paths.ensure_runtime_dir()
+    server = StateServer(FakeGatherer(), version="v1", engine=engine)
+    thread = threading.Thread(
+        target=lambda: asyncio.run(server.serve(paths.socket_path())), daemon=True
+    )
+    thread.start()
+    track_server(server, thread)
+    _until(paths.socket_path().exists)
+    client = StateClient(
+        None, dashboard_id="dashboard", version="v1", spawn=lambda: None, backoff=(0.05,)
+    )
+    client.start()
+    try:
+        client.wait_first_snapshot(3)
+        _until(lambda: 124 in client.action_entries())
+        assert 123 not in client.action_entries()
+    finally:
+        client.close()

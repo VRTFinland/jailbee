@@ -61,6 +61,7 @@ log = logging.getLogger(__name__)
 
 IDLE_TIMEOUT_SECONDS = 30.0
 TICK_SECONDS = 0.1
+ACTION_PRUNE_INTERVAL_SECONDS = 60.0
 # A client that cannot take a snapshot within this long is dropped, so one
 # wedged dashboard never stalls the others.
 DRAIN_TIMEOUT_SECONDS = 5.0
@@ -170,7 +171,11 @@ class StateServer:
             self._persistence_closed = True
 
     async def _schedule(self) -> None:
+        next_prune = self._clock() + ACTION_PRUNE_INTERVAL_SECONDS
         while not self._stopping:
+            if self._clock() >= next_prune:
+                self._prune_finished_actions()
+                next_prune = self._clock() + ACTION_PRUNE_INTERVAL_SECONDS
             if (
                 not self._clients
                 and not self._action_tasks
