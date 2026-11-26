@@ -25,7 +25,7 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 
-PROTOCOL_VERSION = 7
+PROTOCOL_VERSION = 8
 
 CLOSE_UNAUTHORIZED = 4001
 """No valid session token: the browser goes back to the login page."""
@@ -208,6 +208,7 @@ class RenderedUser(_Rendered):
 class RenderedAssistant(_Rendered):
     kind: Literal["assistant"] = "assistant"
     html: str
+    text: str | None = None
     model: str | None
 
 
