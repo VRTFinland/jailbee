@@ -7,10 +7,12 @@ from typing import Any
 
 import pytest
 from textual.app import App
-from textual.widgets import Input, OptionList, SelectionList
+from textual.screen import Screen
+from textual.widgets import Button, Input, OptionList, SelectionList
 
 from jailbee.dashboard.tui import prompt_modals as pm
 from jailbee.prompt_channel import Prompt, WireContext, WireOption
+from tests.dashboard_pilot import burst
 
 
 class Host(App[None]):
@@ -43,6 +45,66 @@ def test_entry_question_shows_command_context_and_controls(kind):
                 "Abort command",
             ):
                 assert any(expected in text for text in texts)
+
+    asyncio.run(script())
+
+
+@pytest.mark.parametrize("kind", ["confirm", "choose_one", "choose_many", "text", "secret"])
+@pytest.mark.parametrize(
+    "buttons, expected",
+    [(["later", "abort-command"], pm.LATER), (["abort-command", "later"], None)],
+)
+def test_question_burst_keeps_the_first_later_or_abort_and_the_underlying_screen(kind, buttons, expected):
+    from jailbee.dashboard.notifications import QueueEntry
+
+    host = Host()
+
+    async def script():
+        async with host.run_test() as pilot:
+            underlying = Screen()
+            host.push_screen(underlying)
+            await pilot.pause()
+            question = pm.modal_for(
+                Prompt(2, kind, "Question?", options=opts("one")),
+                entry=QueueEntry(1, "jailbee start alpha-a", "alpha-a"),
+            )
+            host.push_screen(question, host.answers.append)
+            await pilot.pause()
+            # Queue two real control activations before the first is handled.
+            for button_id in buttons:
+                question.query_one(f"#{button_id}", Button).press()
+            await pilot.pause()
+            assert host.answers == [expected]
+            assert host.screen is underlying
+
+    asyncio.run(script())
+
+
+@pytest.mark.parametrize(
+    "prompt, keys, expected",
+    [
+        (Prompt(1, "confirm", "Question?"), [("y", "y"), ("n", "n")], True),
+        (Prompt(1, "choose_one", "Question?", options=(WireOption("one", "One", "One", ""),)),
+         [("enter", "\r"), ("enter", "\r")], "one"),
+        (Prompt(1, "choose_many", "Question?"), [("enter", "\r"), ("enter", "\r")], []),
+        (Prompt(1, "text", "Question?", default="main"), [("enter", "\r"), ("enter", "\r")], "main"),
+        (Prompt(1, "secret", "Question?"), [("enter", "\r"), ("enter", "\r")], ""),
+    ],
+)
+def test_answer_key_burst_returns_once_without_popping_the_underlying_screen(prompt, keys, expected):
+    host = Host()
+
+    async def script():
+        async with host.run_test() as pilot:
+            underlying = Screen()
+            host.push_screen(underlying)
+            await pilot.pause()
+            host.ask(prompt)
+            await pilot.pause()
+            burst(*keys)(host)
+            await pilot.pause()
+            assert host.answers == [expected]
+            assert host.screen is underlying
 
     asyncio.run(script())
 

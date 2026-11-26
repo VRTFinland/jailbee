@@ -1887,7 +1887,9 @@ timeout; `Abort command` / Ctrl-C in the question cancels it. A closed prompt
 channel removes the command's question, even beneath another screen. Returning from
 tmux opens the queue for new questions, not a question modal. Quitting with
 pending questions confirms how many commands will be aborted; with none,
-there is no extra confirmation. Output, URLs and failure reasons stay in the
+there is no extra confirmation. Each modal accepts its first answer or Later/Abort
+choice only; repeated input queued for it cannot dismiss another screen.
+Output, URLs and failure reasons stay in the
 queue. PR creations use it too; only the standalone manager hands over a terminal. The
 Qt dashboard has a native window for it. Over remote SSH the manager is
 read-only. The scriptable forms address a proposal as `pr/<manifest>.json` or

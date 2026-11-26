@@ -124,7 +124,8 @@ Quitting with pending action questions asks for confirmation and names how
 many commands will be aborted. Declining leaves them waiting; confirming
 cancels them, including a modal that is still opening. With no pending
 questions, quitting needs no extra confirmation. No answer is accepted on
-behalf of the user.
+behalf of the user. Each question accepts only its first answer or Later/Abort
+choice; repeated input already queued for that modal cannot close another screen.
 
 ## Menu map
 
