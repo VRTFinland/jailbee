@@ -1468,11 +1468,14 @@ def test_interrupted_entry_needs_failure_attention():
 
 def test_pilot_interrupted_entry_is_drawn_as_failure(mocker, tmp_path):
     import asyncio
+
     from jailbee.dashboard.notifications import QueueEntry
     from tests.dashboard_pilot import make_app
 
     app = make_app(mocker, [_pilot_group(tmp_path)])
-    app.session.queue._entries[123] = QueueEntry(123, "jailbee doctor", "alpha", state="interrupted")
+    app.session.queue._entries[123] = QueueEntry(
+        123, "jailbee doctor", "alpha", state="interrupted"
+    )
 
     async def main():
         async with app.run_test(size=(100, 25)) as pilot:

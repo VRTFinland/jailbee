@@ -11,7 +11,11 @@ from jailbee.state_service.protocol import ActionEntry, decode, encode
 
 def save(engine: Engine, entry: ActionEntry) -> None:
     with Session(engine) as session:
-        session.merge(ActionEntryRow(entry_id=entry.entry_id, state=entry.state, payload=encode(entry).decode()))
+        session.merge(
+            ActionEntryRow(
+                entry_id=entry.entry_id, state=entry.state, payload=encode(entry).decode()
+            )
+        )
         session.commit()
 
 

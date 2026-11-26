@@ -1246,7 +1246,10 @@ class DashboardSession:
             text = found.output or (QUEUE_NO_OUTPUT_YET if not found.finished else "")
             self._following = None if found.finished else entry_id
             self.terminal.show_output(
-                found.command, text, failed=found.state in ("failed", "interrupted"), live=not found.finished
+                found.command,
+                text,
+                failed=found.state in ("failed", "interrupted"),
+                live=not found.finished,
             )
             return self.queue_entry_picker(entry_id)
         if entry.value == "dismiss":

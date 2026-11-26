@@ -288,7 +288,10 @@ class StateServer:
         self._actions[finish.entry_id] = replace(
             self._actions[finish.entry_id],
             finished=True,
-            state="done" if finish.status == 0 and not (finish.error or finish.refused or finish.cancelled or finish.declined) else "failed",
+            state="done"
+            if finish.status == 0
+            and not (finish.error or finish.refused or finish.cancelled or finish.declined)
+            else "failed",
             status=finish.status,
             refused=finish.refused,
             error=finish.error,

@@ -268,5 +268,6 @@ class NotificationQueue:
             running=sum(e.state == "running" for e in entries)
             + sum(not j.failed for j in self.jobs),
             pending=sum(e.state == "awaiting" for e in entries),
-            failed=sum(e.state in ("failed", "interrupted") for e in entries) + sum(j.failed for j in self.jobs),
+            failed=sum(e.state in ("failed", "interrupted") for e in entries)
+            + sum(j.failed for j in self.jobs),
         )
