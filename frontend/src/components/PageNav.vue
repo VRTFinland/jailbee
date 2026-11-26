@@ -3,6 +3,8 @@
 import {computed, nextTick, watch} from "vue"
 import type {Pager} from "../composables/usePager"
 import {settings} from "../settings"
+import Button from "./ui/Button.vue"
+import IconButton from "./ui/IconButton.vue"
 import PageGuide from "./PageGuide.vue"
 
 const props = defineProps<{pager: Pager; jumpEnabled?: boolean}>()
@@ -34,18 +36,16 @@ watch(() => settings.pageControls, async () => {
         />
         <PageGuide :pager="pager" />
         <nav class="page-nav" :data-mode="settings.pageControls" aria-label="Pages">
-            <button v-if="settings.pageControls !== 'indicator'" type="button" class="prev"
-                aria-label="Previous page" :disabled="pager.page.value <= 0" @click="pager.prev()">
-                {{ settings.pageControls === 'side' ? '▲' : '‹' }}
-            </button>
-            <button v-if="jumpEnabled" type="button" class="page-indicator" aria-label="Jump to page" @click="emit('jump')">{{ pager.page.value + 1 }} / {{ pager.pageCount.value }}</button>
+            <IconButton v-if="settings.pageControls !== 'indicator'" class="prev"
+                :icon="settings.pageControls === 'side' ? 'collapse' : 'back'" label="Previous page"
+                :compact="settings.pageControls === 'bar'" :disabled="pager.page.value <= 0" @click="pager.prev()" />
+            <Button v-if="jumpEnabled" variant="text" narrow :compact="settings.pageControls !== 'side'" class="page-indicator" aria-label="Jump to page" @click="emit('jump')">{{ pager.page.value + 1 }} / {{ pager.pageCount.value }}</Button>
             <span v-else class="page-indicator">{{ pager.page.value + 1 }} / {{ pager.pageCount.value }}</span>
             <span v-if="settings.pageControls === 'bar'" class="page-percent">· {{ percent }} %</span>
-            <button v-if="settings.pageControls !== 'indicator'" type="button" class="next"
-                aria-label="Next page" :disabled="pager.page.value >= pager.pageCount.value - 1"
-                @click="pager.next()">
-                {{ settings.pageControls === 'side' ? '▼' : '›' }}
-            </button>
+            <IconButton v-if="settings.pageControls !== 'indicator'" class="next"
+                :icon="settings.pageControls === 'side' ? 'expand' : 'forward'" label="Next page"
+                :compact="settings.pageControls === 'bar'" :disabled="pager.page.value >= pager.pageCount.value - 1"
+                @click="pager.next()" />
         </nav>
     </template>
 </template>
@@ -53,79 +53,55 @@ watch(() => settings.pageControls, async () => {
 <style scoped>
 .page-nav {
     position: fixed;
-    right: var(--space-2);
+    right: var(--md-space-8);
     bottom: var(--guard-bottom);
-    z-index: 10;
+    z-index: var(--md-layer-raised);
     display: flex;
     align-items: center;
     justify-content: center;
-    background: var(--bg);
-    border: 1px solid var(--border);
-    font-size: 13px;
+    background: var(--md-surface-container);
+    border: 1px solid var(--md-outline-variant);
+    border-radius: var(--md-shape-medium);
+    font-size: var(--md-type-label-large-size);
     line-height: 1;
     white-space: nowrap;
 }
 .page-nav[data-mode="indicator"] {
     width: var(--page-controls-width);
-    height: 28px;
-    border-radius: var(--radius);
+    height: calc(var(--md-space-24) + var(--md-space-4));
 }
 .page-nav[data-mode="side"] {
     flex-direction: column;
     width: var(--page-controls-width);
     border: none;
-    outline: 1px solid var(--border);
+    outline: 1px solid var(--md-outline-variant);
     outline-offset: -1px;
 }
-.page-nav[data-mode="side"] .page-indicator {
-    display: flex;
-    align-items: center;
-    justify-content: center;
+.page-nav[data-mode="side"] .page-indicator { flex: none; }
+.page-nav[data-mode="side"] span.page-indicator {
     width: 100%;
-    height: 44px;
-    border-block: 1px solid var(--border);
+    height: var(--md-target-min);
+    border-block: 1px solid var(--md-outline-variant);
 }
 .page-nav[data-mode="bar"] {
     left: 0;
     right: 0;
     height: var(--page-nav-height);
-    gap: var(--space-2);
+    gap: var(--md-space-8);
     border-width: 1px 0 0;
+    border-radius: 0;
 }
-.page-nav button {
-    width: 44px;
-    height: 44px;
-    flex-shrink: 0;
-    padding: 0;
-    font: inherit;
-    color: var(--text);
-    background: var(--bg);
-    border: none;
-    cursor: pointer;
-}
-.page-nav[data-mode="indicator"] button.page-indicator { width: 100%; height: 100%; }
-.page-nav[data-mode="side"] button.page-indicator { width: 100%; }
-.page-nav[data-mode="bar"] button {
-    height: 100%;
-}
-.page-nav button:disabled {
-    color: var(--muted);
-    cursor: default;
-}
+.page-indicator { display: flex; align-items: center; justify-content: center; }
 .tap-zone {
     position: fixed;
     top: 0;
     bottom: calc(var(--guard-bottom) + var(--page-nav-height));
     width: 8vw;
-    z-index: 5;
+    z-index: auto;
     padding: 0;
     background: none;
     border: none;
 }
-.tap-zone.back {
-    left: 0;
-}
-.tap-zone.forward {
-    right: 0;
-}
+.tap-zone.back { left: 0; }
+.tap-zone.forward { right: 0; }
 </style>

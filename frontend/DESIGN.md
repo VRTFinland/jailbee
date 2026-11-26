@@ -26,6 +26,8 @@ All live in `src/components/ui/`.
 
 | Job | Primitive | Notes |
 |---|---|---|
+| A collapsible tool summary | `Disclosure` | `label`, `error`, `v-model:open`; bundled chevron, monospace summary and tonal surface. |
+| A transcript entry | `TranscriptEntry` | `kind` user/assistant/thinking/orphan and `meta`; user prompts use primary-container, meta uses a quiet hairline. Sanitised Markdown remains document content, not primitive internals. |
 | A command with a text label | `Button` | `variant`: `primary` (one per screen), `tonal`, `text`, `danger`. Optional leading `icon`. `type="submit"` inside a form. |
 | A command shown only as an icon | `IconButton` | `label` is required and becomes the accessible name. The hit target is `--md-target-min`. `variant="text"` is transparent; `variant="tonal"` gives floating controls an opaque surface and an e-ink hairline. |
 | An on/off setting | `Switch` | `v-model` boolean, `label` required. Not for a one-off action: use a `Button`. |
@@ -37,6 +39,15 @@ All live in `src/components/ui/`.
 | A text input | `Field` | `v-model`, `label`, `help`, `error`, `type`. Error text is announced and wires `aria-invalid`. |
 | A choice from a fixed list | `Select` | `v-model`, `label`, `options` (`SelectOption`), `placeholder`, `help`, `error`. |
 | A label, help and error around another control | `FieldFrame` | The frame `Field` and `Select` are built on. Bind the default slot's `controlAttrs(attrs)` onto the control; it sets the id, `aria-labelledby`, `aria-describedby` and `aria-invalid`. Never hand-roll label/help/error markup. |
+
+`Button` and `IconButton` also accept `compact` for the transcript reader's
+26px bar / 28px indicator. Drawn chrome is compact, but a pseudo-element extends
+the hit area upwards to `--md-target-min`, never into the bottom guard. Leave
+that area clear of other targets; do not use this density for ordinary forms.
+`Button`'s `narrow` option removes wide pill insets for side page counters
+without shrinking the hit target. `Button`'s `truncate` option keeps prompt excerpts to one line with an ellipsis
+while preserving their full accessible names. The Reader gallery group shows
+these controls and the transcript primitives.
 
 Shared helper classes are prefixed `ui-` so no view class collides with them:
 `ui-state-layer` (Material 3 hover/pressed overlay) and `ui-focus-ring` in

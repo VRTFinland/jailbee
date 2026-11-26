@@ -3,6 +3,7 @@
 // and the (possibly truncated) result. All HTML here is the server's
 // sanitised rendering.
 import {ref} from "vue"
+import Disclosure from "./ui/Disclosure.vue"
 import type {RenderedSubagent, RenderedToolCall, RenderedToolResult} from "../protocol"
 
 const props = withDefaults(
@@ -21,16 +22,7 @@ const open = ref(false)
 
 <template>
     <div class="tool-call">
-        <button
-            type="button"
-            class="tool-summary"
-            :class="{error: props.result?.is_error}"
-            :aria-expanded="open ? 'true' : 'false'"
-            @click="open = !open"
-        >
-            <span class="chevron" aria-hidden="true">{{ open ? "▾" : "▸" }}</span>
-            <span class="summary-text">{{ props.call.summary }}</span>
-        </button>
+        <Disclosure v-model:open="open" class="tool-summary" :label="props.call.summary" :error="props.result?.is_error" />
         <ul v-if="props.subagents.length" class="subagents">
             <li v-for="s in props.subagents" :key="s.id" class="tool-subagent">
                 <router-link
@@ -61,71 +53,46 @@ const open = ref(false)
 
 <style scoped>
 .tool-call {
-    margin: var(--space-2) 0;
-}
-.tool-summary {
-    display: flex;
-    gap: var(--space-2);
-    align-items: baseline;
-    width: 100%;
-    min-height: 2.5rem; /* touch target */
-    padding: var(--space-2) var(--space-3);
-    font: inherit;
-    font-size: 0.9rem;
-    text-align: left;
-    color: var(--muted);
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    cursor: pointer;
-}
-.tool-summary.error {
-    border-color: var(--danger);
-}
-.summary-text {
-    font-family: var(--font-mono);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    min-width: 0;
+    margin: var(--md-space-8) 0;
 }
 .subagents {
     list-style: none;
-    margin: var(--space-1) 0 0;
-    padding: 0 var(--space-3);
-    font-size: 0.9rem;
+    margin: var(--md-space-4) 0 0;
+    padding: 0 var(--md-space-16);
+    font-size: var(--md-type-body-medium-size);
 }
 .tool-body {
-    padding: var(--space-2) var(--space-3);
-    border: 1px solid var(--border);
+    padding: var(--md-space-8) var(--md-space-16);
+    border: 1px solid var(--md-outline-variant);
     border-top: none;
-    border-radius: 0 0 var(--radius) var(--radius);
+    background: var(--md-surface-container-low);
+    border-radius: 0 0 var(--md-shape-medium) var(--md-shape-medium);
 }
 .label {
-    font-size: 0.75rem;
+    font-size: var(--md-type-label-medium-size);
     text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: var(--muted);
-    margin-top: var(--space-2);
+    letter-spacing: normal;
+    color: var(--md-on-surface-variant);
+    margin-top: var(--md-space-8);
 }
 .tool-input :deep(pre),
 .tool-result :deep(pre) {
-    margin: var(--space-1) 0;
-    font-family: var(--font-mono);
-    font-size: 0.8rem;
+    margin: var(--md-space-4) 0;
+    font-family: var(--md-font-mono);
+    font-size: var(--md-type-body-small-size);
     white-space: pre-wrap;
     word-break: break-word;
     max-height: 24rem;
     overflow: auto;
 }
 .tool-result.error :deep(pre) {
-    color: var(--danger);
+    color: var(--md-error);
 }
 .muted {
-    color: var(--muted);
+    color: var(--md-on-surface-variant);
 }
 .truncated {
-    font-size: 0.8rem;
+    font-size: var(--md-type-body-small-size);
     margin: 0;
 }
 </style>

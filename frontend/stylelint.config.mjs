@@ -7,11 +7,6 @@ export default {
         "src/components/QuickSettings.vue", // 11: settings and dialogs
         "src/components/SettingsPanel.vue",
         "src/views/SettingsView.vue",
-        "src/components/JumpPanel.vue", // 13: transcript reader
-        "src/components/PageGuide.vue",
-        "src/components/PageNav.vue",
-        "src/components/ToolCall.vue",
-        "src/views/SessionView.vue",
         "src/styles/highlight.css",
     ],
     plugins: ["./stylelint/design-tokens.mjs"],

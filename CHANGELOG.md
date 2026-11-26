@@ -31,7 +31,10 @@ before editing `## Unreleased`.
   paging buttons and vector live-session chips while preserving session ordering,
   search, pagination and orchestration links.
   Login and security-key setup use the shared fields and buttons, preserving PIN,
-  authenticator-code, one-time-link and security-key flows
+  authenticator-code, one-time-link and security-key flows.
+  The transcript reader uses tonal prompts and tool disclosures, shared jump
+  dialogs and buttons, vector page controls with full-size hit areas behind
+  compact chrome, and preserves page steps, guide lines and reading positions
   ([#167](https://github.com/VRTFinland/jailbee/issues/167)).
 - Web dashboard reader improvements: compact breadcrumb title bars and session details,
   an in-context settings overlay, configurable e-ink page controls and page step,

@@ -1,4 +1,5 @@
 import {enableAutoUnmount, flushPromises, mount} from "@vue/test-utils"
+import {getByRole, queryByRole} from "@testing-library/dom"
 import {afterEach, beforeEach, describe, expect, it, vi} from "vitest"
 import {createMemoryHistory} from "vue-router"
 import {setToken} from "../api"
@@ -80,7 +81,10 @@ async function mountSession(fetchMock: ReturnType<typeof vi.fn<typeof fetch>>) {
     return {wrapper, router}
 }
 
-beforeEach(() => removeItem("jailbee.readingPositions"))
+beforeEach(() => {
+    document.body.innerHTML = ""
+    removeItem("jailbee.readingPositions")
+})
 
 afterEach(() => {
     removeItem("jailbee.showThinking")
@@ -90,7 +94,9 @@ afterEach(() => {
     vi.restoreAllMocks()
     if (originalScrollIntoView) Object.defineProperty(Element.prototype, "scrollIntoView", originalScrollIntoView)
     else Reflect.deleteProperty(Element.prototype, "scrollIntoView")
-    document.body.innerHTML = ""
+    // Unmount portalled dialogs before removing their DOM.
+    // Auto-unmount runs after this hook.
+
 })
 
 describe("SessionView", () => {
@@ -101,13 +107,16 @@ describe("SessionView", () => {
         document.body.append(input)
         input.dispatchEvent(new KeyboardEvent("keydown", {key: "j", bubbles: true}))
         await wrapper.vm.$nextTick()
-        expect(wrapper.find('[aria-label="Jump to"]').exists()).toBe(false)
+        expect(queryByRole(document.body, "dialog", {name: "Jump to"})).toBeNull()
         await wrapper.get('[aria-label="Quick settings"]').trigger("click")
         await wrapper.get('[data-action="jump"]').trigger("click")
-        expect(wrapper.find('[aria-label="Jump to"]').exists()).toBe(true)
-        await wrapper.get('[aria-label="Jump to"] button').trigger("click")
+        await flushPromises()
+        expect(getByRole(document.body, "dialog", {name: "Jump to"})).toBeTruthy()
+        getByRole(getByRole(document.body, "dialog", {name: "Jump to"}), "button", {name: "Close dialog"}).click()
+        await flushPromises()
         await wrapper.get('button.page-indicator').trigger("click")
-        expect(wrapper.find('[aria-label="Jump to"]').exists()).toBe(true)
+        await flushPromises()
+        expect(getByRole(document.body, "dialog", {name: "Jump to"})).toBeTruthy()
         input.remove()
     })
 
@@ -117,7 +126,7 @@ describe("SessionView", () => {
         expect(wrapper.findAll('[role="dialog"]')).toHaveLength(1)
         document.activeElement?.dispatchEvent(new KeyboardEvent("keydown", {key: "j", bubbles: true}))
         await wrapper.vm.$nextTick()
-        expect(wrapper.find('[aria-label="Jump to"]').exists()).toBe(false)
+        expect(queryByRole(document.body, "dialog", {name: "Jump to"})).toBeNull()
         expect(wrapper.findAll('[role="dialog"]')).toHaveLength(1)
     })
 
@@ -127,12 +136,14 @@ describe("SessionView", () => {
         const {wrapper} = await mountSession(vi.fn().mockResolvedValue(jsonResponse(200, transcript)))
         window.dispatchEvent(new KeyboardEvent("keydown", {key: "j"}))
         await wrapper.vm.$nextTick()
-        await wrapper.findAll('[aria-label="Jump to"] button').find(button => button.text() === "Fix it")!.trigger("click")
+        await flushPromises()
+        getByRole(getByRole(document.body, "dialog", {name: "Jump to"}), "button", {name: "Fix it"}).click()
         await flushPromises()
         expect(scrolled).toEqual(["entry-u1"])
         window.dispatchEvent(new KeyboardEvent("keydown", {key: "j"}))
         await wrapper.vm.$nextTick()
-        await wrapper.findAll('[aria-label="Jump to"] button').find(button => button.text() === "Latest answer")!.trigger("click")
+        await flushPromises()
+        getByRole(getByRole(document.body, "dialog", {name: "Jump to"}), "button", {name: "Latest answer"}).click()
         await flushPromises()
         expect(scrolled).toEqual(["entry-u1", "entry-a2"])
     })
@@ -142,8 +153,9 @@ describe("SessionView", () => {
         const {wrapper} = await mountSession(vi.fn().mockResolvedValue(jsonResponse(200, view)))
         window.dispatchEvent(new KeyboardEvent("keydown", {key: "j"}))
         await wrapper.vm.$nextTick()
-        const panel = wrapper.get('[role="dialog"][aria-label="Jump to"]')
-        expect(panel.findAll("button").map(button => button.text())).toEqual(["Close", "Start", "Latest answer", "End", "Fix it", "Next question"])
+        await flushPromises()
+        const panel = getByRole(document.body, "dialog", {name: "Jump to"})
+        expect(Array.from(panel.querySelectorAll("button"), button => button.getAttribute("aria-label") ?? button.textContent)).toEqual(["Close dialog", "Start", "Latest answer", "End", "Fix it", "Next question"])
     })
     it("fetches the session and renders prompts and answers with their models", async () => {
         const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, transcript))
