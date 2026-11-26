@@ -189,6 +189,15 @@ describe("SessionView", () => {
         expect(wrapper.get(".tool-result").text()).toContain("ok")
     })
 
+    it("renders an unattached tool result as document content inside its entry", async () => {
+        const result = {kind: "tool_result" as const, id: "orphan", timestamp: null, call_id: "missing",
+            html: "<p>Unattached output</p>", truncated: false, full_length: 17, is_error: false}
+        const {wrapper} = await mountSession(vi.fn().mockResolvedValue(jsonResponse(200, {
+            ...transcript, entries: [...transcript.entries, result],
+        })))
+        expect(wrapper.get("#entry-orphan .prose").text()).toBe("Unattached output")
+    })
+
     it("shows an agent's wrapper prompt as a muted meta block", async () => {
         const {wrapper} = await mountSession(vi.fn().mockResolvedValue(jsonResponse(200, transcript)))
         expect(wrapper.find(".entry.user.meta").exists()).toBe(true)
@@ -323,6 +332,7 @@ describe("SessionView", () => {
     it("says the session was not found on a 404", async () => {
         const {wrapper} = await mountSession(vi.fn().mockResolvedValue(jsonResponse(404, {detail: "x"})))
         expect(wrapper.text()).toContain("Session not found")
+        expect(wrapper.get(".notice").classes()).toContain("ui-notice")
     })
 
     it("links back to the repository", async () => {

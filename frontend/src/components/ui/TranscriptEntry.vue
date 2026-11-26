@@ -7,7 +7,6 @@ withDefaults(defineProps<{kind?: "user" | "assistant" | "thinking" | "orphan"; m
 </template>
 
 <style scoped>
-.entry { margin: var(--md-space-24) 0; }
 .user {
     padding: var(--md-space-8) var(--md-space-16);
     background: var(--md-primary-container);

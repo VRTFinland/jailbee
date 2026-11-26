@@ -104,13 +104,12 @@ describe("RepoView", () => {
         expect(rows[1].get(".container").text()).toBe("unattributed")
     })
 
-    it("names session links by their titles and keeps metadata as supporting text", async () => {
+    it("includes session metadata in link names just like ContainerView", async () => {
         const {wrapper} = await mountRepo(vi.fn().mockResolvedValue(jsonResponse(200, {sessions})))
         const links = wrapper.findAll("li.session a")
         expect(links[0].attributes("href")).toBe("/repos/alpha/sessions/claude/s-new")
-        expect(links[0].text()).toBe("Fix the login bug")
-        expect(links[1].text()).toBe("Untitled session")
-        expect(wrapper.findAll("li.session")[0].text()).toContain("alpha-1")
+        expect(links[0].attributes("aria-label")).toBe("Fix the login bug claude alpha-1 Nov 1, 2026, 12:05 PM claude-opus-4, claude-haiku-4")
+        expect(links[1].attributes("aria-label")).toBe("Untitled session claude unattributed")
     })
 
     it("says so when there are no sessions", async () => {
@@ -121,6 +120,8 @@ describe("RepoView", () => {
     it("says the repository was not found on a 404", async () => {
         const {wrapper} = await mountRepo(vi.fn().mockResolvedValue(jsonResponse(404, {detail: "x"})))
         expect(wrapper.text()).toContain("Repository not found")
+        expect(wrapper.get(".notice").element.tagName).toBe("P")
+        expect(wrapper.get(".notice").classes()).toContain("ui-notice")
     })
 
     it("goes back to the front page", async () => {

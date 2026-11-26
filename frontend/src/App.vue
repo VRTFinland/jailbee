@@ -175,7 +175,7 @@ onBeforeUnmount(() => {
     <Dialog :open="settingsOpen" title="Settings" placement="drawer" close-label="Close settings" preserve-scroll
         aria-label="Settings" @update:open="value => { if (!value) dismissSettings() }"
         @close-auto-focus="settingsFocus">
-        <SettingsPanel />
+        <SettingsPanel in-drawer />
     </Dialog>
 </template>
 

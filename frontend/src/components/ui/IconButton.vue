@@ -23,7 +23,6 @@ defineEmits<{click: [event: MouseEvent]}>()
 </template>
 
 <style src="./state-layer.css"></style>
-<style src="./compact.css"></style>
 
 <style scoped>
 .icon-button {
@@ -44,6 +43,20 @@ defineEmits<{click: [event: MouseEvent]}>()
     border: 1px solid var(--md-hairline);
     background: var(--md-primary-container);
     color: var(--md-on-primary-container);
+}
+/* The full target extends upwards, never into the reader's bottom guard. */
+.icon-button[data-compact] {
+    min-width: var(--md-target-min);
+    height: var(--md-space-24);
+    overflow: visible;
+}
+.icon-button[data-compact]::after {
+    content: "";
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    height: var(--md-target-min);
 }
 .icon-button:disabled {
     cursor: default;

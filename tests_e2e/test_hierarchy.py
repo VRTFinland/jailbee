@@ -48,10 +48,15 @@ def test_hierarchy_links_counts_and_live_renesting(
     page.locator(".parent").get_by_role("link", name="orch", exact=True).click()
     expect(page.get_by_role("heading", name="Children (2)")).to_be_visible()
     assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+    expect(
+        page.get_by_role("region", name="Children").get_by_role(
+            "link", name="first State: working Runner: codex/opus", exact=True
+        )
+    ).to_be_visible()
     child_row = (
         page.get_by_role("region", name="Children")
         .get_by_role("listitem")
-        .filter(has=page.get_by_role("link", name="second", exact=True))
+        .filter(has=page.get_by_role("link", name="second State: imported", exact=True))
     )
     box = child_row.bounding_box()
     assert box
@@ -89,7 +94,9 @@ def test_cross_repo_counts_and_missing_parent_labels_agree_across_views(
     expect(parent_row).to_contain_text("Orchestrator · 1 child")
     parent_row.locator(".name").click()
     expect(page.get_by_role("heading", name="Children (1)")).to_be_visible()
-    page.get_by_role("region", name="Children").get_by_role("link", name="task", exact=True).click()
+    page.get_by_role("region", name="Children").get_by_role(
+        "link", name="task State: working", exact=True
+    ).click()
     expect(page.locator(".parent")).not_to_contain_text("orchestrator not listed")
     server.push(snapshot_of(repo_group("alpha"), repo_group("beta", child)))
     expect(page.locator(".parent")).to_contain_text("orchestrator not listed")
@@ -184,7 +191,7 @@ def test_related_container_navigation_resets_eink_page_and_scroll(
     wait_for_scroll_settled(page)
     expect(page.locator(".page-indicator")).to_contain_text("2 /")
     page.get_by_role("region", name="Children").get_by_role(
-        "link", name="task-20", exact=True
+        "link", name="task-20 State: working", exact=True
     ).click()
     expect(page.get_by_role("heading", name=selected.name, exact=True)).to_have_count(1)
     expect(page.locator(".page-indicator")).to_contain_text("1 /")

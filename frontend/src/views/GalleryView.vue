@@ -375,6 +375,9 @@ function typeStyle(token: string): Record<string, string> {
     color: var(--md-on-surface-variant);
     overflow-wrap: anywhere;
 }
+.group > .entry {
+    margin: var(--md-space-24) 0;
+}
 .reader-controls {
     display: flex;
     align-items: center;

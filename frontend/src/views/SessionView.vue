@@ -485,8 +485,8 @@ watch(
 <template>
     <div class="page" :style="{'--session-readable-top': `${readableTop}px`}">
         <TitleBar @readable-top="readableTop = $event" :title="title" :crumbs="crumbs" context="session" :session="transcript ? {agent: transcript.agent, models: transcript.models, id: transcript.session_id} : null" />
-        <p v-if="dashboard && !dashboard.state.connected" class="notice">Connecting…</p>
-        <p v-if="error" class="notice">{{ error }}</p>
+        <p v-if="dashboard && !dashboard.state.connected" class="notice ui-notice">Connecting…</p>
+        <p v-if="error" class="notice ui-notice">{{ error }}</p>
         <p v-else-if="transcript === null" class="muted">Loading…</p>
         <template v-else>
             <p v-if="transcript.entries.length === 0" class="muted">This session is empty.</p>
@@ -549,8 +549,9 @@ watch(
                         v-else-if="e.kind === 'tool_result'"
                         :id="entryDomId(e.id)"
                         kind="orphan"
-                        v-html="e.html"
-                    />
+                    >
+                        <div class="prose" v-html="e.html" />
+                    </TranscriptEntry>
                     <TranscriptEntry
                         v-else-if="e.kind === 'subagent'"
                         :id="entryDomId(e.id)"
@@ -592,14 +593,11 @@ watch(
     display: block;
     height: max(calc(var(--md-target-min) + var(--md-space-32)), calc(100dvh - var(--session-readable-top)));
 }
-.notice {
-    margin: var(--md-space-16) 0;
-    padding: var(--md-space-8) var(--md-space-16);
-    background: var(--md-primary-container);
-    border-radius: var(--md-shape-medium);
-}
 .muted {
     color: var(--md-on-surface-variant);
+}
+.transcript > .entry {
+    margin: var(--md-space-24) 0;
 }
 .entry, .tool-call[id] {
     scroll-margin-top: var(--session-readable-top, 0px);

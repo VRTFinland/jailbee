@@ -32,6 +32,13 @@ function when(iso: string): string {
     return dateFormat.format(new Date(iso))
 }
 
+function sessionLinkLabel(session: SessionSummary): string {
+    return [session.title || "Untitled session", session.agent,
+        session.container ?? "unattributed", session.last_activity ? when(session.last_activity) : null,
+        session.models.join(", ")]
+        .filter(Boolean).join(" ")
+}
+
 onMounted(async () => {
     try {
         const list = await apiFetch<SessionList>(
@@ -60,12 +67,12 @@ onMounted(async () => {
             <RepoList :view="containers" :show-headings="false" :listed-containers="listedContainers" />
         </section>
         <h2>Sessions</h2>
-        <p v-if="error" class="notice">{{ error }}</p>
+        <p v-if="error" class="notice ui-notice">{{ error }}</p>
         <p v-else-if="sessions === null" class="muted">Loading…</p>
         <p v-else-if="sessions.length === 0" class="muted">No sessions.</p>
         <ul v-else class="sessions">
             <ListRow v-for="s in sessions" :key="`${s.agent}/${s.session_id}`" class="session" wrap
-                :title="s.title || 'Untitled session'"
+                :link-label="sessionLinkLabel(s)" :title="s.title || 'Untitled session'"
                 :to="{name: 'session', params: {prefix, agent: s.agent, sessionId: s.session_id}}">
                 <template #secondary>
                     <span class="meta">
@@ -95,13 +102,6 @@ h2 {
     font-size: var(--md-type-title-medium-size);
     line-height: var(--md-type-title-medium-line-height);
     font-weight: var(--md-type-title-medium-weight);
-}
-.notice {
-    margin: var(--md-space-16) 0;
-    padding: var(--md-space-8) var(--md-space-16);
-    background: var(--md-primary-container);
-    color: var(--md-on-primary-container);
-    border-radius: var(--md-shape-medium);
 }
 .muted {
     color: var(--md-on-surface-variant);

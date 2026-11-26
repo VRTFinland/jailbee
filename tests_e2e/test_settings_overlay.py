@@ -57,9 +57,7 @@ def test_title_bar_toggle_restores_focus_to_visible_menu(logged_in: Page) -> Non
     page.get_by_role("switch", name="Show title bar").uncheck()
     page.get_by_role("button", name="Close settings").click()
     expect(page.get_by_role("dialog", name="Settings", exact=True)).to_have_count(0)
-    expect(
-        page.get_by_role("button", name="Quick settings", exact=True, include_hidden=True)
-    ).to_be_focused()
+    expect(page.get_by_role("button", name="Quick settings", exact=True)).to_be_focused()
     expect(page.locator(".title-bar")).to_have_count(0)
 
 
@@ -97,6 +95,8 @@ def test_settings_preserves_reader_and_live_updates(
     dialog = page.get_by_role("dialog", name="Settings", exact=True)
     box = dialog.bounding_box()
     assert box is not None
+    # The drawer supplies the inset; the embedded settings body adds none.
+    expect(dialog.locator(".settings-panel")).to_have_css("padding", "0px")
     if width == 390:
         assert box["y"] > 0 and box["width"] == width
     else:
@@ -109,9 +109,7 @@ def test_settings_preserves_reader_and_live_updates(
     expect(dialog).to_have_count(0)
     assert page.url == url
     assert page.evaluate("window.scrollY") == position
-    expect(
-        page.get_by_role("button", name="Quick settings", exact=True, include_hidden=True)
-    ).to_be_focused()
+    expect(page.get_by_role("button", name="Quick settings", exact=True)).to_be_focused()
     open_settings_overlay(page)
     page.keyboard.press("Escape")
     expect(dialog).to_have_count(0)

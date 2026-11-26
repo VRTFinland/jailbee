@@ -227,7 +227,11 @@ describe("ContainerView", () => {
         expect(wrapper.findAll(".children a").map(a => a.attributes("href"))).toEqual([
             "/containers/alpha-task-a", "/containers/alpha-task-b",
         ])
-        expect(wrapper.get(".children").text()).toContain("working · codex/opus")
+        expect(wrapper.get(".children").text()).toContain("working · Runner: codex/opus")
+        const childLink = wrapper.get(".children a")
+        expect(childLink.attributes("aria-label")).toBe("task-a State: working Runner: codex/opus")
+        expect(childLink.text()).toBe("task-a")
+        expect(wrapper.get(".children li.list-row .list-row-secondary").text()).toContain("working · Runner: codex/opus")
         dashboard.state.view = {...orchestrationView(), repos: [{prefix: "alpha", containers: []}]}
         await flushPromises()
         expect(wrapper.findAll(".children a")).toHaveLength(0)
@@ -291,6 +295,7 @@ describe("ContainerView", () => {
     it("says the container was not found on a 404", async () => {
         const {wrapper} = await mountContainer(serve({detail: "x"}, {detail: "x"}, 404))
         expect(wrapper.text()).toContain("Container not found")
+        expect(wrapper.get(".notice").classes()).toContain("ui-notice")
     })
 
     it("shows the live sessions while the history is still loading", async () => {

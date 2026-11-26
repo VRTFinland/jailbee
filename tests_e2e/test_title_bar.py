@@ -52,7 +52,7 @@ def test_title_bar_on_every_signed_in_view(
         page.reload()
         expect(page.get_by_role("heading", name=title, exact=True)).to_be_visible()
         bar = page.locator(".title-bar")
-        trigger = bar.get_by_role("button", name="Quick settings", exact=True, include_hidden=True)
+        trigger = bar.get_by_role("button", name="Quick settings", exact=True)
         expect(trigger).to_be_visible()
         bar_box = bar.bounding_box()
         trigger_box = trigger.bounding_box()

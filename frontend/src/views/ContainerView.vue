@@ -144,13 +144,18 @@ watch([name, historyPage, historyQuery], async ([selected, page, query], previou
             <p v-if="!children.length" class="muted">No children.</p>
             <ul v-else>
                 <ListRow v-for="child in children" :key="child.name" wrap
-                    :to="{name: 'container', params: {name: child.name}}" :link-label="child.cells[0] || child.name">
-                    <template #title>{{ child.cells[0] || child.name }} · {{ child.child?.state }}<template v-if="child.child?.runner"> · {{ child.child.runner }}</template></template>
+                    :to="{name: 'container', params: {name: child.name}}"
+                    :link-label="[child.cells[0] || child.name, child.child?.state ? `State: ${child.child.state}` : null,
+                        child.child?.runner ? `Runner: ${child.child.runner}` : null].filter(Boolean).join(' ')">
+                    <template #title>{{ child.cells[0] || child.name }}</template>
+                    <template #secondary>
+                        State: {{ child.child?.state }}<template v-if="child.child?.runner"> · Runner: {{ child.child.runner }}</template>
+                    </template>
                 </ListRow>
             </ul>
         </section>
         <h2>Sessions</h2>
-        <p v-if="error" class="notice">{{ error }}</p>
+        <p v-if="error" class="notice ui-notice">{{ error }}</p>
         <p v-else-if="live === null" class="muted">Loading…</p>
         <p v-else-if="sessions.length === 0 && !historyPending && !historyFailed && !historyQuery" class="muted">No sessions.</p>
         <Field v-if="live !== null" v-model="search" class="history-search"
@@ -196,14 +201,6 @@ watch([name, historyPage, historyQuery], async ([selected, page, query], previou
 }
 .parent a {
     color: inherit;
-}
-.notice {
-    margin: var(--md-space-16) 0;
-    padding: var(--md-space-8) var(--md-space-16);
-    background: var(--md-primary-container);
-    color: var(--md-on-primary-container);
-    border: 1px solid var(--md-hairline);
-    border-radius: var(--md-shape-medium);
 }
 .muted {
     color: var(--md-on-surface-variant);

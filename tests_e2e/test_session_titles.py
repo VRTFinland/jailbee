@@ -68,7 +68,9 @@ def test_a_mixed_user_record_titles_by_the_typed_text_and_shows_the_reminder_as_
     page.goto(f"{server.url}/#/repos/work")
     page.reload()
 
-    expect(page.get_by_role("link", name=typed, exact=True)).to_have_text(typed)
+    expect(page.get_by_role("link", name=f"{typed} claude unattributed", exact=True)).to_have_text(
+        typed
+    )
     page.get_by_role("link", name=typed).click()
     expect(page.get_by_role("heading", name=typed, exact=True)).to_be_visible()
     expect(page.locator(".entry.user.meta pre.meta")).to_have_text(reminder)
