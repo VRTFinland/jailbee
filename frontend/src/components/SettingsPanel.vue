@@ -7,7 +7,7 @@ import {useDashboard} from "../dashboard"
 import type {MetaMode} from "../protocol"
 import Button from "./ui/Button.vue"
 import Field from "./ui/Field.vue"
-import FieldFrame from "./ui/FieldFrame.vue"
+import Select from "./ui/Select.vue"
 import Switch from "./ui/Switch.vue"
 import {
     DISPLAY_PROFILES,
@@ -105,33 +105,26 @@ function number(event: Event): number {
                 />
                 {{ PROFILE_LABELS[p] }}
             </label>
-            <div class="switch-row">
+            <label class="switch-row">
                 <span>Show title bar</span>
                 <Switch label="Show title bar" :model-value="settings.showTitleBar"
                     @update:model-value="updateSettings({showTitleBar: $event})" />
-            </div>
-            <div class="switch-row">
+            </label>
+            <label class="switch-row">
                 <span>Follow new messages on e-ink</span>
                 <Switch label="Follow new messages on e-ink" :model-value="settings.einkFollow"
                     @update:model-value="updateSettings({einkFollow: $event})" />
-            </div>
+            </label>
         </fieldset>
 
         <fieldset v-if="settings.displayProfile === 'eink'">
             <legend>Page turns</legend>
-            <FieldFrame label="Page controls" class="setting-field" v-slot="{controlAttrs}">
-                <select v-bind="controlAttrs({'aria-label': 'Page controls'})" class="ui-input ui-focus-ring page-controls"
-                    :value="settings.pageControls"
-                    @change="updateSettings({pageControls: ($event.target as HTMLSelectElement).value as PageControls})">
-                    <option v-for="mode in PAGE_CONTROLS" :key="mode" :value="mode">{{ PAGE_CONTROL_LABELS[mode] }}</option>
-                </select>
-            </FieldFrame>
-            <FieldFrame label="Page step" class="setting-field" v-slot="{controlAttrs}">
-                <select v-bind="controlAttrs({})" class="ui-input ui-focus-ring page-step" :value="settings.pageStep"
-                    @change="updateSettings({pageStep: number($event) as PageStep})">
-                    <option v-for="step in PAGE_STEPS" :key="step" :value="step">{{ step }} %</option>
-                </select>
-            </FieldFrame>
+            <Select native label="Page controls" class="setting-field" :model-value="settings.pageControls"
+                :options="PAGE_CONTROLS.map(value => ({value, label: PAGE_CONTROL_LABELS[value]}))"
+                @update:model-value="updateSettings({pageControls: $event as PageControls})" />
+            <Select native label="Page step" aria-label="Page step" class="setting-field" :model-value="String(settings.pageStep)"
+                :options="PAGE_STEPS.map(step => ({value: String(step), label: `${step} %`}))"
+                @update:model-value="updateSettings({pageStep: Number($event) as PageStep})" />
         </fieldset>
 
         <fieldset>
@@ -163,25 +156,19 @@ function number(event: Event): number {
 
         <fieldset>
             <legend>Sessions</legend>
-            <div class="switch-row">
+            <label class="switch-row">
                 <span>Follow new messages (normal display)</span>
                 <Switch label="Follow new messages (normal display)" :model-value="settings.followNewMessages"
                     @update:model-value="updateSettings({followNewMessages: $event})" />
-            </div>
-            <div class="switch-row">
+            </label>
+            <label class="switch-row">
                 <span>Show thinking</span>
                 <Switch label="Show thinking" :model-value="settings.showThinking"
                     @update:model-value="updateSettings({showThinking: $event})" />
-            </div>
-            <FieldFrame label="Agent context" class="setting-field" v-slot="{controlAttrs}">
-                <select v-bind="controlAttrs({})" class="ui-input ui-focus-ring agent-context"
-                    :value="settings.agentContext"
-                    @change="updateSettings({agentContext: ($event.target as HTMLSelectElement).value as MetaMode})">
-                    <option value="hidden">Hidden</option>
-                    <option value="collapsed">Collapsed</option>
-                    <option value="shown">Shown</option>
-                </select>
-            </FieldFrame>
+            </label>
+            <Select native label="Agent context" aria-label="Agent context" class="setting-field" :model-value="settings.agentContext"
+                :options="[{value: 'hidden', label: 'Hidden'}, {value: 'collapsed', label: 'Collapsed'}, {value: 'shown', label: 'Shown'}]"
+                @update:model-value="updateSettings({agentContext: $event as MetaMode})" />
             <p class="muted">
                 Task notifications, system reminders and command output the agent writes into the
                 transcript. Hidden sends none of it; Collapsed sends a label and loads the content when

@@ -61,6 +61,17 @@ describe.each([
 })
 
 describe("Select", () => {
+    it("preserves native platform selection for paginated preference forms", async () => {
+        const wrapper = render(defineComponent({components: {Select}, data: () => ({value: "hidden"}), template: `
+            <Select v-model="value" native label="Agent context" :options="[
+                {value: 'hidden', label: 'Hidden'}, {value: 'shown', label: 'Shown'}]" />
+            <output>{{ value }}</output>`,
+        }))
+        const control = getByRole(document.body, "combobox", {name: "Agent context"})
+        expect(control.tagName).toBe("SELECT")
+        await userEvent.setup().selectOptions(control, "shown")
+        expect(wrapper.get("output").text()).toBe("shown")
+    })
     it("keeps every injected viewport stylesheet allowed by the server CSP", async () => {
         const user = userEvent.setup()
         render(defineComponent({components: {Select}, template: '<Select label="Theme" :options="[{value: \'light\', label: \'Light\'}]" />'}))

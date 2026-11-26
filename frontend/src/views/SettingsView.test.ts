@@ -22,18 +22,18 @@ describe("SettingsView", () => {
 
     it("defaults Agent context to hidden and stores the choice", async () => {
         const wrapper = mount(SettingsView, {global: {stubs: {RouterLink: true, QuickSettings: true}}})
-        expect((wrapper.get("select.agent-context").element as HTMLSelectElement).value).toBe("hidden")
-        await wrapper.get("select.agent-context").setValue("collapsed")
+        expect((wrapper.get('select[aria-label="Agent context"]').element as HTMLSelectElement).value).toBe("hidden")
+        await wrapper.get('select[aria-label="Agent context"]').setValue("collapsed")
         expect(settings.agentContext).toBe("collapsed")
         expect(readItem("jailbee.agentContext")).toBe("collapsed")
-        await wrapper.get("select.agent-context").setValue("hidden")
+        await wrapper.get('select[aria-label="Agent context"]').setValue("hidden")
     })
 
     it("offers page step percentages only for e-ink and remembers the selection", async () => {
         const wrapper = mount(SettingsView, {global: {stubs: {RouterLink: true, QuickSettings: true}}})
-        expect(wrapper.find("select.page-step").exists()).toBe(false)
+        expect(wrapper.find('[aria-label="Page step"]').exists()).toBe(false)
         await wrapper.get("input[name=profile][value=eink]").setValue(true)
-        const select = wrapper.get("select.page-step")
+        const select = wrapper.get('[aria-label="Page step"]')
         expect(select.findAll("option").map(option => option.text())).toEqual(["100 %", "90 %", "75 %", "66 %", "50 %"])
         expect((select.element as HTMLSelectElement).value).toBe("100")
         await select.setValue("75")
@@ -41,6 +41,16 @@ describe("SettingsView", () => {
         expect(readItem("jailbee.pageStep")).toBe("75")
         reloadSettings()
         expect(settings.pageStep).toBe(75)
+    })
+
+    it("toggles a preference when its visible label is clicked", async () => {
+        const wrapper = mount(SettingsView, {attachTo: document.body, global: {stubs: {RouterLink: true, QuickSettings: true}}})
+        const label = wrapper.findAll("label").find(label => label.text() === "Show thinking")!
+        expect(label).toBeDefined()
+        ;(label.element as HTMLLabelElement).click()
+        await flushPromises()
+        expect(settings.showThinking).toBe(true)
+        wrapper.unmount()
     })
 
     it("edits font sizes and the thinking toggle", async () => {

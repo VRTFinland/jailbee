@@ -5,7 +5,7 @@ import {FONT_SIZE_RANGE, settings, THEMES, THEME_LABELS, updateSettings} from ".
 import IconButton from "./ui/IconButton.vue"
 import Button from "./ui/Button.vue"
 import Dialog from "./ui/Dialog.vue"
-import FieldFrame from "./ui/FieldFrame.vue"
+import Select from "./ui/Select.vue"
 import Switch from "./ui/Switch.vue"
 
 const props = defineProps<{context?: "containers" | "session" | null; session?: {agent: string; models: string[]; id: string} | null; parent?: {label: string; to: RouteLocationRaw}}>()
@@ -153,13 +153,11 @@ onBeforeUnmount(() => {
                 </div>
                 <template v-else>
                     <Button type="button" class="menu-row" data-action="jump" @click="showJump">Jump to…</Button>
-                    <div class="menu-row toggle-row"><span>Follow new messages</span><Switch label="Follow new messages" :model-value="follow" @update:model-value="setFollow" /></div>
-                    <div class="menu-row toggle-row"><span>Show thinking</span><Switch label="Show thinking" :model-value="settings.showThinking" @update:model-value="updateSettings({showThinking: $event})" /></div>
-                    <FieldFrame class="menu-row context-row" label="Agent context" v-slot="{controlAttrs}">
-                        <select v-bind="controlAttrs({})" class="ui-input ui-focus-ring" aria-label="Agent context" :value="settings.agentContext" @change="updateSettings({agentContext: ($event.target as HTMLSelectElement).value as 'hidden' | 'collapsed' | 'shown'})">
-                            <option value="hidden">Hidden</option><option value="collapsed">Collapsed</option><option value="shown">Shown</option>
-                        </select>
-                    </FieldFrame>
+                    <label class="menu-row toggle-row"><span>Follow new messages</span><Switch label="Follow new messages" :model-value="follow" @update:model-value="setFollow" /></label>
+                    <label class="menu-row toggle-row"><span>Show thinking</span><Switch label="Show thinking" :model-value="settings.showThinking" @update:model-value="updateSettings({showThinking: $event})" /></label>
+                    <Select native class="menu-row context-row" label="Agent context" aria-label="Agent context" :model-value="settings.agentContext"
+                        :options="[{value: 'hidden', label: 'Hidden'}, {value: 'collapsed', label: 'Collapsed'}, {value: 'shown', label: 'Shown'}]"
+                        @update:model-value="updateSettings({agentContext: $event as 'hidden' | 'collapsed' | 'shown'})" />
                 </template>
             </template>
             <Button type="button" class="menu-row settings-action" @click="showSettings">Settings</Button>

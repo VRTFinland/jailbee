@@ -35,7 +35,7 @@ All live in `src/components/ui/`.
 | A modal question or form, or a side drawer | `Dialog` | `title` required, `description` optional, `placement="drawer"` for a side panel. Body in the default slot; buttons in the `#actions` slot, whose `close` slot prop closes it. A trigger in `#trigger`, or drive `v-model:open`. `placement="popover"` anchors a paginated preferences form below its trigger (it remains a focus-trapped dialog, not an action menu); `hideHeader` keeps its accessible title without a visible header. `preserveScroll` lets a live document keep following beneath an overlay. `closeLabel` names the dismissal icon; `positioned` lets measured pagination run after placement. |
 | A list of actions behind a button | `Menu` | `label`, `items` (`MenuItem`: `value`, `label`, optional `icon`, `disabled`, `variant: "danger"`), `select` event with the value. The trigger goes in `#trigger`. |
 | A text input | `Field` | `v-model`, `label`, `help`, `error`, `type`. Error text is announced and wires `aria-invalid`. |
-| A choice from a fixed list | `Select` | `v-model`, `label`, `options` (`SelectOption`), `placeholder`, `help`, `error`. |
+| A choice from a fixed list | `Select` | `v-model`, `label`, `options` (`SelectOption`), `placeholder`, `help`, `error`. `native` keeps the platform picker for measured preference pages, with the same field visuals and label/error wiring. |
 | A label, help and error around another control | `FieldFrame` | The frame `Field` and `Select` are built on. Bind the default slot's `controlAttrs(attrs)` onto the control; it sets the id, `aria-labelledby`, `aria-describedby` and `aria-invalid`. Never hand-roll label/help/error markup. |
 
 Shared helper classes are prefixed `ui-` so no view class collides with them:

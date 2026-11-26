@@ -232,6 +232,7 @@ function typeStyle(token: string): Record<string, string> {
                             <Select label="Theme" help="Choose a colour theme." v-model="selectedTheme[`${theme.id}-${profile.id}`]" :options="[
                                 {value: 'light', label: 'Light'}, {value: 'dark', label: 'Dark'},
                                 {value: 'system', label: 'System', disabled: true}, {value: 'eink', label: 'E-ink'}]" />
+                            <Select native label="Native preferences" model-value="hidden" :options="[{value: 'hidden', label: 'Hidden'}, {value: 'shown', label: 'Shown'}]" />
                             <Select label="Disabled select" model-value="light" :options="[{value: 'light', label: 'Light'}]" disabled />
                         </div>
                     </div>
