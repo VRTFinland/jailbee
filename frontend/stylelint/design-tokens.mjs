@@ -64,7 +64,7 @@ function invalidValue(property, value) {
     }
     if (property === "box-shadow") {
         const shadow = value.trim().toLowerCase()
-        if (shadow !== "none" && !keywords.has(shadow)) return value.trim()
+        if (shadow !== "var(--md-elevation-level-2)" && shadow !== "none" && !keywords.has(shadow)) return value.trim()
     }
     if (sizes.test(property) || pxProperties.has(property)) {
         const hairline = hairlineProperties.test(property)

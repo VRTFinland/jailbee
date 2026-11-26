@@ -6,6 +6,12 @@ import {readItem} from "../storage"
 import {reloadSettings, settings, startSettings} from "../settings"
 
 describe("SettingsView", () => {
+    it("keeps the root breadcrumb before Settings", () => {
+        const wrapper = mount(SettingsView, {global: {stubs: {RouterLink: {template: '<a><slot /></a>'}, QuickSettings: true}}})
+        expect(wrapper.findAll('nav[aria-label="Breadcrumb"] a').map(link => link.text())).toEqual(["JailBee"])
+        expect(wrapper.get('nav h1').text()).toBe('Settings')
+        wrapper.unmount()
+    })
     beforeEach(() => {
         vi.stubGlobal("matchMedia", () => ({matches: false, addEventListener() {}, removeEventListener() {}}))
         reloadSettings()

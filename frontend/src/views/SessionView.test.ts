@@ -100,6 +100,14 @@ afterEach(() => {
 })
 
 describe("SessionView", () => {
+    it.each(["alpha-1", null])("keeps the root and repo and adds the summary's container only when known (%s)", async container => {
+        const {wrapper} = await mountSession(vi.fn(async input => jsonResponse(200,
+            String(input).endsWith('/summary') ? {container} : transcript,
+        )))
+        const links = wrapper.findAll('nav[aria-label="Breadcrumb"] a')
+        expect(links.map(link => link.text())).toEqual(["JailBee", "alpha", ...(container ? [container] : [])])
+        if (container) expect(links.at(-1)!.attributes('href')).toBe('/containers/alpha-1')
+    })
     it("opens jump from the session menu and indicator, but not while typing", async () => {
         updateSettings({displayProfile: "eink"})
         const {wrapper} = await mountSession(vi.fn().mockResolvedValue(jsonResponse(200, transcript)))

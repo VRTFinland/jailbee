@@ -46,10 +46,10 @@ onBeforeUnmount(() => window.removeEventListener("resize", place))
         <DialogRoot v-model:open="open">
             <DialogTrigger v-if="$slots.trigger" as-child><slot name="trigger" /></DialogTrigger>
             <DialogPortal v-if="open">
-                <div v-bind="scope" class="ui-overlay-scope">
+                <div v-bind="scope" class="ui-overlay-scope" :data-dialog-placement="placement">
                     <div v-if="preserveScroll" class="ui-dialog-scrim" @pointerdown.left.self.prevent />
                     <DialogOverlay v-else class="ui-dialog-scrim" />
-                    <DialogContent class="ui-dialog ui-focus-ring" :data-placement="placement" :style="position"
+                    <DialogContent class="ui-dialog ui-focus-ring" :class="{'ui-popup': anchored}" :data-placement="placement" :style="position"
                         aria-modal="true" v-bind="{...$attrs, ...(!description && {'aria-describedby': undefined})}">
                         <header class="ui-dialog-header" :class="{'ui-dialog-hidden-header': hideHeader}">
                             <DialogTitle class="ui-dialog-title">{{ title }}</DialogTitle>
@@ -98,7 +98,10 @@ onBeforeUnmount(() => window.removeEventListener("resize", place))
     width: min(22rem, calc(100vw - var(--md-space-32)));
     max-height: none;
     padding: var(--md-space-8);
-    border-radius: var(--md-shape-medium);
+    border-radius: var(--md-shape-extra-small);
+    background: var(--md-surface-container);
+    font-size: var(--md-type-body-medium-size);
+    line-height: var(--md-type-body-medium-line-height);
 }
 .ui-dialog-hidden-header {
     position: absolute;
@@ -130,6 +133,15 @@ onBeforeUnmount(() => window.removeEventListener("resize", place))
     gap: var(--md-space-8);
     margin-top: var(--md-space-16);
 }
+.ui-dialog[data-placement="drawer"] {
+    border-radius: var(--md-shape-large) var(--md-shape-large) 0 0;
+    animation: ui-sheet-up var(--md-motion-sheet-duration) var(--md-motion-easing);
+}
+[data-dialog-placement="drawer"] .ui-dialog-scrim {
+    animation: ui-overlay-appear var(--md-motion-sheet-duration) var(--md-motion-easing);
+}
+@keyframes ui-sheet-up { from { transform: translateY(100%); } to { transform: translateY(0); } }
+@keyframes ui-sheet-in { from { transform: translateX(100%); } to { transform: translateX(0); } }
 @media (min-width: 48rem) {
     .ui-dialog[data-placement="dialog"] {
         inset: 0;
@@ -142,7 +154,8 @@ onBeforeUnmount(() => window.removeEventListener("resize", place))
         inset: 0 0 0 auto;
         width: min(28rem, 90vw);
         max-height: 100dvh;
-        border-radius: var(--md-shape-extra-large) 0 0 var(--md-shape-extra-large);
+        border-radius: var(--md-shape-large) 0 0 var(--md-shape-large);
+        animation-name: ui-sheet-in;
     }
 }
 </style>

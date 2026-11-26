@@ -33,6 +33,11 @@ it("rejects raw colours, sizes, shapes, shadows and motion in an unlisted Vue co
     ])
 })
 
+it("allows the shared menu elevation token but not raw shadow fallbacks", async () => {
+    expect((await lintStyle('box-shadow: var(--md-elevation-level-2);')).errored).toBe(false)
+    expect((await lintStyle('box-shadow: var(--md-elevation-level-2, 0 3px 6px currentColor);')).errored).toBe(true)
+})
+
 it("exempts only token declarations in tokens.css; any other rule there fails", async () => {
     const lint = (code: string) => stylelint.lint({
         cwd: frontend, configFile, code, codeFilename: path.join(frontend, "src/styles/tokens.css"),

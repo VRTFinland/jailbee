@@ -49,6 +49,12 @@ async function mountRepo(fetchMock: ReturnType<typeof vi.fn<typeof fetch>>, dash
 }
 
 describe("RepoView", () => {
+    it("keeps the root breadcrumb before the current repository", async () => {
+        const {wrapper} = await mountRepo(vi.fn().mockResolvedValue(jsonResponse(200, {sessions})))
+        expect(wrapper.findAll('nav[aria-label="Breadcrumb"] a').map(link => link.text())).toEqual(["JailBee"])
+        expect(wrapper.get('nav h1').text()).toBe('alpha')
+        wrapper.unmount()
+    })
     afterEach(() => updateSettings({displayProfile: "normal"}))
 
     it("shows the repository's nested containers and updates when a child disappears", async () => {

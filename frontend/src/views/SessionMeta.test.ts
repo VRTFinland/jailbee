@@ -91,15 +91,18 @@ describe("SessionView agent context", () => {
         ])
         expect(records.every((r) => !r.attributes("open") && r.attributes("open") === undefined)).toBe(true)
         expect(wrapper.text()).toContain("Fix it")
-        expect(fetchMock).toHaveBeenCalledTimes(1)
+        expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+            '/api/repos/alpha/sessions/claude/s-1?meta=collapsed',
+            '/api/repos/alpha/sessions/claude/s-1/summary',
+        ])
     })
 
     it("fetches the content on first expand only, and shows it", async () => {
         updateSettings({agentContext: "collapsed"})
-        const fetchMock = vi
-            .fn()
-            .mockResolvedValueOnce(json(collapsed))
-            .mockResolvedValue(json({id: "m1", html: '<pre class="meta">Job done</pre>'}))
+        const fetchMock = vi.fn(async input => json(
+            String(input).includes('/entries/') ? {id: "m1", html: '<pre class="meta">Job done</pre>'}
+                : String(input).endsWith('/summary') ? {container: null} : collapsed,
+        ))
         const wrapper = await mountSession(fetchMock)
         const first = wrapper.findAll("details.meta-record")[0]
 
@@ -107,7 +110,7 @@ describe("SessionView agent context", () => {
         await first.trigger("toggle")
         await flushPromises()
 
-        expect(fetchMock.mock.calls[1][0]).toBe("/api/repos/alpha/sessions/claude/s-1/entries/m1")
+        expect(fetchMock.mock.calls[2][0]).toBe("/api/repos/alpha/sessions/claude/s-1/entries/m1")
         expect(first.text()).toContain("Job done")
 
         first.element.removeAttribute("open")
@@ -115,7 +118,7 @@ describe("SessionView agent context", () => {
         first.element.setAttribute("open", "")
         await first.trigger("toggle")
         await flushPromises()
-        expect(fetchMock).toHaveBeenCalledTimes(2)
+        expect(fetchMock.mock.calls.filter(([url]) => String(url).includes('/entries/'))).toHaveLength(1)
     })
 
     it("shows a label line for a slash command in hidden mode and nothing else", async () => {
@@ -143,14 +146,17 @@ describe("SessionView agent context", () => {
     })
 
     it("re-reads the transcript when the setting changes", async () => {
-        const fetchMock = vi.fn<typeof fetch>().mockResolvedValueOnce(json(view([typed]))).mockResolvedValue(json(collapsed))
+        const fetchMock = vi.fn(async input => json(
+            String(input).endsWith('/summary') ? {container: null}
+                : String(input).includes('meta=collapsed') ? collapsed : view([typed]),
+        ))
         const wrapper = await mountSession(fetchMock)
         expect(wrapper.find("details").exists()).toBe(false)
 
         updateSettings({agentContext: "collapsed"})
         await flushPromises()
 
-        expect(fetchMock.mock.calls[1][0]).toBe("/api/repos/alpha/sessions/claude/s-1?meta=collapsed")
+        expect(fetchMock.mock.calls[2][0]).toBe("/api/repos/alpha/sessions/claude/s-1?meta=collapsed")
         expect(wrapper.findAll("details.meta-record")).toHaveLength(3)
     })
 })
