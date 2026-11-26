@@ -253,11 +253,7 @@ def complete_orphan(ctx: typer.Context, incomplete: str) -> list[str]:
 
 @_completion_guard
 def complete_branch(ctx: typer.Context, incomplete: str) -> list[str]:
-    """Complete a branch name from the host repo's local branches.
-
-    Used by `jailbee new` (both positionals) and `jailbee retarget`, whose base must
-    already exist on the host as ``refs/heads/<branch>``.
-    """
+    """Complete a branch name from the host repo's local branches."""
     from jailbee.git import list_branches
 
     loaded = _load()
@@ -269,10 +265,10 @@ def complete_branch(ctx: typer.Context, incomplete: str) -> list[str]:
 
 @_completion_guard
 def complete_base_branch(ctx: typer.Context, incomplete: str) -> list[str]:
-    """Complete a `jailbee new` base from local and already-fetched upstream branches.
+    """Complete a new-container or retarget base from local and fetched upstream branches.
 
-    A release branch is often fetched but never checked out; `jailbee new`
-    accepts one that exists only as ``refs/remotes/<upstream>/...``.
+    A release branch is often fetched but never checked out; both commands
+    accept one that exists only as ``refs/remotes/<upstream>/...``.
     """
     from jailbee.git import list_base_candidates
 

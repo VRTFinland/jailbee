@@ -4022,17 +4022,17 @@ def test_new_container_reject_note_for_prefix_names_the_orphan_repo(tmp_path):
 
 
 def test_host_branches_lists_the_groups_repo_minus_the_excluded(mocker, tmp_path):
-    lb = mocker.patch("jailbee.git.list_branches", return_value=["main", "feat/a", "dev"])
+    lb = mocker.patch("jailbee.git.list_base_candidates", return_value=["main", "feat/a", "dev"])
     assert dmenus.host_branches(str(tmp_path), exclude="feat/a") == ("main", "dev")
     lb.assert_called_once_with(tmp_path)
 
 
-def test_host_branches_with_remote_offers_upstream_only_branches(mocker, tmp_path):
+def test_host_branches_offers_upstream_only_branches(mocker, tmp_path):
     local = mocker.patch("jailbee.git.list_branches")
     both = mocker.patch(
         "jailbee.git.list_base_candidates", return_value=["main", "feat/a", "release/2.1"]
     )
-    assert dmenus.host_branches(str(tmp_path), exclude="feat/a", include_remote=True) == (
+    assert dmenus.host_branches(str(tmp_path), exclude="feat/a") == (
         "main",
         "release/2.1",
     )
@@ -4041,7 +4041,7 @@ def test_host_branches_with_remote_offers_upstream_only_branches(mocker, tmp_pat
 
 
 def test_host_branches_is_empty_without_a_repo_root(mocker):
-    lb = mocker.patch("jailbee.git.list_branches")
+    lb = mocker.patch("jailbee.git.list_base_candidates")
     assert dmenus.host_branches(None) == ()
     lb.assert_not_called()
 

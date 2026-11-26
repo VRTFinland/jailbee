@@ -6584,6 +6584,33 @@ def test_retarget_pushes_new_base_and_deletes_old(mocker, make_cfg, tmp_path):
     assert result.base_oid == "abc1234"
 
 
+@pytest.mark.parametrize("remote", ["origin", "upstream"])
+def test_retarget_remote_only_base_pushes_the_fetched_ref(mocker, make_cfg, tmp_path, remote):
+    from jailbee import sync
+
+    cfg = make_cfg(tmp_path).model_copy(update={"upstream_remote": remote})
+    incus = _retarget_setup(mocker)
+    mocker.patch("jailbee.sync.git.rev_parse", side_effect=[None, "abc1234"])
+    push_multi = mocker.patch("jailbee.sync.git.push_url_multi")
+
+    result = sync.retarget_container(cfg, incus, "feat-b", "release/2.1")
+
+    push_multi.assert_called_once_with(
+        cfg.repo_root,
+        "ext::receive",
+        [
+            f"+refs/remotes/{remote}/release/2.1:refs/jailbee/base/release/2.1",
+            ":refs/jailbee/base/feat/a",
+        ],
+    )
+    assert result.new_base == "release/2.1"
+    assert result.base_oid == "abc1234"
+    assert incus.config_set.call_args_list == [
+        mocker.call("p-feat-b", "user.jailbee.base_branch", "release/2.1"),
+        mocker.call("p-feat-b", "user.jailbee.base_explicit", "true"),
+    ]
+
+
 def test_retarget_without_old_base_pushes_only_new(mocker, make_cfg, tmp_path):
     from jailbee import sync
 

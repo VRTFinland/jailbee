@@ -401,6 +401,15 @@ new base branch, it uses the same ff-only/divergence handling as `push --merge`.
 There are no tag or ff overrides on `retarget`. The base label and anchors
 change **before** the optional merge: a failed merge does not undo retargeting.
 
+Retarget accepts the same bases as `jailbee new`: local branches followed by
+already-fetched upstream branches, without duplicates or the upstream `HEAD`
+symref. The CLI and dashboards omit the current base from their suggestions.
+A local branch takes precedence; otherwise the anchor comes from
+`refs/remotes/<upstream>/<base>`. Retarget does not fetch or create a host local
+branch. A later `git pull` may create that local branch when merging the
+container's work back; `git push`, status comparisons and PR publishing can
+use a fetched-only base directly.
+
 ## Fast-forward policy
 
 `ff` (`pull.ff` / `push.ff`, or `--ff`/`--no-ff`) controls whether a merge

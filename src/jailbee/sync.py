@@ -2423,7 +2423,8 @@ def retarget_container(
     new base into the container's branch — that is ``jailbee git push --merge``.
 
     ``source_ref`` overrides the host ref the anchor is taken from, exactly as
-    it does in `push_to_container`. Default is ``refs/heads/<new_base>``, but
+    it does in `push_to_container`. Default is ``refs/heads/<new_base>``, falling
+    back to ``refs/remotes/<upstream>/<new_base>`` without creating a local branch.
     `jailbee pr push --stacked` retargets onto a PR head, which lives in jailbee's
     own ``refs/jailbee/pr/<N>/head`` and deliberately in no branch at all — a
     same-named local branch, stale or ahead, must not decide the anchor. The
@@ -2465,12 +2466,15 @@ def retarget_container(
 
     anchor_ref = source_ref if source_ref is not None else f"refs/heads/{new_base}"
     base_oid = git.rev_parse(cfg.repo_root, anchor_ref)
+    if base_oid is None and source_ref is None:
+        anchor_ref = f"refs/remotes/{cfg.upstream_remote}/{new_base}"
+        base_oid = git.rev_parse(cfg.repo_root, anchor_ref)
     if base_oid is None:
         raise SyncError(
             f"Base ref '{anchor_ref}' does not exist on host. Create or fetch it first."
             if source_ref is not None
-            else f"Branch '{new_base}' does not exist on host (refs/heads/{new_base}). "
-            f"Create or fetch it first."
+            else f"Branch '{new_base}' does not exist on host (refs/heads/{new_base} or "
+            f"{anchor_ref}). Create or fetch it first."
         )
 
     old_label = incus.config_get(full_name, "user.jailbee.base_branch")

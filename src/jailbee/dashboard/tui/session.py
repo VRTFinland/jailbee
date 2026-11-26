@@ -3333,7 +3333,6 @@ class DashboardSession:
                     repo.repo_root
                     if (repo := target_group(self.groups, prompt.target, "repo"))
                     else None,
-                    include_remote=True,
                 ),
             )
         if prompt.purpose == "new-base":

@@ -145,6 +145,29 @@ def _retarget(mocker, tmp_path, steps, **kw):  # type: ignore[no-untyped-def]
     return drive(mocker, [*RETARGET, *steps], [retarget_group(tmp_path)], **kw)
 
 
+def test_retarget_lists_and_accepts_a_fetched_upstream_base(mocker, tmp_path):
+    mocker.patch("jailbee.git.list_branches", return_value=["main", "feat/a"])
+    mocker.patch(
+        "jailbee.git.list_base_candidates",
+        return_value=["main", "feat/a", "release/2.1"],
+    )
+    child = mocker.patch.object(tsession.subprocess, "run")
+    child.return_value.returncode = 0
+    patch_pause(mocker)
+
+    run = drive(
+        mocker,
+        [*RETARGET, *keys("release/2.1"), "enter"],
+        [retarget_group(tmp_path)],
+    )
+
+    assert run.of_type(TextPrompt)[0].suggestions == ("main", "release/2.1")
+    child.assert_called_once()
+    assert child.call_args.args[0] == [
+        "jailbee", "git", "retarget", "--", "alpha-x", "release/2.1"
+    ]
+
+
 def test_n_opens_a_focused_prompt(mocker, tmp_path):
     mocker.patch.object(tsession, "new_container_base_default", return_value="main")
     focused: list[str] = []

@@ -447,6 +447,10 @@ before editing `## Unreleased`.
 
 ### Changed
 
+- `jailbee git retarget` accepts already-fetched upstream branches as bases,
+  without creating a local host branch. Its CLI, dashboard and shell-completion
+  candidates now match the new-container base picker (local branches first,
+  then upstream-only branches); the current base is omitted from the picker.
 - Successful broker destruction of a child marks read only the unread,
   broker-generated `idle` notices snapshotted for that child before destruction.
   Other messages, children and orchestrators are unaffected
