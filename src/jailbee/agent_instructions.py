@@ -170,7 +170,9 @@ def missing_staging_dirs(cfg: Config) -> list[Path]:
     return [
         directory
         for name, gi in instruction_agents(cfg)
-        if not (directory := staging_dir(name, gi.file, unattended=unattended_for(cfg, name))).is_dir()
+        if not (
+            directory := staging_dir(name, gi.file, unattended=unattended_for(cfg, name))
+        ).is_dir()
     ]
 
 

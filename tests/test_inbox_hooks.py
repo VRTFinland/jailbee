@@ -40,11 +40,13 @@ def test_permission_request_denied_only_in_unattended_mode(monkeypatch, unattend
     result = CliRunner().invoke(
         container_app,
         ["inbox", "hook", "permission-request"],
-        input=json.dumps({
-            "hook_event_name": "PermissionRequest",
-            "tool_name": tool_name,
-            "tool_input": {"command": "cd x && rm -rf ./y/*"},
-        }),
+        input=json.dumps(
+            {
+                "hook_event_name": "PermissionRequest",
+                "tool_name": tool_name,
+                "tool_input": {"command": "cd x && rm -rf ./y/*"},
+            }
+        ),
     )
     assert result.exit_code == 0
     if unattended is None:

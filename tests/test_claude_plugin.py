@@ -15,7 +15,9 @@ def test_unattended_settings_default_and_opt_out(make_cfg, tmp_path, monkeypatch
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
     enabled = make_cfg(tmp_path / "repo", agents={"claude": {"enabled": True}})
     claude_plugin.stage(enabled)
-    enabled_source = Path(claude_plugin.profile_devices(enabled)["claude-managed-settings"]["source"])
+    enabled_source = Path(
+        claude_plugin.profile_devices(enabled)["claude-managed-settings"]["source"]
+    )
     settings = json.loads((enabled_source / "50-jailbee.json").read_text())
     assert settings["permissions"] == {
         "defaultMode": "bypassPermissions",
@@ -26,7 +28,9 @@ def test_unattended_settings_default_and_opt_out(make_cfg, tmp_path, monkeypatch
 
     disabled = with_agent(enabled, "claude", unattended=False)
     claude_plugin.stage(disabled)
-    disabled_source = Path(claude_plugin.profile_devices(disabled)["claude-managed-settings"]["source"])
+    disabled_source = Path(
+        claude_plugin.profile_devices(disabled)["claude-managed-settings"]["source"]
+    )
     old_settings = json.loads((disabled_source / "50-jailbee.json").read_text())
     assert set(old_settings) == {"extraKnownMarketplaces", "enabledPlugins"}
     # Applying another repo's opt-out cannot change this repo's live policy mount.
@@ -123,7 +127,9 @@ def test_settings_and_profile_are_independent_of_instructions(make_cfg, tmp_path
     cfg = make_cfg(tmp_path / "repo", agents={"claude": {"enabled": True, "unattended": False}})
     cfg._agent_instructions = False
     claude_plugin.stage(cfg)
-    settings = json.loads((claude_plugin.staging_dir(unattended=False) / "50-jailbee.json").read_text())
+    settings = json.loads(
+        (claude_plugin.staging_dir(unattended=False) / "50-jailbee.json").read_text()
+    )
     assert settings == {
         "extraKnownMarketplaces": {
             "jailbee": {
