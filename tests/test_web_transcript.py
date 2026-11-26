@@ -905,3 +905,17 @@ def test_an_interruption_notice_keeps_its_label_line(
         False,
     )
     assert typed["meta"] is False
+
+
+def test_subagent_transcript_never_advertises_parent_chat(client, home, monkeypatch):
+    from jailbee.web.protocol import ChatAvailability
+
+    _subagent_session(home)
+    monkeypatch.setattr(
+        "jailbee.web.chat.availability",
+        lambda *args: ChatAvailability(available=True, code="available", message="Available"),
+    )
+    assert client.get(URL).json()["chat"]["available"] is True
+    chat = client.get(SUBAGENT_URL).json()["chat"]
+    assert chat["available"] is False
+    assert chat["code"] == "unsupported_agent"
