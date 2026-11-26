@@ -1194,7 +1194,14 @@ the originating dashboard applies the interaction-based deferral rule, while
 other dashboards leave them pending. Answering or aborting from an allowed
 dashboard settles the current question once; a modal answered elsewhere closes
 with a notice. `Later` remains local and does not answer the command. Neither
-questions nor their answers are persisted.
+questions nor their answers are persisted. Finished history retains the newest
+100 entries for at most seven days; running and awaiting entries are never
+pruned. Closing a dashboard does not cancel its actions or questions and asks
+no quit confirmation. The service's idle timer starts only after no clients or
+live work remain. Remote start, answer and abort requests are checked against
+the transport's host-side policy; a disallowed question is read-only with
+"answer in a local dashboard". When upgrading with live actions in an older
+service, wait and drain is the default; replacement explicitly interrupts them.
 
 The menu, in order: `Attach tmux`, then `Launch →` with one "Launch
 `<name>`" entry per app the repo's GUI registry declares (browsers, the

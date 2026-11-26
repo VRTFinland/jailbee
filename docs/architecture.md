@@ -417,8 +417,9 @@ frontend (`qtui/`) consume snapshots through `state_service/client.py`'s
 service per host user gathers container state and broadcasts snapshots over a
 Unix socket. Its `Gatherer`
 uses separate cadences for base state and more expensive Git status, avoiding
-one polling loop per open dashboard. The service exits after an idle period
-with no connected dashboards.
+one polling loop per open dashboard. Its idle exit applies only with no connected
+dashboards, running actions or pending questions. The idle timer restarts when
+the last work finishes, so closing a dashboard cannot cut a command off.
 
 Frontend-independent models, columns, menus and dispatch live in the shared
 `dashboard/` package; the state service and Qt frontend do not depend on the
@@ -429,9 +430,14 @@ command, target, origin identity, transport and repository scope; the service
 uses `dashboard/runner.py` rather than adding another subprocess boundary.
 Entry updates, output chunks and final results travel back over the state
 protocol. Entries are shared with dashboards in scope and stored in the host
-state database until dismissed. On startup, unfinished entries become
-`interrupted`; pending questions are not persisted. Critical foreground state
-and terminal hand-off blocking remain local to the originating dashboard.
+state database. Finished history is limited to the newest 100 entries and seven
+days; running and awaiting entries are retained. On startup, unfinished entries
+become `interrupted`; pending questions are not persisted. Each action has its own
+thread, separate from the gatherer's executor. Output snapshots are coalesced and
+persisted off the event loop; a storage error cannot suppress completion delivery.
+Persisted payloads are versioned, and invalid rows are skipped with a warning.
+Critical foreground state and terminal hand-off blocking remain local to the
+originating dashboard.
 The state service arbitrates answers on its event loop: only the first answer
 for the current question identity reaches the child. Dashboards receive pending
 questions and resolution notices through `StateClient`; a dashboard disconnect
@@ -439,6 +445,18 @@ never resolves a service-owned question. Interaction-based question routing stay
 in the frontend-agnostic `dashboard/` core and is applied only by the originating
 dashboard. Other dashboards keep the question pending until explicitly opened.
 Questions and answers, including secrets, are never written to the action store.
+
+A connection establishes the requesting transport. The service resolves that
+transport's host-side remote policy and repository visibility before starting an
+action, accepting an answer or aborting a question. Read visibility follows scope,
+not command permission: a disallowed question remains visible read-only. Action
+environments come from each request, not the service's startup shell.
+
+Version replacement queries live work first. Waiting drains the old service:
+new actions are refused while existing actions and questions finish. Explicit
+replacement cancels and reaps its child processes and persists interrupted
+entries before releasing the service lifetime lock. Upgrade questions use
+`prompting`; background reconnects never seize a dashboard's terminal.
 
 ## Prompt channel and action runner
 

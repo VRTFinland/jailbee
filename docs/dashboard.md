@@ -95,14 +95,25 @@ Lifecycle jobs remain in the same queue alongside these actions.
 
 Entries and their capped output tails are stored in the host state database
 until dismissed or automatically pruned. The service retains at most the 100
-newest finished entries, and no finished entry older than seven days; running,
-awaiting and interrupted entries are never pruned. Every dashboard receives
-automatic dismissals so its in-memory queue stays in sync. After a state service
-restart, an entry left running or awaiting an answer is shown as **interrupted**,
-in the failure colour, and counts as needing attention. Pending questions
-themselves are not stored. In this first
-action-host slice, a command that asks through the service receives cancellation;
-shared question delivery and action-aware service lifetime are follow-up work.
+newest finished entries, and no finished entry older than seven days. Running
+and awaiting entries are never pruned; interrupted results follow the finished
+history limit. Every dashboard receives automatic dismissals so its in-memory
+queue stays in sync. After a state service restart, an entry left running or
+awaiting an answer is shown as **interrupted**, in the failure colour, and counts
+as needing attention. Pending questions themselves are not stored.
+
+The state service holds the command's prompt channel and publishes its questions
+to dashboards in scope. Only the dashboard that started the action may open a new
+question automatically, using the deferral rule above; other dashboards leave it
+pending. The first accepted answer wins. A question open elsewhere closes with
+an "answered in another dashboard" notice. **Later** affects only the current
+dashboard. Remote dashboards may answer or abort only when their transport's
+policy permits the command; otherwise the question is read-only with
+"answer in a local dashboard".
+
+Closing a dashboard cancels no service-owned action or question. The service
+remains alive while work runs or a question waits, even with no dashboards
+connected. Once no work or clients remain, its normal idle timeout starts.
 The full queue controls are in [Commands](commands.md#terminal-dashboard-actions).
 
 ## Keys
@@ -137,12 +148,11 @@ list. (Source of truth: `KEY_BINDINGS` in
 | `q` | quit (closes an overlay first) |
 | `Ctrl-C` | quit (Abort command within an action question) |
 
-Quitting with pending action questions asks for confirmation and names how
-many commands will be aborted. Declining leaves them waiting; confirming
-cancels them, including a modal that is still opening. With no pending
-questions, quitting needs no extra confirmation. No answer is accepted on
-behalf of the user. Each question accepts only its first answer or Later/Abort
-choice; repeated input already queued for that modal cannot close another screen.
+Quitting needs no pending-question confirmation: another dashboard can answer
+later. Within a question, Esc means **Later**, while Ctrl-C means **Abort command**
+(they do not quit the dashboard). Each question accepts only its first answer or
+Later/Abort choice; repeated input already queued for that modal cannot close
+another screen.
 
 ## Menu map
 
