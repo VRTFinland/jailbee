@@ -3,6 +3,8 @@
 // AuthSetupView, cut down to the key registration; everything else about logins
 // is managed with `jailbee remote web auth` on the host.
 import {computed, ref} from "vue"
+import Button from "../components/ui/Button.vue"
+import Field from "../components/ui/Field.vue"
 import {registerSecurityKey} from "../setup"
 
 const pin = ref("")
@@ -38,35 +40,30 @@ async function submit() {
             The key will log in only at <code>{{ here }}</code>: open this page at the address you log in at.
         </p>
         <form class="form" @submit.prevent="submit">
-            <label>
-                <span>Key name</span>
-                <input
-                    v-model="name"
-                    name="key-name"
-                    type="text"
-                    autocomplete="off"
-                    maxlength="100"
-                    placeholder="e.g. YubiKey 5"
-                />
-            </label>
-            <label>
-                <span>Setup PIN</span>
-                <input
-                    v-model="pin"
-                    name="pin"
-                    class="digits"
-                    type="text"
-                    inputmode="numeric"
-                    autocomplete="one-time-code"
-                    pattern="[0-9]*"
-                    maxlength="6"
-                    placeholder="000000"
-                    autofocus
-                />
-            </label>
-            <button type="submit" class="primary" :disabled="!ready">
+            <Field
+                v-model="name"
+                label="Key name"
+                name="key-name"
+                type="text"
+                autocomplete="off"
+                maxlength="100"
+                placeholder="e.g. YubiKey 5"
+            />
+            <Field
+                v-model="pin"
+                label="Setup PIN"
+                name="pin"
+                type="text"
+                inputmode="numeric"
+                autocomplete="one-time-code"
+                pattern="[0-9]*"
+                maxlength="6"
+                placeholder="000000"
+                autofocus
+            />
+            <Button type="submit" variant="primary" :disabled="!ready">
                 {{ loading ? "Touch your key…" : "Register key" }}
-            </button>
+            </Button>
         </form>
         <p v-if="error" class="error" role="alert">{{ error }}</p>
         <ul v-if="registered.length" class="done">
@@ -82,53 +79,25 @@ async function submit() {
 .setup {
     max-width: 26rem;
     margin: 0 auto;
-    padding: max(4rem, calc(var(--quick-trigger-top) + var(--quick-trigger-size) + 0.75rem)) var(--space-3) 4rem;
+    padding: max(calc(var(--md-space-32) + var(--md-space-32)), calc(var(--quick-trigger-top) + var(--quick-trigger-size) + var(--md-space-12))) var(--md-space-16) calc(var(--md-space-32) + var(--md-space-32));
+}
+.setup h1 {
+    font-size: var(--md-type-title-large-size);
+    line-height: var(--md-type-title-large-line-height);
+    font-weight: var(--md-type-title-large-weight);
 }
 .form {
     display: flex;
     flex-direction: column;
-    gap: var(--space-3);
-    margin-top: var(--space-4);
-}
-label {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-1);
-}
-input {
-    font: inherit;
-    padding: var(--space-2) var(--space-3);
-    border: 1px solid var(--border-strong);
-    border-radius: var(--radius);
-    background: var(--surface);
-    color: var(--text);
-    min-height: 3rem;
-}
-.digits {
-    font-family: var(--font-mono);
-    font-size: 1.5rem;
-    letter-spacing: 0.4em;
-    text-align: center;
-}
-.primary {
-    font: inherit;
-    min-height: 3rem;
-    border: none;
-    border-radius: var(--radius);
-    background: var(--accent);
-    color: var(--accent-text);
-    cursor: pointer;
-}
-.primary:disabled {
-    opacity: 0.5;
-    cursor: default;
+    gap: var(--md-space-16);
+    margin-top: var(--md-space-24);
 }
 .error {
-    margin-top: var(--space-3);
-    color: var(--danger);
+    margin-top: var(--md-space-16);
+    color: var(--md-error);
 }
 .done {
-    margin-top: var(--space-3);
-    padding-left: var(--space-4);
+    margin-top: var(--md-space-16);
+    padding-left: var(--md-space-24);
 }
 </style>
