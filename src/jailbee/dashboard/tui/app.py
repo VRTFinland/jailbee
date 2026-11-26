@@ -26,6 +26,7 @@ from jailbee.config.models_remote import RemotePolicy
 from jailbee.dashboard import runner as drunner
 from jailbee.dashboard.commands import Transport
 from jailbee.dashboard.hit import Hit
+from jailbee.dashboard.notifications import should_show_question
 from jailbee.dashboard.runner import ActionOutcome, ActionRun
 from jailbee.dashboard.tui import scrollbar
 from jailbee.dashboard.tui.frame import DashboardView
@@ -119,6 +120,10 @@ class _OnAppThread:
         self._lock = threading.Lock()
         self._pending: list[tuple[int, str]] = []
         self._scheduled = False
+        self.asking_entry: int | None = None
+
+    def entry_id(self, index: int) -> int:
+        return self._inner.entry_id(index)
 
     def output(self, index: int, chunk: str) -> None:
         with self._lock:
@@ -142,6 +147,7 @@ class _OnAppThread:
     def question(self, index: int, asking: bool) -> None:
         def ask() -> None:
             self.drain()
+            self.asking_entry = self._inner.entry_id(index) if asking else None
             self._inner.question(index, asking)
 
         self._on_app_thread(ask)
@@ -210,7 +216,10 @@ class DashboardApp(App[int], inherit_bindings=False):
         self._ui_thread = threading.get_ident()
         self._pending_prompts: set[asyncio.Future[Any]] = set()
         self._prompts_closed = False
+        self._entry_answers: dict[int, asyncio.Future[Any]] = {}
+        self._shown_questions: set[int] = set()
         self._output_screen: OutputScreen | None = None  # the one a live entry follows
+        self._critical_screen: OutputScreen | None = None
 
     # --- Terminal protocol -------------------------------------------------
 
@@ -277,7 +286,9 @@ class DashboardApp(App[int], inherit_bindings=False):
                     run=self.action_runner,
                     transport=session.transport,
                     policy=session.ssh_policy,
-                    on_prompt=self._ask_from_worker,
+                    on_prompt=lambda prompt: self._ask_from_worker(
+                        prompt, None if relay is None else relay.asking_entry
+                    ),
                     progress=relay,
                     client=self.remote_client,
                     **extra,
@@ -312,6 +323,8 @@ class DashboardApp(App[int], inherit_bindings=False):
         screen = OutputScreen(title, text, failed=failed, background=background)
         if live:  # only a live screen is ever rewritten; a plain one stacked on top leaves it be
             self._output_screen = screen
+        if background:  # identify the critical modal, not whichever output last streamed
+            self._critical_screen = screen
         self.push_screen(screen, None if on_close is None else lambda _result: on_close())
 
     def update_output(self, text: str, failed: bool = False) -> None:
@@ -345,30 +358,63 @@ class DashboardApp(App[int], inherit_bindings=False):
         except (Exception, asyncio.CancelledError):
             logger.debug("app-thread post dropped", exc_info=True)
 
-    def _ask_from_worker(self, prompt: Prompt) -> Any:
-        """The runner's ``on_prompt``: blocks the worker until a modal is answered."""
+    def _ask_from_worker(self, prompt: Prompt, entry_id: int | None = None) -> Any:
+        """Block the worker until the UI answers, possibly later from the queue."""
         if self._prompts_closed or threading.get_ident() == self._ui_thread:
             return None
         try:
-            return self.call_from_thread(self._ask, prompt)
+            return self.call_from_thread(self._ask, prompt, entry_id)
         except (Exception, asyncio.CancelledError):
             return None  # the dashboard is closing: cancel the question
 
-    async def _ask(self, prompt: Prompt) -> Any:
+    async def _ask(self, prompt: Prompt, entry_id: int | None = None) -> Any:
         if self._prompts_closed:
             return None
         answer: asyncio.Future[Any] = asyncio.get_running_loop().create_future()
         self._pending_prompts.add(answer)
-
-        def resolve(value: Any) -> None:
-            if not answer.done():
-                answer.set_result(value)
-
-        self.push_screen(modal_for(prompt), resolve)
+        entry = None if entry_id is None else self.session.queue.get(entry_id)
+        if entry is None:
+            self.push_screen(modal_for(prompt), lambda value: self._resolve_answer(answer, value))
+        else:
+            self._entry_answers[entry.id] = answer
+            self.session.queue.set_question(entry.id, prompt)
+            self.session.queue_changed()
+            if should_show_question(
+                critical_foreground=self.session.question_in_foreground(entry.id)
+                and self.screen is self._critical_screen
+            ):
+                self.show_question(entry.id)
+            else:
+                self.session.set_notice(f"'{entry.command}' awaiting answer · Q: queue")
         try:
             return await answer
         finally:
             self._pending_prompts.discard(answer)
+            if entry is not None:
+                self._entry_answers.pop(entry.id, None)
+                self.session.queue.set_awaiting(entry.id, False)
+                self.session.queue_changed()
+
+    @staticmethod
+    def _resolve_answer(answer: asyncio.Future[Any], value: Any) -> None:
+        if not answer.done():
+            answer.set_result(value)
+
+    def show_question(self, entry_id: int) -> None:
+        """Answer an entry without unblocking any other command waiting in the queue."""
+        entry = self.session.queue.get(entry_id)
+        answer = self._entry_answers.get(entry_id)
+        if entry is None or entry.pending_question is None or answer is None:
+            return
+        if entry_id in self._shown_questions or answer.done():
+            return
+        self._shown_questions.add(entry_id)
+
+        def resolve(value: Any) -> None:
+            self._shown_questions.discard(entry_id)
+            self._resolve_answer(answer, value)
+
+        self.push_screen(modal_for(entry.pending_question), resolve)
 
     def _cancel_pending_prompts(self) -> None:
         """Answer every open question with a cancel, so no child waits on a dead UI."""

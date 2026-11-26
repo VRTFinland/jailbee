@@ -10,10 +10,13 @@ before editing `## Unreleased`.
 
 ### Added
 
-- The terminal dashboard's notification queue counts pending questions separately
-  from failures: `?` and "awaiting answer" use the theme accent, while red `✗`
-  stays reserved for failures ([#168](https://github.com/VRTFinland/jailbee/issues/168)).
-
+- Background commands in the terminal dashboard leave questions in Notifications
+  (`Q`) instead of interrupting another task. Select an awaiting entry to answer
+  it; several commands can wait independently. A critical action whose modal
+  is in the foreground still asks immediately. The queue counts pending questions
+  separately from failures: `?` and "awaiting answer" use the theme accent, while
+  red `✗` stays reserved for failures
+  ([#168](https://github.com/VRTFinland/jailbee/issues/168)).
 - The web dashboard has a design system: Material 3 colours from one blue seed in
   both the light and dark themes (status colours readable at WCAG AA), the bundled
   Inter typeface and Material Symbols vector icons, brief transitions that stop
@@ -36,7 +39,9 @@ before editing `## Unreleased`.
   search, pagination and orchestration links. Container and repository session lists
   default to live sessions, with a per-visit switch to all sessions and a direct
   shortcut to the only live session that preserves Back and breadcrumb navigation;
-  both defaults can be changed in Settings.
+  both defaults can be changed in Settings. Live status is included in session link
+  names, filter labels stay stable, and newly started sessions without a transcript
+  appear before recorded sessions.
   Login and security-key setup use the shared fields and buttons, preserving PIN,
   authenticator-code, one-time-link and security-key flows.
   The transcript reader uses tonal prompts and tool disclosures, syntax colours

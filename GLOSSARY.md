@@ -97,6 +97,12 @@ The private connection over which a command started by a dashboard puts its
 questions to that dashboard and receives the answers.
 _Avoid_: askpass, prompt hook
 
+**Pending question**:
+A prompt-channel question from a background action that waits in the
+notification queue until the user answers it, defers it again or aborts the
+command.
+_Avoid_: deferred prompt, notification (for the question itself)
+
 ## Inbox
 
 **Inbox follower**:

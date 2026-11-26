@@ -1085,6 +1085,9 @@ class _Recorder:
     def __init__(self) -> None:
         self.calls: list[tuple] = []
 
+    def entry_id(self, index: int) -> int:
+        return index + 1
+
     def output(self, index: int, chunk: str) -> None:
         self.calls.append(("output", index, chunk))
 

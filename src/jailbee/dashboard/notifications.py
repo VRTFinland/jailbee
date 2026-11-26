@@ -21,6 +21,7 @@ from jailbee import background
 
 if TYPE_CHECKING:
     from jailbee.dashboard.model import RepoGroup
+    from jailbee.prompt_channel import Prompt
 
 from jailbee.dashboard.runner import OUTPUT_DROPPED_MARKER, OUTPUT_KEEP_CHARS
 
@@ -43,6 +44,11 @@ def is_critical(argv: Sequence[str]) -> bool:
     return words == ["git", "push"] and "--merge" in argv
 
 
+def should_show_question(*, critical_foreground: bool) -> bool:
+    """Whether the user is with the action asking a prompt-channel question."""
+    return critical_foreground
+
+
 @dataclass(frozen=True)
 class QueueEntry:
     """One started action: what ran, on what, and how it went."""
@@ -51,6 +57,7 @@ class QueueEntry:
     command: str  # "jailbee merge alpha-a" — what the user would have typed
     target: str  # the container or repo it ran on
     state: EntryState = "running"
+    pending_question: Prompt | None = None
     status: int | None = None  # the exit status once finished
     output: str = ""
     critical: bool = False  # a critical action (see :func:`is_critical`)
@@ -183,7 +190,17 @@ class NotificationQueue:
         entry = self._entries.get(entry_id)
         if entry is None or entry.finished:
             return
-        self._entries[entry_id] = replace(entry, state="awaiting" if awaiting else "running")
+        self._entries[entry_id] = replace(
+            entry,
+            state="awaiting" if awaiting else "running",
+            pending_question=entry.pending_question if awaiting else None,
+        )
+
+    def set_question(self, entry_id: int, prompt: Prompt) -> None:
+        """Keep the received question until its waiting command gets an answer."""
+        entry = self._entries.get(entry_id)
+        if entry is not None and not entry.finished:
+            self._entries[entry_id] = replace(entry, state="awaiting", pending_question=prompt)
 
     def finish(self, entry_id: int, status: int, output: str) -> None:
         """The action ended with exit ``status`` after printing ``output``."""
@@ -191,7 +208,11 @@ class NotificationQueue:
         if entry is None:
             return
         self._entries[entry_id] = replace(
-            entry, state="done" if status == 0 else "failed", status=status, output=output
+            entry,
+            state="done" if status == 0 else "failed",
+            status=status,
+            output=output,
+            pending_question=None,
         )
 
     def drop(self, entry_id: int) -> None:
