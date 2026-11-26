@@ -111,9 +111,12 @@ dashboard. Remote dashboards may answer or abort only when their transport's
 policy permits the command; otherwise the question is read-only with
 "answer in a local dashboard".
 
-Closing a dashboard cancels no service-owned action or question. The service
-remains alive while work runs or a question waits, even with no dashboards
-connected. Once no work or clients remain, its normal idle timeout starts.
+Closing a dashboard cancels no service-owned action or question, including the
+remaining actions of an accepted bulk request. The service remains alive while
+work runs or a question waits, even with no dashboards connected. Once no work or
+clients remain, its normal idle timeout starts. Replacing an older service is a
+local-dashboard choice: wait for its work by default, or explicitly interrupt it.
+Remote dashboards cannot shut down or drain the shared service.
 The full queue controls are in [Commands](commands.md#terminal-dashboard-actions).
 
 ## Keys

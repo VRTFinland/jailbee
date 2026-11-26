@@ -1201,7 +1201,10 @@ no quit confirmation. The service's idle timer starts only after no clients or
 live work remain. Remote start, answer and abort requests are checked against
 the transport's host-side policy; a disallowed question is read-only with
 "answer in a local dashboard". When upgrading with live actions in an older
-service, wait and drain is the default; replacement explicitly interrupts them.
+service, wait and drain is the local dashboard's default; replacement explicitly
+interrupts its action process groups. Remote dashboards cannot replace or drain
+the shared service. Accepted bulk actions are sequenced by the service and keep
+running after the initiating dashboard closes.
 
 The menu, in order: `Attach tmux`, then `Launch →` with one "Launch
 `<name>`" entry per app the repo's GUI registry declares (browsers, the

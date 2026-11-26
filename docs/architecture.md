@@ -428,6 +428,9 @@ terminal UI. This split keeps status collection separate from rendering.
 The service also owns background dashboard actions. A dashboard sends the
 command, target, origin identity, transport and repository scope; the service
 uses `dashboard/runner.py` rather than adding another subprocess boundary.
+A bulk request hands the entire sequential batch to the service before waiting
+for results; dashboard shutdown cannot abandon its remaining actions. Refusals
+and startup errors stop the batch, while an ordinary nonzero exit does not.
 Entry updates, output chunks and final results travel back over the state
 protocol. Entries are shared with dashboards in scope and stored in the host
 state database. Finished history is limited to the newest 100 entries and seven
@@ -454,9 +457,11 @@ environments come from each request, not the service's startup shell.
 
 Version replacement queries live work first. Waiting drains the old service:
 new actions are refused while existing actions and questions finish. Explicit
-replacement cancels and reaps its child processes and persists interrupted
-entries before releasing the service lifetime lock. Upgrade questions use
-`prompting`; background reconnects never seize a dashboard's terminal.
+replacement kills each action's isolated process group, reaps the child and
+persists interrupted entries before releasing the service lifetime lock. Global
+shutdown and draining are local-client controls; a remote dashboard asks for
+replacement from a local dashboard instead. Upgrade questions use `prompting`;
+background reconnects never seize a dashboard's terminal.
 
 ## Prompt channel and action runner
 
