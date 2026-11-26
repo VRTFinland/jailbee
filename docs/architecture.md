@@ -432,10 +432,13 @@ protocol. Entries are shared with dashboards in scope and stored in the host
 state database until dismissed. On startup, unfinished entries become
 `interrupted`; pending questions are not persisted. Critical foreground state
 and terminal hand-off blocking remain local to the originating dashboard.
-Answer arbitration and interaction-based question routing live in the shared
-`dashboard/` core. This first slice cancels service-hosted questions at one
-handler seam; shared question delivery, action-aware lifetime, remote policy
-resolution and version-replacement draining are follow-up tickets.
+The state service arbitrates answers on its event loop: only the first answer
+for the current question identity reaches the child. Dashboards receive pending
+questions and resolution notices through `StateClient`; a dashboard disconnect
+never resolves a service-owned question. Interaction-based question routing stays
+in the frontend-agnostic `dashboard/` core and is applied only by the originating
+dashboard. Other dashboards keep the question pending until explicitly opened.
+Questions and answers, including secrets, are never written to the action store.
 
 ## Prompt channel and action runner
 
@@ -447,8 +450,8 @@ non-interactive (`JAILBEE_NONINTERACTIVE`), the **prompt channel**, or the
 terminal. See [ADR 0003](https://github.com/VRTFinland/jailbee/blob/main/docs/adr/0003-interactivity-belongs-to-the-running-ui.md)
 and the glossary entry *Prompt channel*.
 
-The channel is a socketpair. The UI that starts a command keeps one end and
-hands the other to the child as an inherited file descriptor, named by
+The channel is a socketpair. The action host keeps one end and hands the other
+to the child as an inherited file descriptor, named by
 `JAILBEE_PROMPT_FD` (a value that is not an open socket above fd 2 is treated
 as absent). The protocol (`prompt_channel.py`, stdlib only, used by both ends)
 is JSON lines, one object per line with a `type`. Each side sends
@@ -470,11 +473,11 @@ terminal code):
 2. The child is `python -m jailbee <action>` with stdin on `/dev/null`, stdout
    and stderr merged into one pipe, and the channel end inherited. Remote
    transports get the transport-neutral session markers in its environment.
-3. Questions arrive through the channel and are relayed to the frontend's
-   `on_prompt` handler one at a time; its answer (or `None` for cancel) goes
-   back to the child.
-4. Output chunks are delivered to the frontend's output sink; all of it is
-   delivered before the run returns.
+3. Questions arrive through the channel one at a time. The state service's
+   `on_prompt` handler publishes them to in-scope dashboards and waits for the
+   first accepted answer (or `None` for cancel), which goes back to the child.
+4. Output chunks are delivered to the service's output sink and broadcast to
+   in-scope dashboards; all output is drained before the run returns.
 5. Remote transports append an audit record per action; the local keyboard
    does not.
 
