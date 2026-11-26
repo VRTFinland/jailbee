@@ -589,9 +589,20 @@ def test_running_action_is_interrupted_after_restart(runtime_dir, tmp_path):
         engine=engine,
         action_spawn=lambda *a, **kw: Child(kw["prompt_sock"]),
     )
-    thread = threading.Thread(
-        target=lambda: asyncio.run(server.serve(paths.socket_path())), daemon=True
-    )
+    stopped = threading.Event()
+
+    def run_server():
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            loop.run_until_complete(server.serve(paths.socket_path()))
+            stopped.set()
+            release.wait(5)
+            loop.run_until_complete(asyncio.gather(*server._action_tasks))
+        finally:
+            loop.close()
+
+    thread = threading.Thread(target=run_server, daemon=True)
     thread.start()
     track_server(server, thread)
     _until(paths.socket_path().exists)
@@ -603,41 +614,31 @@ def test_running_action_is_interrupted_after_restart(runtime_dir, tmp_path):
         client.wait_first_snapshot(3)
         client.run_action(
             RunAction(
-                345,
-                ["ls"],
-                str(tmp_path),
-                "target",
-                False,
-                "dashboard",
-                "none",
-                str(tmp_path),
-                "repo",
+                345, ["ls"], str(tmp_path), "target", False, "dashboard", "none",
+                str(tmp_path), "repo",
             )
         )
         _until(lambda: 345 in client.action_entries())
-        # A second service sees the durable snapshot while the original worker
-        # is blocked, as it would after a killed process.
-        other_socket = tmp_path / "replacement.sock"
+        client.close()
+        server._stopping = True
+        assert stopped.wait(5), "original server did not stop"
+        paths.socket_path().unlink(missing_ok=True)
         replacement = StateServer(FakeGatherer(), version="v1", engine=engine)
         replacement_thread = threading.Thread(
-            target=lambda: asyncio.run(replacement.serve(other_socket)), daemon=True
+            target=lambda: asyncio.run(replacement.serve(paths.socket_path())), daemon=True
         )
         replacement_thread.start()
         track_server(replacement, replacement_thread)
-        _until(other_socket.exists)
-        import socket
-
-        from jailbee.state_service.protocol import PROTOCOL, ActionEntry, Hello, decode, encode
-
-        with socket.socket(socket.AF_UNIX) as connection:
-            connection.connect(str(other_socket))
-            connection.sendall(encode(Hello(PROTOCOL, "v1", dashboard_id="dashboard")))
-            with connection.makefile("rb") as reader:
-                decode(reader.readline())
-                entry = decode(reader.readline())
-                assert isinstance(entry, ActionEntry)
-                assert entry.state == "interrupted"
-                assert entry.finished
+        _until(paths.socket_path().exists)
+        client = StateClient(
+            None, dashboard_id="dashboard", version="v1", spawn=lambda: None, backoff=(0.05,)
+        )
+        client.start()
+        client.wait_first_snapshot(3)
+        _until(lambda: 345 in client.action_entries())
+        entry = client.action_entries()[345]
+        assert entry.state == "interrupted"
+        assert entry.finished
     finally:
         release.set()
         client.close()
