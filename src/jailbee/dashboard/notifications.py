@@ -190,7 +190,8 @@ class NotificationQueue:
         if entry is None or entry.finished:
             return
         self._entries[entry_id] = replace(
-            entry, state="awaiting" if awaiting else "running",
+            entry,
+            state="awaiting" if awaiting else "running",
             pending_question=entry.pending_question if awaiting else None,
         )
 
@@ -206,7 +207,10 @@ class NotificationQueue:
         if entry is None:
             return
         self._entries[entry_id] = replace(
-            entry, state="done" if status == 0 else "failed", status=status, output=output,
+            entry,
+            state="done" if status == 0 else "failed",
+            status=status,
+            output=output,
             pending_question=None,
         )
 

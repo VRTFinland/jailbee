@@ -234,7 +234,9 @@ def test_existing_branch_create_asks_in_a_modal_and_preserves_decline_hint(
             await _until(pilot, question_ready, "queued branch reuse question")
             assert not isinstance(app.screen, pm.ConfirmModal)
             await pilot.press("Q", "enter")
-            await _until(pilot, lambda: isinstance(app.screen, pm.ConfirmModal), "branch reuse modal")
+            await _until(
+                pilot, lambda: isinstance(app.screen, pm.ConfirmModal), "branch reuse modal"
+            )
             await pilot.press(answer)
             await _until(
                 pilot, lambda: not app.session.jobs.busy("new:myrepo:dev-2"), "create result"

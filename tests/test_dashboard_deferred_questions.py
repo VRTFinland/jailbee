@@ -8,14 +8,17 @@ from threading import Event
 import pytest
 
 from jailbee.dashboard import runner as drunner
+from jailbee.dashboard.model import RepoGroup
 from jailbee.dashboard.tui import prompt_modals as pm
 from jailbee.prompt_channel import Prompt
 from tests.dashboard_fixtures import ci
 from tests.dashboard_pilot import make_app
-from jailbee.dashboard.model import RepoGroup
 
 
-@pytest.mark.parametrize("answer_keys, expected", [(["m", "a", "i", "n", "enter"], "main"), (["escape"], None), (["ctrl+c"], None)])
+@pytest.mark.parametrize(
+    "answer_keys, expected",
+    [(["m", "a", "i", "n", "enter"], "main"), (["escape"], None), (["ctrl+c"], None)],
+)
 def test_background_question_waits_in_queue_until_selected(mocker, tmp_path, answer_keys, expected):
     asked = Event()
     answers = []
@@ -33,7 +36,9 @@ def test_background_question_waits_in_queue_until_selected(mocker, tmp_path, ans
         async with app.run_test() as pilot:
             app.session.run_dashboard_command("alpha-a", "container", ["start", "alpha-a"])
             async with asyncio.timeout(5):
-                while not asked.is_set() or not any(e.state == "awaiting" for e in app.session.queue):
+                while not asked.is_set() or not any(
+                    e.state == "awaiting" for e in app.session.queue
+                ):
                     await pilot.pause(0.01)
             await pilot.pause()
             assert len(app.screen_stack) == 1
@@ -45,6 +50,7 @@ def test_background_question_waits_in_queue_until_selected(mocker, tmp_path, ans
             assert answers == []
             await pilot.press("Q")
             from tests.dashboard_pilot import Pick, _apply
+
             await pilot.pause()
             await _apply(pilot, app, Pick(0))
             assert isinstance(app.screen, pm.TextModal)
@@ -80,7 +86,10 @@ def test_two_pending_questions_are_answered_independently(mocker, tmp_path, firs
                 while sum(e.pending_question is not None for e in app.session.queue) != 2:
                     await pilot.pause(0.01)
             assert len(app.screen_stack) == 1
-            for row, verb, value in [(first, ["stop", "start"][first], "one"), (1-first, ["start", "stop"][first], "two")]:
+            for row, verb, value in [
+                (first, ["stop", "start"][first], "one"),
+                (1 - first, ["start", "stop"][first], "two"),
+            ]:
                 await pilot.press("Q") if app.session.overlay is None else None
                 await pilot.press("home", *(["down"] * row), "enter")
                 assert isinstance(app.screen, pm.TextModal)
