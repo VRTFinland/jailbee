@@ -216,9 +216,9 @@ def test_transitions_stay_brief_and_stop_under_reduced_motion_and_eink(logged_in
     assert declared, "no stylesheet declares any motion: the scan found nothing"
     # Sheet travel and its scrim use the explicitly longer M3 entry duration;
     # ordinary state transitions retain their 150ms ceiling.
-    sheet = [(where, ms) for where, ms in declared if 'drawer' in where]
+    sheet = [(where, ms) for where, ms in declared if "drawer" in where]
     assert sheet and all(250 <= ms <= 300 for _, ms in sheet)
-    too_long = [(where, ms) for where, ms in declared if 'drawer' not in where and ms > 150]
+    too_long = [(where, ms) for where, ms in declared if "drawer" not in where and ms > 150]
     assert too_long == []
     longest = page.evaluate(_MAX_TRANSITION_MS)
     assert 0 < longest <= 150

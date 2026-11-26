@@ -135,7 +135,15 @@ def test_session_summary_includes_the_same_container_attribution_as_the_list(hom
     from jailbee.state_service.session_log import SessionRecorder
     from tests.web_fakes import container, repo_group, snapshot_of
 
-    group = repo_group("alpha", container("alpha-1", repo="alpha", uuid="instance-1", agent_status=(AgentSummary("claude", "busy", None, None, 1, session_ids=(SESSION_A,)),)))
+    group = repo_group(
+        "alpha",
+        container(
+            "alpha-1",
+            repo="alpha",
+            uuid="instance-1",
+            agent_status=(AgentSummary("claude", "busy", None, None, 1, session_ids=(SESSION_A,)),),
+        ),
+    )
     snapshots = FakeSourceFactory(initial=snapshot_of(group))
     SessionRecorder(get_engine()).record([group])
     for client in open_client(homes, snapshots=snapshots):

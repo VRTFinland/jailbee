@@ -124,23 +124,37 @@ def test_wide_phone_and_resize_restore_the_subagent_path(breadcrumb_page: Page) 
 @pytest.mark.parametrize("width", [360, 1280])
 @pytest.mark.parametrize("font_size", [16, 24])
 @pytest.mark.parametrize("subagent", [False, True])
-def test_long_session_title_keeps_root_repo_and_container(breadcrumb_page: Page, width: int, font_size: int, subagent: bool) -> None:
+def test_long_session_title_keeps_root_repo_and_container(
+    breadcrumb_page: Page, width: int, font_size: int, subagent: bool
+) -> None:
     page = breadcrumb_page
-    page.route("**/summary", lambda route: route.fulfill(json={"title": SESSION_TITLE, "container": "work-main"}))
+    page.route(
+        "**/summary",
+        lambda route: route.fulfill(json={"title": SESSION_TITLE, "container": "work-main"}),
+    )
     if subagent:
         page.reload()
     else:
-        page.get_by_role("navigation", name="Breadcrumb").get_by_role("link", name=SESSION_TITLE, exact=True).click()
+        page.get_by_role("navigation", name="Breadcrumb").get_by_role(
+            "link", name=SESSION_TITLE, exact=True
+        ).click()
     page.set_viewport_size({"width": width, "height": 844})
-    page.evaluate("size => document.documentElement.style.setProperty('--font-size-body', `${size}px`)", font_size)
+    page.evaluate(
+        "size => document.documentElement.style.setProperty('--font-size-body', `${size}px`)",
+        font_size,
+    )
     breadcrumb = page.get_by_role("navigation", name="Breadcrumb")
-    expect(breadcrumb.get_by_role("link")).to_have_text(["JailBee", "work", "work-main"] + ([SESSION_TITLE] if subagent else []))
+    expect(breadcrumb.get_by_role("link")).to_have_text(
+        ["JailBee", "work", "work-main"] + ([SESSION_TITLE] if subagent else [])
+    )
     current = SUBAGENT_TITLE if subagent else SESSION_TITLE
     title = breadcrumb.get_by_role("heading", name=current, exact=True)
     tooltip = title.get_attribute("title")
     assert tooltip is not None and tooltip.startswith(current)
     expect(title).to_have_attribute("aria-label", current)
-    assert title.evaluate("el => getComputedStyle(el).fontSize") == breadcrumb.get_by_role("link").first.evaluate("el => getComputedStyle(el).fontSize")
+    assert title.evaluate("el => getComputedStyle(el).fontSize") == breadcrumb.get_by_role(
+        "link"
+    ).first.evaluate("el => getComputedStyle(el).fontSize")
     for item in breadcrumb.locator("a, h1").all():
         assert item.evaluate("el => el.clientWidth >= 16")
     assert breadcrumb.evaluate("el => el.scrollWidth <= el.clientWidth")

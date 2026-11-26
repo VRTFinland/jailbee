@@ -24,11 +24,19 @@ def test_title_bar_spans_the_viewport(logged_in: Page, width: int, profile: str)
     assert page.evaluate("document.documentElement.scrollWidth === innerWidth")
 
 
-@pytest.mark.parametrize("theme,profile", [("light", "normal"), ("dark", "normal"), ("eink", "normal"), ("light", "eink")])
-def test_preferences_have_menu_surface_and_spaced_rows(logged_in: Page, theme: str, profile: str) -> None:
+@pytest.mark.parametrize(
+    "theme,profile",
+    [("light", "normal"), ("dark", "normal"), ("eink", "normal"), ("light", "eink")],
+)
+def test_preferences_have_menu_surface_and_spaced_rows(
+    logged_in: Page, theme: str, profile: str
+) -> None:
     page = logged_in
     page.set_viewport_size({"width": 360, "height": 800})
-    page.evaluate("([theme, profile]) => { localStorage.setItem('jailbee.theme', theme); localStorage.setItem('jailbee.displayProfile', profile) }", [theme, profile])
+    page.evaluate(
+        "([theme, profile]) => { localStorage.setItem('jailbee.theme', theme); localStorage.setItem('jailbee.displayProfile', profile) }",
+        [theme, profile],
+    )
     page.reload()
     trigger = page.get_by_role("button", name="Quick settings", exact=True)
     trigger_box = trigger.bounding_box()
@@ -46,11 +54,17 @@ def test_preferences_have_menu_surface_and_spaced_rows(logged_in: Page, theme: s
     else:
         assert panel.evaluate("el => getComputedStyle(el).boxShadow") != "none"
     for row in panel.locator(".menu-row:visible").all():
-        assert row.evaluate("el => el.getBoundingClientRect().height >= parseFloat(getComputedStyle(el).getPropertyValue('--md-target-row'))")
+        assert row.evaluate(
+            "el => el.getBoundingClientRect().height >= parseFloat(getComputedStyle(el).getPropertyValue('--md-target-row'))"
+        )
 
 
-@pytest.mark.parametrize("profile,motion", [("normal", "no-preference"), ("eink", "no-preference"), ("normal", "reduce")])
-def test_drawer_has_side_sheet_shape_and_respects_motion(logged_in: Page, profile: str, motion: Literal["no-preference", "reduce"]) -> None:
+@pytest.mark.parametrize(
+    "profile,motion", [("normal", "no-preference"), ("eink", "no-preference"), ("normal", "reduce")]
+)
+def test_drawer_has_side_sheet_shape_and_respects_motion(
+    logged_in: Page, profile: str, motion: Literal["no-preference", "reduce"]
+) -> None:
     page = logged_in
     page.set_viewport_size({"width": 1280, "height": 800})
     page.emulate_media(reduced_motion=motion)
@@ -76,4 +90,3 @@ def test_drawer_has_side_sheet_shape_and_respects_motion(logged_in: Page, profil
             animation.currentTime = animation.effect.getTiming().duration;
             return start > el.getBoundingClientRect().left;
         }""")
-
