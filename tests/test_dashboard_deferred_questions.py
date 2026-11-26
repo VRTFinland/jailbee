@@ -60,6 +60,12 @@ def test_background_question_waits_in_queue_until_selected(mocker, tmp_path, ans
             await _apply(pilot, app, Pick(0))
             assert isinstance(app.screen, pm.TextModal)
             await pilot.press(*answer_keys)
+            if answer_keys == ["escape"]:
+                assert answers == []
+                assert app.session.queue.get(entry.id).pending_question is not None
+                await pilot.press("enter")
+                assert isinstance(app.screen, pm.TextModal)
+                await pilot.press("ctrl+c")
             async with asyncio.timeout(5):
                 while not answers:
                     await pilot.pause(0.01)
