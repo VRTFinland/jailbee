@@ -206,13 +206,17 @@ def test_answers_share_composer_send_gate_and_confirm_in_transcript(
     wait_until(lambda: incus.exec_with_input.call_count == 2)
 
 
+@pytest.mark.parametrize("profile", ["normal", "eink"])
 def test_panel_refusal_keeps_answers_and_latest_message_controls_scope(
     page: Page,
     make_server: Callable[..., E2EServer],
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    profile: str,
 ) -> None:
-    server, transcript, incus = open_questions(page, make_server, tmp_path, monkeypatch)
+    server, transcript, incus = open_questions(
+        page, make_server, tmp_path, monkeypatch, profile=profile
+    )
     panel = page.get_by_role("complementary", name="Answer questions")
     panel.get_by_role("button", name="Expand answers", exact=True).click()
     panel.get_by_role("button", name="Question 1", exact=True).click()
@@ -237,7 +241,8 @@ def test_panel_refusal_keeps_answers_and_latest_message_controls_scope(
     with transcript.open("a") as stream:
         stream.write(record(3, "assistant", "A newer plain answer; no question set."))
     server.watches.open[-1].fire()
-    expect(page.get_by_text("A newer plain answer; no question set.", exact=True)).to_be_attached()
+    if profile == "normal":
+        expect(page.get_by_text("A newer plain answer; no question set.", exact=True)).to_be_attached()
     expect(panel).to_have_count(0)
     expect(page.get_by_role("textbox", name="Message agent")).to_be_visible()
 
@@ -253,3 +258,19 @@ def test_old_questions_never_resurface_when_latest_has_no_parseable_set(
     open_questions(page, make_server, tmp_path, monkeypatch, latest=latest)
     expect(page.get_by_role("complementary", name="Answer questions")).to_have_count(0)
     expect(page.get_by_role("textbox", name="Message agent")).to_be_enabled()
+
+
+def test_question_jump_handles_markdown_soft_breaks(
+    page: Page,
+    make_server: Callable[..., E2EServer],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    latest = "Context before questions.\n❓ **Q12** - **Deploy**: Choose.\na) Canary\n➡️ a: Safe\n❓ **Q1** - **Owner**: Who?"
+    open_questions(page, make_server, tmp_path, monkeypatch, latest=latest)
+    panel = page.get_by_role("complementary", name="Answer questions")
+    panel.get_by_role("button", name="Expand answers", exact=True).click()
+    panel.get_by_role("button", name="Question 1", exact=True).click()
+    panel.get_by_role("button", name="Show in conversation").click()
+    expect(page.locator(".question-highlight")).to_have_text("❓ Q1 - Owner: Who?")
+    expect(page.locator(".question-highlight")).to_be_in_viewport()

@@ -14,6 +14,7 @@ import PageNav from "../components/PageNav.vue"
 import JumpPanel from "../components/JumpPanel.vue"
 import ToolCall from "../components/ToolCall.vue"
 import {readableBottom} from "../composables/readableBottom"
+import {questionBlocks} from "../composables/questionBlocks"
 import {usePager} from "../composables/usePager"
 import {useAgentChat} from "../composables/useAgentChat"
 import {useDashboard} from "../dashboard"
@@ -151,9 +152,13 @@ const latestAnswer = computed(() => {
 })
 
 const answerSource = computed(() => [...transcript.value?.entries ?? []].reverse().find(e => e.kind === "assistant"))
+const pendingAssistant = computed(() => pending.value.some(e => e.kind === "assistant"))
 const answerSet = computed(() => {
     const entry = answerSource.value
-    return agentId.value === null && entry?.kind === "assistant" && entry.text ? parseQuestionSet(entry.text) : null
+    // E-ink holds new document entries until explicitly revealed. Do not offer
+    // an older set as the latest while a newer assistant reply waits there.
+    return agentId.value === null && !pendingAssistant.value &&
+        entry?.kind === "assistant" && entry.text ? parseQuestionSet(entry.text) : null
 })
 const panelEl = ref<InstanceType<typeof AnswerPanel> | null>(null)
 let highlighted: HTMLElement[] = []
@@ -167,21 +172,14 @@ async function showQuestion(index: number) {
     const question = set?.questions[index]
     if (!source || !question || !set) return
     const prose = document.getElementById(entryDomId(source.id))?.querySelector(".prose")
-    // Match the actual Markdown header, not a mention, a prefix (Q1/Q12),
-    // or an example inside a code fence. Keep the server's sanitised HTML.
-    const blocks = Array.from(prose?.children ?? []) as HTMLElement[]
-    const isHeader = (el: HTMLElement, number: number) => el.tagName === "P" &&
-        el.textContent?.trimStart().startsWith(`❓ Q${number} - `) &&
-        el.firstElementChild?.tagName === "STRONG" && el.firstElementChild.textContent === `Q${number}`
-    const start = blocks.findIndex(el => isHeader(el, question.number))
-    if (start < 0) return
-    const next = blocks.findIndex((el, i) => i > start && set.questions.some(q => isHeader(el, q.number)))
+    if (!prose) return
     clearQuestionHighlight()
-    highlighted = blocks.slice(start, next < 0 ? undefined : next)
+    highlighted = questionBlocks(prose, set, index)
+    const target = highlighted[0]
+    if (!target) return
     highlighted.forEach(el => el.classList.add("question-highlight"))
     following.value = false
     await nextTick()
-    const target = blocks[start]!
     scrollProgrammatically(() => {
         if (eink.value) pager.goToElement(target)
         else window.scrollTo(0, target.getBoundingClientRect().top + window.scrollY - readableTop.value)
@@ -290,7 +288,7 @@ function markScrollKey(event: KeyboardEvent) {
     if (["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key)) markScrollIntent()
 }
 
-watch(answerSource, () => {
+watch(answerSet, () => {
     clearQuestionHighlight()
     void nextTick(() => {
         if (panelEl.value?.$el) layoutObserver?.observe(panelEl.value.$el as Element)
