@@ -91,7 +91,9 @@ class ConnectionFollows:
                 )
                 if key.subagent_id
                 else self._chat_status.get(key)
-                or ChatAvailability(available=False, code="checking", message="Checking availability")
+                or ChatAvailability(
+                    available=False, code="checking", message="Checking availability"
+                )
             )
             await self._send(
                 TranscriptAppend(key=key, entries=entries, offset=next_offset, chat=status)
