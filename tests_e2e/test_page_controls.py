@@ -96,6 +96,7 @@ def test_page_controls_preserve_readable_height_keys_taps_and_jump_clearance(
         page.keyboard.press(key)
         wait_for_scroll_settled(page)
         assert abs(before - page.evaluate("window.scrollY") - int(readable)) <= 1
+
     def tap_uncovered_zone(selector: str) -> None:
         zone = page.locator(selector)
         point = zone.evaluate("""el => {
