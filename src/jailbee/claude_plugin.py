@@ -33,11 +33,29 @@ def with_settings(command: str) -> str:
     if not words or Path(words[0]).name not in {"claude", "claude-jb"}:
         return command
     value_options = {
-        "--system-prompt", "--system-prompt-file", "--append-system-prompt",
-        "--append-system-prompt-file", "--json-schema", "--model", "--agent", "--agents",
-        "--effort", "--fallback-model", "--name", "-n", "--session-id", "--input-format",
-        "--output-format", "--permission-mode", "--setting-sources", "--max-budget-usd",
-        "--debug-file", "--profile", "-P", "--context", "-C",
+        "--system-prompt",
+        "--system-prompt-file",
+        "--append-system-prompt",
+        "--append-system-prompt-file",
+        "--json-schema",
+        "--model",
+        "--agent",
+        "--agents",
+        "--effort",
+        "--fallback-model",
+        "--name",
+        "-n",
+        "--session-id",
+        "--input-format",
+        "--output-format",
+        "--permission-mode",
+        "--setting-sources",
+        "--max-budget-usd",
+        "--debug-file",
+        "--profile",
+        "-P",
+        "--context",
+        "-C",
     }
     skip_value = False
     for word in words[1:]:

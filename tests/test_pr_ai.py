@@ -55,9 +55,15 @@ def test_claude_headless_preset_supplies_settings(make_cfg, tmp_path):
 def test_custom_claude_headless_command_gets_settings(make_cfg, tmp_path):
     from jailbee.pr_ai import resolve_pr_agent
 
-    cfg = make_cfg(tmp_path, agents={"claude": {
-        "enabled": True, "headless": 'claude -p "$JAILBEE_PR_PROMPT"',
-    }})
+    cfg = make_cfg(
+        tmp_path,
+        agents={
+            "claude": {
+                "enabled": True,
+                "headless": 'claude -p "$JAILBEE_PR_PROMPT"',
+            }
+        },
+    )
     choice = resolve_pr_agent(cfg)
     assert choice.agent is not None
     assert "--settings" in choice.agent.headless
