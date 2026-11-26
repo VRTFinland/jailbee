@@ -2,11 +2,11 @@
 
 Two checks, both on headers a browser sets and a page cannot forge:
 
-- **WebSocket `Origin`** (always): a handshake whose `Origin` names another
+- **`Origin`** (WebSockets and state-changing HTTP): a request whose `Origin` names another
   host:port than the request's `Host` is refused, so a page on another site
-  cannot open `/api/ws` in the user's browser (cross-site WebSocket
-  hijacking). A handshake without `Origin` comes from a non-browser client,
-  which holds no ambient credentials, and is let through. A reverse proxy
+  cannot open `/api/ws` or change state through the user's browser, even when
+  login is disabled. A request without `Origin` comes from a non-browser client
+  and is let through. A reverse proxy
   passes the public `Host` and `Origin` (docs/web-dashboard.md), so the two
   still match there.
 - **`Host` with login off** (DNS rebinding): every request whose `Host` is
@@ -93,7 +93,7 @@ def _header(scope: Scope, name: bytes) -> str | None:
 
 
 class OriginGuard:
-    """Refuse cross-site WebSocket handshakes and, with login off, foreign `Host`s."""
+    """Refuse cross-origin writes/handshakes and, with login off, foreign `Host`s."""
 
     def __init__(self, app: ASGIApp, policy: HostPolicy) -> None:
         self._app = app
