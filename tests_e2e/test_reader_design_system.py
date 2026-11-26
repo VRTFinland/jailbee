@@ -1,5 +1,6 @@
 """Reader content composes the same tonal primitives as the gallery."""
 
+import json
 from collections.abc import Callable
 from pathlib import Path
 
@@ -8,6 +9,42 @@ from playwright.sync_api import Page, expect
 
 from tests_e2e.server import E2EServer
 from tests_e2e.test_session_reading import TITLE, open_transcript
+
+
+@pytest.mark.parametrize("theme", ["light", "dark", "eink"])
+def test_expanded_tool_input_uses_the_current_theme_palette(
+    page: Page,
+    make_server: Callable[..., E2EServer],
+    tmp_path: Path,
+    theme: str,
+) -> None:
+    _, transcript = open_transcript(page, make_server, tmp_path)
+    with transcript.open("a") as stream:
+        stream.write(json.dumps({
+            "uuid": "highlight-tool",
+            "type": "assistant",
+            "message": {"role": "assistant", "content": [{
+                "type": "tool_use", "id": "highlight-call", "name": "Bash",
+                "input": {"command": "echo hello", "timeout": 42, "enabled": True},
+            }]},
+        }) + "\n")
+    page.evaluate("theme => localStorage.setItem('jailbee.theme', theme)", theme)
+    page.reload()
+    page.get_by_role("button", name="Bash echo hello", exact=True).click()
+    code = page.locator(".tool-input .highlight")
+    expect(code).to_be_visible()
+    for token, role in [("nt", "primary"), ("kc", "primary"), ("mi", "phase-job"), ("s2", "phase-autostart")]:
+        colour = code.locator(f".{token}").first.evaluate("""(el, role) => {
+            const probe = document.createElement('span');
+            probe.style.color = `var(--md-${role})`;
+            el.append(probe);
+            const expected = getComputedStyle(probe).color;
+            probe.remove();
+            return [getComputedStyle(el).color, expected];
+        }""", role)
+        assert colour[0] == colour[1], (theme, token, colour)
+        if theme == "eink":
+            assert colour[0] == "rgb(0, 0, 0)"
 
 
 @pytest.mark.parametrize("theme", ["light", "dark", "eink"])

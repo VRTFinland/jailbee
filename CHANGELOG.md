@@ -22,7 +22,7 @@ before editing `## Unreleased`.
   colour in every theme, a `/ui` gallery page behind login with per-group
   screenshot regression checks across themes, display profiles and phone/desktop
   widths, and Stylelint enforcement of design tokens (colours, sizes, shadows and
-  motion) in browser tests with explicit migration-only exceptions, and a design
+  motion) across the whole browser app without migration exceptions, and a design
   guide for contributors and agents in `frontend/DESIGN.md`. The title bar,
   front page, repository view and container lists now use the shared buttons,
   icons, rows and status chips, with shared list status wording, context and activity
@@ -32,7 +32,8 @@ before editing `## Unreleased`.
   search, pagination and orchestration links.
   Login and security-key setup use the shared fields and buttons, preserving PIN,
   authenticator-code, one-time-link and security-key flows.
-  The transcript reader uses tonal prompts and tool disclosures, shared jump
+  The transcript reader uses tonal prompts and tool disclosures, syntax colours
+  from the same accessible theme palette (black in e-ink), shared jump
   dialogs and buttons, vector page controls with full-size upward hit areas behind
   compact chrome, and preserves page steps, guide lines and reading positions. Settings, quick preferences and prompt
   navigation share the same dialog and control primitives, with history,

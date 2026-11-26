@@ -622,9 +622,26 @@ def test_committed_highlight_stylesheet_is_current() -> None:
     assert committed.read_text() == stylesheet(), (
         "regenerate: uv run python -m jailbee.web.highlight > frontend/src/styles/highlight.css"
     )
-    css = committed.read_text()
-    for theme in ("light", "dark", "eink"):
-        assert f':root[data-theme="{theme}"] .highlight' in css
+
+
+def test_highlight_stylesheet_uses_scoped_design_tokens() -> None:
+    from jailbee.web.highlight import highlight_json, stylesheet
+
+    html = highlight_json('{"enabled": true, "count": 42, "name": "JailBee"}')
+    css = stylesheet()
+    for name, role in (
+        ("nt", "primary"),
+        ("kc", "primary"),
+        ("mi", "phase-job"),
+        ("s2", "phase-autostart"),
+        ("c", "on-surface-variant"),
+    ):
+        assert f".highlight .{name} {{ color: var(--md-{role});" in css
+        if name != "c":
+            assert f'class="{name}"' in html
+    assert ":root" not in css  # a gallery/theme scope inherits its own colours
+    assert "#" not in css
+    assert ".highlight .err { color: inherit; background: none; border: none; }" in css
 
 
 CORPUS = Path(__file__).parent / "fixtures/transcripts/claude-corpus"

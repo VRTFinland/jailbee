@@ -48,16 +48,17 @@ it("exempts only token declarations in tokens.css; any other rule there fails", 
     ])
 })
 
-it("lints the real tree with only the explicitly exempted legacy files", async () => {
+it("lints the whole real tree without file exceptions", async () => {
     const config = await stylelint.resolveConfig(path.join(frontend, "src/views/GalleryView.vue"), {configFile})
     expect(config).toBeDefined()
-    for (const exception of config?.ignoreFiles ?? []) {
-        expect(exception).not.toMatch(/[*!?{\[]/)
-    }
+    expect(config?.ignoreFiles ?? []).toEqual([])
     const result = await stylelint.lint({cwd: frontend, configFile, files: "src/**/*.{css,vue}"})
     expect(result.results.flatMap((file) => file.warnings)).toEqual([])
     expect(result.errored).toBe(false)
-    expect(result.results.some((file) => file.source?.endsWith("GalleryView.vue") && !file.ignored)).toBe(true)
+    expect(result.results.every((file) => !file.ignored)).toBe(true)
+    for (const name of ["GalleryView.vue", "highlight.css", "tokens.css"]) {
+        expect(result.results.some((file) => file.source?.endsWith(name))).toBe(true)
+    }
 })
 
 it("enforces standalone stylesheets and declarations inside media queries", async () => {

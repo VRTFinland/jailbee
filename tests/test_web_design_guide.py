@@ -96,16 +96,11 @@ def test_every_family_in_the_token_table_exists() -> None:
     assert not stale, f"{GUIDE_PATH} names tokens tokens.css does not define: {stale}"
 
 
-def test_the_spacing_table_maps_old_aliases_by_value() -> None:
+def test_the_spacing_guide_names_the_supported_scale_by_value() -> None:
     section = _section("Token families")
-    aliases = {
-        old.strip("`"): new.strip("`")
-        for old, new in zip(_table_column(section, 0), _table_column(section, 1), strict=True)
-        if old.startswith("`--space-")
-    }
-    actual = dict(re.findall(r"(--space-\d):\s*var\((--md-space-\d+)\)", TOKENS.read_text()))
-    assert actual, "no --space-N aliases in tokens.css"
-    assert aliases == actual
+    assert not any(name.startswith("--space-") for name in _code_spans(section))
+    for px, rem in ((4, "0.25"), (8, "0.5"), (12, "0.75"), (16, "1"), (24, "1.5"), (32, "2")):
+        assert f"`--md-space-{px}` {rem}rem" in section
 
 
 def test_the_scoping_convention_forbids_root_scoped_rules() -> None:

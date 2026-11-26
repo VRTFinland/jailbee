@@ -27,24 +27,24 @@ html {
 html,
 body {
     margin: 0;
-    background: var(--bg);
-    color: var(--text);
-    font-family: var(--font-body);
+    background: var(--md-surface);
+    color: var(--md-on-surface);
+    font-family: var(--md-font-body);
     line-height: 1.5;
     -webkit-text-size-adjust: 100%;
 }
 
 code {
-    font-family: var(--font-mono);
+    font-family: var(--md-font-mono);
 }
 
 button.link {
     font: inherit;
     background: none;
     border: none;
-    color: var(--accent);
+    color: var(--md-primary);
     cursor: pointer;
-    padding: var(--space-2);
+    padding: var(--md-space-8);
 }
 
 /* The guard itself: a fixed strip that swallows taps and holds no controls;
@@ -58,15 +58,15 @@ body {
     right: 0;
     bottom: 0;
     height: var(--guard-bottom);
-    background: var(--bg);
+    background: var(--md-surface);
     z-index: var(--md-layer-sticky);
 }
 
 /* Floating page controls and jump buttons share the bottom edge without
    covering one another. */
 :root[data-profile="eink"]:not([data-page-controls="bar"]) .jump-latest {
-    right: calc(var(--space-2) + var(--page-controls-width) + var(--space-2));
-    max-width: calc(100vw - var(--page-controls-width) - 3 * var(--space-2));
+    right: calc(var(--md-space-8) + var(--page-controls-width) + var(--md-space-8));
+    max-width: calc(100vw - var(--page-controls-width) - 3 * var(--md-space-8));
 }
 
 /* Theme and profile scoping (#167): a theme or display-profile difference is
@@ -75,8 +75,7 @@ body {
    rule `[data-profile="eink"] .x` / `[data-theme="eink"] .x` without `:root`.
    Never `:root[data-…] .x`: no panel can scope it. `:root` stays only for what
    exists once per page (body padding, the page controls and what is placed
-   around them). Exception: the generated `highlight.css` (Pygments) keys code
-   colours to the page's theme; the gallery shows no highlighted code. */
+   around them). Generated syntax highlighting inherits the same tokens. */
 
 /* E-ink never animates, nor does anything under reduced motion; edge tap
    zones need margins clear of links. The motion token (tokens.css) follows
@@ -106,8 +105,8 @@ body {
 }
 :root[data-profile="eink"] body {
     padding-inline: var(--eink-page-inset);
-    padding-bottom: calc(var(--guard-bottom) + var(--page-nav-height) + var(--space-3));
+    padding-bottom: calc(var(--guard-bottom) + var(--page-nav-height) + var(--md-space-16));
 }
 :root[data-profile="eink"]:not([data-page-controls="bar"]) body {
-    padding-right: max(var(--eink-page-inset), calc(var(--page-controls-width) + var(--space-2) + var(--space-2)));
+    padding-right: max(var(--eink-page-inset), calc(var(--page-controls-width) + var(--md-space-8) + var(--md-space-8)));
 }

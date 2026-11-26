@@ -89,29 +89,20 @@ a component. The names are Material 3 roles under the `md` prefix.
 | Motion | `--md-motion-*` (`duration`, `easing`) | Every transition. `--md-motion-duration` is 150ms in the normal profile and 0ms in the e-ink profile and under reduced motion. |
 | Switch geometry | `--md-switch-*` (`track-width`, `track-height`, `handle-inset`) | `Switch` only. |
 
-The old names (`--bg`, `--text`, `--accent`, `--space-1`…`--space-4`,
-`--radius`, …) are aliases of these until ticket 14 of #167 removes them. New
-code uses only `--md-*`. App metrics at the end of `tokens.css`
+Only `--md-*` design tokens are supported; the migration aliases have been
+removed. `tokens.test.ts` rejects legacy declarations and references anywhere
+in the app sources. App metrics at the end of `tokens.css`
 (`--title-bar-height`, `--guard-bottom`, …) are layout values set by code,
-not design tokens.
+not design tokens. Generated syntax highlighting also uses the semantic colour
+roles, so scoped themes and e-ink apply without a separate palette.
 
 ### Spacing naming rule
 
 A spacing token is named by its px size at the default 16px root:
 `--md-space-4` 0.25rem, `--md-space-8` 0.5rem, `--md-space-12` 0.75rem,
-`--md-space-16` 1rem, `--md-space-24` 1.5rem, `--md-space-32` 2rem. The old
-aliases map by value:
-
-| Old | New |
-|---|---|
-| `--space-1` | `--md-space-4` |
-| `--space-2` | `--md-space-8` |
-| `--space-3` | `--md-space-16` |
-| `--space-4` | `--md-space-24` |
-
-Migrate through this table, never by index: `--space-3` becomes
-`--md-space-16`, not `--md-space-3`, which does not exist. `tokens.test.ts`
-fails on any `--md-*` name the sources use that `tokens.css` does not define.
+`--md-space-16` 1rem, `--md-space-24` 1.5rem, `--md-space-32` 2rem. Choose by
+value, never by index. `tokens.test.ts` fails on any `--md-*` name the sources
+use that `tokens.css` does not define.
 
 ## Themes and the e-ink display profile
 
@@ -182,9 +173,10 @@ cd frontend && npm test               # Vitest alone
 make web-e2e                          # build, then the Chrome suite incl. snapshot comparison
 ```
 
-`stylelint.config.mjs` lists the views not yet migrated in `ignoreFiles`. A
-migration ticket removes its own entries; never add a file there to get past
-the linter. The rule itself is `stylelint/design-tokens.mjs`.
+Stylelint checks the entire browser app, including generated syntax
+highlighting, without a file exception list. Only token declarations in
+`tokens.css` may define raw design values. Never exempt a file to get past the
+linter. The rule itself is `stylelint/design-tokens.mjs`.
 
 ## Mockups
 

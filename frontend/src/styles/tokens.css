@@ -244,38 +244,6 @@
     --md-context-opacity: 0.5;
 }
 
-/* Old token names, kept as aliases until every view is migrated (#167
-   ticket 14 removes them). Declared on every theme scope: a custom property's
-   var() resolves where it is declared, so a scoped theme needs its own. */
-:root,
-[data-theme] {
-    --bg: var(--md-surface);
-    --surface: var(--md-surface-container-lowest);
-    --text: var(--md-on-surface);
-    --muted: var(--md-on-surface-variant);
-    --border: var(--md-outline-variant);
-    --border-strong: var(--md-outline);
-    --accent: var(--md-primary);
-    --accent-text: var(--md-on-primary);
-    --danger: var(--md-error);
-    --notice-bg: var(--md-primary-container);
-    --phase-booting: var(--md-phase-booting);
-    --phase-autostart: var(--md-phase-autostart);
-    --phase-job: var(--md-phase-job);
-    --phase-failed: var(--md-phase-failed);
-    --font-body: var(--md-font-body);
-    --font-mono: var(--md-font-mono);
-    --space-1: var(--md-space-4);
-    --space-2: var(--md-space-8);
-    --space-3: var(--md-space-16);
-    --space-4: var(--md-space-24);
-    --radius: var(--md-shape-small);
-}
-/* Dark cards sit one tone above the page, as in the approved mockup. */
-[data-theme="dark"] {
-    --surface: var(--md-surface-container-low);
-}
-
 /* App metrics (not design tokens): set by settings and layout code. */
 :root {
     --font-size-body: 16px;
