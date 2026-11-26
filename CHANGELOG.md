@@ -10,6 +10,13 @@ before editing `## Unreleased`.
 
 ### Added
 
+- Message a live Claude session with `jailbee agent say` or from the web
+  dashboard's transcript reader. Messages arrive as ordinary user turns through
+  tmux bracketed paste, including multi-line text and messages sent mid-turn.
+  Sending refuses open dialogs and unsent terminal input without clearing either.
+  Web chat requires the new `remote.web.agent_chat` permission (off by default),
+  follows repository visibility, and records sends in the device audit log
+  ([#171](https://github.com/VRTFinland/jailbee/issues/171)).
 - Background dashboard actions run in the shared state service. Dashboards in
   the same repository scope share notification entries, live output and
   dismissal; a newly connected dashboard sees the output so far. Entries stay
