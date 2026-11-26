@@ -322,6 +322,19 @@ def test_client_survives_a_server_killed_with_a_stale_socket_left_behind(runtime
         client.close()
 
 
+def test_legacy_without_action_host_is_replaced(runtime_dir, monkeypatch):
+    old = Spawner(version="v0")
+    old.start()
+    monkeypatch.setattr(client_module, "ACTION_HOST_PROTOCOL", PROTOCOL + 1)
+    client = _client(Spawner(version="v1"))
+    try:
+        client.wait_first_snapshot(5)
+        old.threads[0].join(3)
+        assert not old.threads[0].is_alive()
+    finally:
+        client.close()
+
+
 def test_unknown_old_service_is_not_replaced_without_consent(runtime_dir, monkeypatch):
     old = Spawner(version="v0")
     old.start()
@@ -334,6 +347,46 @@ def test_unknown_old_service_is_not_replaced_without_consent(runtime_dir, monkey
         assert not new.servers
     finally:
         client.close()
+
+
+def test_unknown_old_service_can_be_replaced_only_by_explicit_choice(runtime_dir, monkeypatch):
+    from jailbee import prompting
+
+    old = Spawner(version="v0")
+    old.start()
+    monkeypatch.setattr(client_module, "ACTIVITY_PROTOCOL", PROTOCOL + 1)
+    monkeypatch.setattr(prompting, "is_interactive", lambda: True)
+    monkeypatch.setattr(prompting, "choose_one", lambda *a, **kw: True)
+    client = _client(Spawner(version="v1"))
+    try:
+        client.wait_first_snapshot(5)
+        old.threads[0].join(3)
+        assert not old.threads[0].is_alive()
+    finally:
+        client.close()
+
+
+def test_close_unblocks_startup_waiting_for_unknown_service(runtime_dir, monkeypatch):
+    old = Spawner(version="v0")
+    old.start()
+    monkeypatch.setattr(client_module, "ACTIVITY_PROTOCOL", PROTOCOL + 1)
+    client = _client(Spawner(version="v1"))
+    errors = []
+
+    def wait():
+        try:
+            client.wait_first_snapshot(30)
+        except StateServiceUnavailable as exc:
+            errors.append(str(exc))
+
+    waiter = threading.Thread(target=wait)
+    waiter.start()
+    _until(lambda: (client.status() or "").startswith("waiting for older state service"))
+    client.close()
+    waiter.join(2)
+    assert not waiter.is_alive()
+    assert errors
+    assert old.threads[0].is_alive()
 
 
 def test_running_old_service_drains_past_startup_timeouts(runtime_dir, tmp_path, monkeypatch):
@@ -439,6 +492,117 @@ def test_replacement_prompt_runs_on_waiting_thread_and_can_interrupt(
         killed.set()
         client.close()
         original.close()
+
+
+def test_action_started_after_idle_query_is_drained(runtime_dir, tmp_path, monkeypatch):
+    from jailbee.state_service.protocol import Drain, RunAction
+
+    drain_ready = threading.Event()
+    send_drain = threading.Event()
+    started = threading.Event()
+    finish = threading.Event()
+    real_encode = client_module.encode
+
+    class Child:
+        stdout = None
+
+        def __init__(self, sock):
+            sock.close()
+            started.set()
+
+        def wait(self):
+            finish.wait(5)
+            return 0
+
+        def kill(self):
+            finish.set()
+
+    old = Spawner(version="v0", action_spawn=lambda *a, **kw: Child(kw["prompt_sock"]))
+    old.start()
+    original = _client(old, dashboard_id="one")
+    original.wait_first_snapshot(3)
+
+    def delayed_encode(message):
+        if isinstance(message, Drain):
+            drain_ready.set()
+            assert send_drain.wait(3)
+        return real_encode(message)
+
+    monkeypatch.setattr(client_module, "encode", delayed_encode)
+    client = _client(Spawner(version="v1"), connect_timeout=1)
+    try:
+        assert drain_ready.wait(3)
+        original.run_action(
+            RunAction(1, ["ls"], str(tmp_path), "t", False, "one", "none", str(tmp_path), "repo")
+        )
+        assert started.wait(2)
+        send_drain.set()
+        _until(lambda: old.servers[0]._draining)
+        assert old.threads[0].is_alive()
+        original.close()
+        finish.set()
+        client.wait_first_snapshot(5)
+    finally:
+        send_drain.set()
+        finish.set()
+        original.close()
+        client.close()
+
+
+def test_prompt_channel_offers_wait_by_default(runtime_dir, tmp_path, monkeypatch):
+    from jailbee import prompting
+    from jailbee.state_service.protocol import RunAction
+    from tests.test_prompt_channel import Peer
+
+    started = threading.Event()
+    finish = threading.Event()
+
+    class Child:
+        stdout = None
+
+        def __init__(self, sock):
+            sock.close()
+            started.set()
+
+        def wait(self):
+            finish.wait(5)
+            return 0
+
+        def kill(self):
+            finish.set()
+
+    old = Spawner(version="v0", action_spawn=lambda *a, **kw: Child(kw["prompt_sock"]))
+    old.start()
+    original = _client(old, dashboard_id="one")
+    original.wait_first_snapshot(3)
+    original.run_action(
+        RunAction(1, ["ls"], str(tmp_path), "t", False, "one", "none", str(tmp_path), "repo")
+    )
+    assert started.wait(2)
+    command, ui = socket.socketpair()
+    monkeypatch.setenv("JAILBEE_PROMPT_FD", str(command.fileno()))
+    prompting.adopt_channel()
+
+    def answer(prompt):
+        assert prompt.default == prompt.options[0].id
+        original.close()
+        finish.set()
+        return prompt.default
+
+    peer = Peer(ui, answer)
+    client = _client(Spawner(version="v1"))
+    try:
+        client.wait_first_snapshot(5)
+        assert len(peer.prompts) == 1
+        assert peer.prompts[0].options[0].title == "Wait for the old service"
+    finally:
+        finish.set()
+        client.close()
+        original.close()
+        prompting.drop_channel()
+        command.close()
+        peer.join()
+        ui.close()
 
 
 def test_client_replaces_a_server_of_another_version(runtime_dir):
