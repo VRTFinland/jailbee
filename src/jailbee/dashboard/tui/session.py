@@ -212,6 +212,7 @@ if TYPE_CHECKING:
     from jailbee.egress_scope import EntryRow
     from jailbee.incus import Incus
     from jailbee.orchestration.view import GrantView
+    from jailbee.prompt_channel import Prompt
     from jailbee.state_service.client import StateClient
 
 
@@ -1014,6 +1015,18 @@ class DashboardSession:
 
     # -- critical actions: the modal and the hand-off block ---------------------
 
+    def question_arrived(self, entry_id: int, prompt: Prompt, *, on_top: bool, queue_key: str) -> bool:
+        """Store a question and decide whether its action is visible to the user."""
+        entry = self.queue.get(entry_id)
+        if entry is None:
+            return False
+        self.queue.set_question(entry_id, prompt)
+        self.queue_changed()
+        show = on_top and self.question_in_foreground(entry_id)
+        if not show:
+            self.set_notice(f"'{entry.command}' awaiting answer · {queue_key}: queue")
+        return show
+
     def question_in_foreground(self, entry_id: int) -> bool:
         """Whether this entry owns the critical action modal currently open."""
         entry = self.queue.get(entry_id)
@@ -1171,7 +1184,7 @@ class DashboardSession:
             selected = self.queue.get(int(entry.value))
             if selected is not None and selected.pending_question is not None:
                 self.terminal.show_question(selected.id)
-                return self.queue_picker(start_index=picker.start_index)
+                return self.queue_picker(start_index=picker.entries.index(entry))
             return self.queue_entry_picker(int(entry.value))
         entry_id = int(picker.carry[0])
         found = self.queue.get(entry_id)

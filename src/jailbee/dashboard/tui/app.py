@@ -26,7 +26,6 @@ from jailbee.config.models_remote import RemotePolicy
 from jailbee.dashboard import runner as drunner
 from jailbee.dashboard.commands import Transport
 from jailbee.dashboard.hit import Hit
-from jailbee.dashboard.notifications import should_show_question
 from jailbee.dashboard.runner import ActionOutcome, ActionRun
 from jailbee.dashboard.tui import scrollbar
 from jailbee.dashboard.tui.frame import DashboardView
@@ -120,7 +119,6 @@ class _OnAppThread:
         self._lock = threading.Lock()
         self._pending: list[tuple[int, str]] = []
         self._scheduled = False
-        self.asking_entry: int | None = None
 
     def entry_id(self, index: int) -> int:
         return self._inner.entry_id(index)
@@ -147,7 +145,6 @@ class _OnAppThread:
     def question(self, index: int, asking: bool) -> None:
         def ask() -> None:
             self.drain()
-            self.asking_entry = self._inner.entry_id(index) if asking else None
             self._inner.question(index, asking)
 
         self._on_app_thread(ask)
@@ -286,9 +283,8 @@ class DashboardApp(App[int], inherit_bindings=False):
                     run=self.action_runner,
                     transport=session.transport,
                     policy=session.ssh_policy,
-                    on_prompt=lambda prompt: self._ask_from_worker(
-                        prompt, None if relay is None else relay.asking_entry
-                    ),
+                    on_prompt=self._ask_from_worker,
+                    on_entry_prompt=lambda entry_id, prompt: self._ask_from_worker(prompt, entry_id),
                     progress=relay,
                     client=self.remote_client,
                     **extra,
@@ -377,15 +373,10 @@ class DashboardApp(App[int], inherit_bindings=False):
             self.push_screen(modal_for(prompt), lambda value: self._resolve_answer(answer, value))
         else:
             self._entry_answers[entry.id] = answer
-            self.session.queue.set_question(entry.id, prompt)
-            self.session.queue_changed()
-            if should_show_question(
-                critical_foreground=self.session.question_in_foreground(entry.id)
-                and self.screen is self._critical_screen
+            if self.session.question_arrived(
+                entry.id, prompt, on_top=self.screen is self._critical_screen, queue_key="Q"
             ):
                 self.show_question(entry.id)
-            else:
-                self.session.set_notice(f"'{entry.command}' awaiting answer · Q: queue")
         try:
             return await answer
         finally:

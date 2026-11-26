@@ -248,6 +248,7 @@ def run_actions(
     *,
     run: Callable[..., RunResult] | None = None,
     progress: RunProgress | None = None,
+    on_entry_prompt: Callable[[int, Prompt], Any] | None = None,
     **common: Any,
 ) -> ActionOutcome:
     """Run ``runs`` one after another through ``run`` (default `run_action`).
@@ -278,6 +279,9 @@ def run_actions(
 
             run_common = dict(common)
             handler = common.get("on_prompt")
+            if progress is not None and on_entry_prompt is not None:
+                entry_id = progress.entry_id(index)
+                handler = lambda prompt, entry_id=entry_id: on_entry_prompt(entry_id, prompt)
             if progress is not None and handler is not None:
                 run_common["on_prompt"] = _announcing(handler, progress, index)
 
