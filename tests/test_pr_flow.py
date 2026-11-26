@@ -739,6 +739,17 @@ def test_update_path_never_looks_at_the_outbox(tmp_path, mocker):
     assert plan == pr_flow.HeadPlan(publish_name="user/x", ai_text=None)
 
 
+@pytest.mark.parametrize("explicit", [{"title": "Manual title"}, {"body": "Manual body"}])
+def test_explicit_text_does_not_consume_a_selected_outbox_description(tmp_path, mocker, explicit):
+    source = _outbox_source()
+    generate = mocker.patch("jailbee.pr_ai.generate_pr_text")
+    plan = _plan(tmp_path, mocker, use_outbox=True, outbox_hint=source, **explicit)
+    assert plan.ai_text is None
+    assert plan.outbox_source is None
+    assert plan.publish_name == "feat/foo"
+    generate.assert_not_called()
+
+
 def test_outbox_branch_goes_through_the_one_confirmation(tmp_path, mocker):
     """A manifest-proposed head is confirmed exactly like a Claude-proposed one."""
     mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=_outbox_source())

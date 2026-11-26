@@ -707,7 +707,7 @@ def resolve_pr_text_and_head(
     # Looked up only when the text could actually be used: consuming a manifest
     # whose body then loses to an explicit --title/--body would delete a
     # description that was never published.
-    outbox_source = outbox_hint
+    outbox_source = outbox_hint if need_text else None
     if use_outbox and need_text and outbox_source is None:
         from jailbee import pr_outbox
 
