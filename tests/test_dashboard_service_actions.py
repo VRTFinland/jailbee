@@ -240,3 +240,81 @@ def test_disconnect_timeout_returns_partial_output(tmp_path, monkeypatch):
     outcome = run_actions(Client(), [ActionRun(["ls"], tmp_path)], groups=[], transport="none")
     assert outcome.results[0].error == "offline"
     assert outcome.outputs == [""]
+
+
+def test_real_service_replays_accepted_action_and_continues_batch(runtime_dir, tmp_path):
+    import socket
+
+    started = threading.Event()
+    release = threading.Event()
+    spawns = []
+
+    class Child:
+        stdout = None
+
+        def __init__(self, sock):
+            sock.close()
+            spawns.append(1)
+            started.set()
+
+        def wait(self):
+            assert release.wait(5)
+            return 0
+
+        def kill(self):
+            release.set()
+
+    paths.ensure_runtime_dir()
+    server = StateServer(
+        FakeGatherer(), version="v1", action_spawn=lambda *a, **kw: Child(kw["prompt_sock"])
+    )
+    thread = threading.Thread(
+        target=lambda: asyncio.run(server.serve(paths.socket_path())), daemon=True
+    )
+    thread.start()
+    track_server(server, thread)
+    _until(paths.socket_path().exists)
+    client = StateClient(None, dashboard_id="origin", version="v1", spawn=lambda: None, backoff=(0.05,))
+    client.start()
+
+    class DisconnectAfterAcceptance:
+        dashboard_id = "origin"
+
+        def __getattr__(self, name):
+            return getattr(client, name)
+
+        def run_action(self, request):
+            client.run_action(request)
+            if request.entry_id == 101:
+                assert started.wait(3)
+                generation = client.action_connection()
+                client._sock.shutdown(socket.SHUT_RDWR)
+                _until(lambda: client.action_connection() not in (None, generation))
+                assert 101 in client.action_entries()
+                release.set()
+                raise BrokenPipeError("send outcome unknown")
+
+    class Progress:
+        def entry_id(self, index):
+            return 101 + index
+
+        def output(self, index, chunk):
+            pass
+
+        def question(self, index, asking):
+            pass
+
+    try:
+        client.wait_first_snapshot(3)
+        with ThreadPoolExecutor() as pool:
+            future = pool.submit(
+                run_actions, DisconnectAfterAcceptance(),
+                [ActionRun(["ls"], tmp_path)] * 2, Progress(), groups=[], transport="none"
+            )
+            outcome = future.result(timeout=8)
+        assert [result.status for result in outcome.results] == [0, 0]
+        assert len(spawns) == 2
+        assert set(client.action_entries()) == {101, 102}
+    finally:
+        release.set()
+        client.close()
