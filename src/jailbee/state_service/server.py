@@ -486,8 +486,7 @@ class StateServer:
         if client.transport != "none":
             try:
                 if self._repo_free_action(entry.argv):
-                    self._check_policy(client, entry.argv)
-                    return entry.cwd == str(Path.home().resolve()) and entry.prefix == ""
+                    return client.cwd_root is None and Path(entry.cwd).resolve() == Path.home().resolve()
                 root, prefix = self._remote_repo(client, entry.repo_root, entry.cwd)
             except (ValueError, OSError):
                 return False
