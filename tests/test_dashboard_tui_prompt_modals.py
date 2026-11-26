@@ -22,6 +22,31 @@ class Host(App[None]):
         self.push_screen(pm.modal_for(prompt), self.answers.append)
 
 
+@pytest.mark.parametrize("kind", ["confirm", "choose_one", "choose_many", "text", "secret"])
+def test_entry_question_shows_command_context_and_controls(kind):
+    from jailbee.dashboard.notifications import QueueEntry
+
+    host = Host()
+
+    async def script():
+        async with host.run_test() as pilot:
+            prompt = Prompt(1, kind, "Question?", options=opts("one"))
+            entry = QueueEntry(1, "jailbee merge alpha-a", "alpha-a", output="earlier\nlast line")
+            host.push_screen(pm.modal_for(prompt, entry=entry))
+            await pilot.pause()
+            texts = [str(w.render()) for w in host.screen.query("Static, Button")]
+            for expected in (
+                "jailbee merge alpha-a",
+                "alpha-a",
+                "last line",
+                "Later",
+                "Abort command",
+            ):
+                assert any(expected in text for text in texts)
+
+    asyncio.run(script())
+
+
 def opts(*titles: str) -> tuple[WireOption, ...]:
     return tuple(WireOption(str(i), t, t, "") for i, t in enumerate(titles))
 
