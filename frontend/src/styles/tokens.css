@@ -18,6 +18,8 @@
 /* Theme-independent scales. */
 :root {
     --md-layout-content-max: 48rem;
+    --md-layout-answer-half: 42dvh;
+    --md-layout-answer-full: 60dvh;
     --md-layout-page-tap-zone: 8vw;
     --md-font-body: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
     --md-font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
