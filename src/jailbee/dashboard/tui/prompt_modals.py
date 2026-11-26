@@ -15,6 +15,7 @@ from typing import Any, ClassVar
 from rich.text import Text
 from textual import events
 from textual.app import ComposeResult
+from textual.await_complete import AwaitComplete
 from textual.binding import Binding, BindingType
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
@@ -79,8 +80,20 @@ class PromptModal(ModalScreen[Any]):
         super().__init__()
         self.prompt = prompt
         self.entry: QueueEntry | None = None
+        self._dismissal: AwaitComplete | None = None
         if prompt.destructive:
             self.add_class("destructive")
+
+    def dismiss(self, result: Any = None) -> AwaitComplete:
+        """Only the first answer may resolve the callback and pop this screen."""
+        if self._dismissal is not None:
+            return self._dismissal
+        # A terminal read can queue keys for a screen before an earlier key
+        # dismisses it. Textual's dismiss() otherwise pops the *current* screen.
+        if not self.is_current:
+            return AwaitComplete()
+        self._dismissal = super().dismiss(result)
+        return self._dismissal
 
     def action_cancel(self) -> None:
         self.dismiss(None)
