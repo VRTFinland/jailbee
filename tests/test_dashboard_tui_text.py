@@ -163,9 +163,7 @@ def test_retarget_lists_and_accepts_a_fetched_upstream_base(mocker, tmp_path):
 
     assert run.of_type(TextPrompt)[0].suggestions == ("main", "release/2.1")
     child.assert_called_once()
-    assert child.call_args.args[0] == [
-        "jailbee", "git", "retarget", "--", "alpha-x", "release/2.1"
-    ]
+    assert child.call_args.args[0] == ["jailbee", "git", "retarget", "--", "alpha-x", "release/2.1"]
 
 
 def test_n_opens_a_focused_prompt(mocker, tmp_path):
