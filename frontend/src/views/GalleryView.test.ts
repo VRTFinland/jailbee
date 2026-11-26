@@ -43,7 +43,7 @@ describe("GalleryView", () => {
     })
 
     it("shows the bundled dashboard icon inventory in every theme and profile", () => {
-        const names = ["menu", "back", "forward", "close", "expand", "collapse", "page-up", "page-down",
+        const names = ["question", "menu", "back", "forward", "close", "expand", "collapse", "page-up", "page-down",
             "jump", "start", "end", "settings", "add", "remove", "waiting", "working", "idle", "error",
             "running", "stopped", "booting", "autostart", "job", "success", "failure"]
         const wrapper = mountGallery()
