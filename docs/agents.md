@@ -649,6 +649,8 @@ the Claude preset's opt-in AI PR descriptions, before any base rebuild.
 A rebuilt base adds a login-shell `claude` function and updates `claude-jb`
 for hand-typed launches. Run `jb base build` and create replacement containers
 to get those shell changes; existing images do not gain them from `jb apply`.
+Run `jb apply` separately to sync the updated in-container skills explaining the
+fallback and its limits.
 The flag is added only when the file exists, and an explicit `--settings`
 or `--settings=...` is preserved instead of adding another. The drop-in stays;
 both paths use the same marketplace/plugin identity, so the inbox follower

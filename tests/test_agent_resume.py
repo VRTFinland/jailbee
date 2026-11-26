@@ -81,6 +81,10 @@ def test_parse_invalid_snapshot_returns_empty(raw: str) -> None:
     ("launcher", "expected"),
     [
         (["claude", "--agent", "reviewer"], ["claude", "--agent", "reviewer"]),
+        (
+            ["claude", "--permission-prompt-tool", "mcp__permissions", "old prompt"],
+            ["claude", "--permission-prompt-tool", "mcp__permissions"],
+        ),
         (["claude", "--effort", "high"], ["claude", "--effort", "high"]),
         (["claude", "--plugin-dir", "/plugins"], ["claude", "--plugin-dir", "/plugins"]),
         (["claude", "--add-dir", "/a", "/b"], ["claude", "--add-dir", "/a", "/b"]),
@@ -163,6 +167,20 @@ def test_restore_matches_and_deduplicates_windows(make_cfg, tmp_path):
     assert result[0].env == {"keep": "yes", "JAILBEE_BOOT_SESSION_ID": VALID_ID}
     assert result[1].name == "claude-2"
     assert result[1].env["ROLE"] == "child"
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+@pytest.mark.parametrize("matched", [False, True])
+def test_restore_settings_follow_claude_config(make_cfg, tmp_path, enabled, matched):
+    from jailbee.agent_resume import restore_steps
+    from jailbee.config.models_agents import AutostartStep
+
+    cfg = make_cfg(tmp_path, agents={"claude": {"enabled": enabled}})
+    steps = [AutostartStep(name="claude", run="exec claude")] if matched else []
+    entry = ResumeEntry(VALID_ID, "/work", ("claude", "--model", "opus"), "claude")
+    [restored] = restore_steps(cfg, steps, [entry], prompted=None, extra_env={})
+    assert ("--settings" in restored.run) is enabled
+    assert restored.run.endswith(f"--model opus --resume {VALID_ID}")
 
 
 def test_restore_drops_prompted_window(make_cfg, tmp_path):

@@ -196,6 +196,33 @@ def test_shell_adds_settings(snippet: str, home: Path, tmp_path: Path) -> None:
     assert record.read_text().splitlines() == ["--settings", str(settings), "-p", "hello"]
 
 
+def test_noninteractive_remote_settings_notice_is_silent(snippet: str, home: Path) -> None:
+    remote = home / ".claude/remote-settings.json"
+    remote.parent.mkdir()
+    remote.write_text('{"channelsEnabled": false}')
+    proc = _run(snippet, home)
+    assert proc.stdout == ""
+    assert proc.stderr == ""
+
+
+def test_shell_missing_settings_file_keeps_argv(snippet, home, tmp_path):
+    missing = tmp_path / "missing.json"
+    record = tmp_path / "argv"
+    binary = home / ".local/bin/claude"
+    binary.write_text('#!/bin/sh\nprintf \'%s\\n\' "$@" > "$RECORD"\n')
+    binary.chmod(0o755)
+    code = snippet.replace("/etc/claude-code/managed-settings.d/50-jailbee.json", str(missing))
+    proc = subprocess.run(
+        ["bash", "-c", code + '\nclaude --model opus -p "hello world"'],
+        env={"HOME": str(home), "PATH": f"{binary.parent}:/usr/bin:/bin", "RECORD": str(record)},
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert record.read_text().splitlines() == ["--model", "opus", "-p", "hello world"]
+    assert proc.stdout == proc.stderr == ""
+
+
 def test_interactive_remote_settings_notice(snippet: str, home: Path) -> None:
     remote = home / ".claude/remote-settings.json"
     remote.parent.mkdir()
@@ -230,6 +257,12 @@ def test_interactive_remote_settings_notice(snippet: str, home: Path) -> None:
                 "--effort",
                 "--profile",
                 "-C",
+                "--mcp-config",
+                "--add-dir",
+                "--allowedTools",
+                "--tools",
+                "--plugin-dir",
+                "--permission-prompt-tool",
             )
         ],
         (["--", "--settings=prompt"], ["--settings", "FILE", "--", "--settings=prompt"]),

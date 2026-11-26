@@ -38,17 +38,102 @@ def test_launch_settings_missing_file_keeps_argv(tmp_path):
 
 @pytest.mark.parametrize(
     "command",
-    ["claude --settings custom.json", "claude --settings=custom.json", "codex", "env X=1 claude"],
+    [
+        "claude --settings custom.json",
+        "claude --settings=custom.json",
+        "codex",
+        "env X=1 claude",
+        "claude --system-prompt 'unterminated",
+        'claude --model "unterminated',
+    ],
 )
 def test_launch_settings_preserve_explicit_settings_and_other_binaries(command):
     assert claude_plugin.with_settings(command) == command
 
 
-@pytest.mark.parametrize("option", ["--system-prompt", "--append-system-prompt", "--json-schema"])
+@pytest.mark.parametrize("separator", [";", "&&", "||", "|", "\n"])
+@pytest.mark.parametrize("spacing", ["", " "])
+@pytest.mark.parametrize("options", ["", " --model opus"])
+def test_later_command_settings_do_not_suppress_claude_settings(
+    tmp_path, separator, spacing, options
+):
+    binary = tmp_path / "claude"
+    binary.write_text('#!/bin/bash\nprintf "%s\\n" "$@" > "$RECORD"\n')
+    binary.chmod(0o755)
+    settings = tmp_path / "settings.json"
+    settings.write_text("{}")
+    record = tmp_path / "argv"
+    original = f'{binary}{options}{spacing}{separator}{spacing}printf "%s" --settings=other'
+    command = claude_plugin.with_settings(original)
+    command = command.replace(claude_plugin.SETTINGS_PATH, str(settings))
+    subprocess.run(
+        ["bash", "-c", command],
+        env={"RECORD": str(record)},
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert record.read_text().splitlines() == ["--settings", str(settings), *shlex.split(options)]
+
+
+@pytest.mark.parametrize("separator", [";", "&&", "||", "|"])
+def test_quoted_command_separator_does_not_hide_explicit_settings(separator):
+    command = f"claude --system-prompt '{separator}' --settings custom.json"
+    assert claude_plugin.with_settings(command) == command
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "$(printf %s $(printf x); printf y)",
+        "`printf x; printf y`",
+        '"$(printf %s $(printf x); printf y)"',
+        '"text \\"quoted\\" ; text"',
+    ],
+)
+def test_substitution_separator_keeps_explicit_settings(value):
+    command = f"claude --system-prompt {value} --settings custom.json"
+    assert claude_plugin.with_settings(command) == command
+
+
+@pytest.mark.parametrize(
+    "option",
+    [
+        "--system-prompt",
+        "--append-system-prompt",
+        "--json-schema",
+        "--mcp-config",
+        "--add-dir",
+        "--allowedTools",
+        "--tools",
+        "--plugin-dir",
+        "--permission-prompt-tool",
+    ],
+)
 def test_option_value_named_settings_does_not_suppress_jailbee_settings(option):
     command = claude_plugin.with_settings(f"claude {option} --settings=example")
     assert command.count("--settings") == 2
     assert command.endswith(f"{option} --settings=example")
+
+
+@pytest.mark.parametrize(
+    "options, expected",
+    [
+        (r"--system-prompt foo\;bar", ["--system-prompt", "foo;bar"]),
+        (r"--system-prompt foo\|bar", ["--system-prompt", "foo|bar"]),
+        ("--model opus # --settings=other", ["--model", "opus"]),
+    ],
+)
+def test_escaped_operators_and_comments_do_not_suppress_settings(tmp_path, options, expected):
+    binary = tmp_path / "claude"
+    binary.write_text('#!/bin/bash\nprintf "%s\\n" "$@"\n')
+    binary.chmod(0o755)
+    settings = tmp_path / "settings.json"
+    settings.write_text("{}")
+    command = claude_plugin.with_settings(f"{binary} {options}")
+    command = command.replace(claude_plugin.SETTINGS_PATH, str(settings))
+    proc = subprocess.run(["bash", "-c", command], capture_output=True, text=True, check=True)
+    assert proc.stdout.splitlines() == ["--settings", str(settings), *expected]
 
 
 def test_settings_path_is_in_mounted_dropin(make_cfg, tmp_path):
