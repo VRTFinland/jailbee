@@ -3,6 +3,7 @@ import {afterEach, beforeEach, describe, expect, it, vi} from "vitest"
 import {createMemoryHistory, createRouter} from "vue-router"
 import {reloadSettings, settings, startSettings} from "../settings"
 import QuickSettings from "./QuickSettings.vue"
+import IconButton from "./ui/IconButton.vue"
 
 const mounted: {unmount(): void}[] = []
 beforeEach(() => reloadSettings())
@@ -160,6 +161,21 @@ describe("Quick settings", () => {
         await flushPromises()
         expect(wrapper.find('[role="dialog"]').exists()).toBe(false)
         expect(document.activeElement).not.toBe(icon.element)
+    })
+
+    it("passes the real trigger to Settings even when the component click has no DOM currentTarget", async () => {
+        const openSettings = vi.fn()
+        const router = createRouter({history: createMemoryHistory(), routes: [
+            {path: "/", component: {template: "<div />"}},
+        ]})
+        await router.push("/")
+        const wrapper = mount(QuickSettings, {attachTo: document.body,
+            global: {plugins: [router], provide: {"open-settings": openSettings}}})
+        mounted.push(wrapper)
+        wrapper.getComponent(IconButton).vm.$emit("click", new MouseEvent("click"))
+        await flushPromises()
+        await wrapper.get('.settings-action').trigger("click")
+        expect(openSettings).toHaveBeenCalledWith(wrapper.get('button[aria-label="Quick settings"]').element)
     })
 
     it("closes on Escape from a focused select", async () => {

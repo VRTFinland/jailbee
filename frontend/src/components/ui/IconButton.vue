@@ -8,13 +8,14 @@ withDefaults(defineProps<{
     icon: IconName
     label: string
     disabled?: boolean
-}>(), {disabled: false})
+    variant?: "text" | "tonal"
+}>(), {disabled: false, variant: "text"})
 defineEmits<{click: [event: MouseEvent]}>()
 </script>
 
 <template>
     <button type="button" class="icon-button ui-state-layer ui-focus-ring" :aria-label="label" :title="label"
-        :disabled="disabled" @click="$emit('click', $event)">
+        :data-variant="variant" :disabled="disabled" @click="$emit('click', $event)">
         <Icon :name="icon" />
     </button>
 </template>
@@ -35,6 +36,11 @@ defineEmits<{click: [event: MouseEvent]}>()
     color: var(--md-on-surface-variant);
     cursor: pointer;
     box-shadow: none;
+}
+.icon-button[data-variant="tonal"] {
+    border: 1px solid var(--md-hairline);
+    background: var(--md-primary-container);
+    color: var(--md-on-primary-container);
 }
 .icon-button:disabled {
     cursor: default;

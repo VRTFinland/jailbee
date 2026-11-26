@@ -58,7 +58,7 @@ describe("RepoList", () => {
             await wrapper.setProps({view: {...view, repos: [{prefix: "alpha", containers: [
                 {...view.repos[0].containers[0], state, phase: null, agent: null},
             ]}]}})
-            expect(wrapper.find(".phase").exists()).toBe(false)
+            expect(wrapper.find(".status-chip").exists()).toBe(false)
             expect(wrapper.get(".cell").text()).toBe("ST▶")
         }
     })
@@ -113,16 +113,16 @@ describe("RepoList", () => {
         const wrapper = mountList()
         const fresh = {...view.repos[0].containers[0], agent: "idle", agent_recent_idle: "5m"}
         await wrapper.setProps({view: {...view, repos: [{prefix: "alpha", containers: [fresh]}]}})
-        expect(wrapper.get(".agent").text()).toBe("idle 5m")
-        expect(wrapper.get(".agent").classes()).toContain("agent-recent-idle")
+        expect(wrapper.get('[data-status="idle"]').text()).toBe("idle 5m")
+        expect(wrapper.get('[data-status="idle"]').attributes("data-emphasis")).toBe("true")
     })
 
     it("keeps recent-idle emphasis beside a more urgent session", async () => {
         const wrapper = mountList()
         const waiting = {...view.repos[0].containers[0], agent_recent_idle: "5m"}
         await wrapper.setProps({view: {...view, repos: [{prefix: "alpha", containers: [waiting]}]}})
-        expect(wrapper.findAll(".agent").map(badge => badge.text())).toEqual(["waiting for you", "idle 5m"])
-        expect(wrapper.get(".agent-recent-idle").text()).toBe("idle 5m")
+        expect(wrapper.findAll('[data-status="waiting"], [data-status="idle"]').map(badge => badge.text())).toEqual(["waiting for you", "idle 5m"])
+        expect(wrapper.get('[data-status="idle"]').text()).toBe("idle 5m")
     })
 
     it("visibly nests children and shows orchestration facts without colour", async () => {
@@ -201,9 +201,9 @@ describe("RepoList", () => {
         const wrapper = mountList()
         const rows = wrapper.findAll("li.row")
         expect(rows[0].attributes("data-agent")).toBe("waiting")
-        expect(rows[0].get(".agent").text()).toBe("waiting for you")
+        expect(rows[0].get('[data-status="waiting"]').text()).toBe("waiting for you")
         expect(rows[1].attributes("data-agent")).toBeUndefined()
-        expect(rows[1].find(".agent").exists()).toBe(false)
+        expect(rows[1].find('.status-chip:not([data-status="stopped"])').exists()).toBe(false)
     })
 
     it("words an API-error agent state and styles it like a waiting one", async () => {
@@ -212,8 +212,8 @@ describe("RepoList", () => {
         await wrapper.setProps({view: {...view, repos: [{prefix: "alpha", containers: [stuck]}]}})
         const row = wrapper.get("li.row")
         expect(row.attributes("data-agent")).toBe("error")
-        expect(row.get(".agent").text()).toBe("API error: quota")
-        expect(row.get(".agent").attributes("data-status")).toBe("error")
+        expect(row.get('[data-status="error"]').text()).toBe("API error: quota")
+        expect(row.get('[data-status="error"]').attributes("data-status")).toBe("error")
     })
 
     it("marks each row with its row phase and state for the theme to style", () => {
@@ -226,8 +226,8 @@ describe("RepoList", () => {
 
     it("names the phase and stopped state in text so neither relies on colour (e-ink)", () => {
         const rows = mountList().findAll("li.row")
-        expect(rows[0].get(".phase").text()).toBe("booting")
-        expect(rows[1].get(".phase").text()).toBe("Stopped")
+        expect(rows[0].get('[data-status="booting"]').text()).toBe("booting")
+        expect(rows[1].get('[data-status="stopped"]').text()).toBe("stopped")
     })
 
     it("preserves sync padding in a preformatted value", () => {

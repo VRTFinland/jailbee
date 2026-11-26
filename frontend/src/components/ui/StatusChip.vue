@@ -38,12 +38,14 @@ const props = defineProps<{
     status: StatusName | "unknown"
     /** More specific wording, e.g. "API error: overloaded"; the icon and colour stay the status's. */
     label?: string
+    /** Highlight a status that explains membership, such as recent activity. */
+    emphasis?: boolean
 }>()
 const known = computed(() => Object.hasOwn(STATUSES, props.status) ? STATUSES[props.status as StatusName] : null)
 </script>
 
 <template>
-    <span class="status-chip" :data-status="known ? status : 'unknown'"
+    <span class="status-chip" :data-emphasis="emphasis || undefined" :data-status="known ? status : 'unknown'"
         ><Icon v-if="known" :name="known.icon" size="small" /><span class="status-chip-text">{{
             label ?? known?.text ?? status }}</span></span>
 </template>
@@ -64,6 +66,9 @@ const known = computed(() => Object.hasOwn(STATUSES, props.status) ? STATUSES[pr
     line-height: var(--md-type-label-medium-line-height);
     font-weight: var(--md-type-label-medium-weight);
     white-space: nowrap;
+}
+.status-chip[data-emphasis="true"] {
+    font-weight: var(--md-type-emphasis-weight);
 }
 .status-chip-text {
     min-width: 0;

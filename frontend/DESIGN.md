@@ -13,6 +13,9 @@ The rules in short:
 - Build screens from the primitives below. A view never imports `reka-ui`.
 - Style with `--md-*` tokens only. Stylelint rejects raw colours, sizes,
   radii, z-indexes, spacing, shadows and durations outside `tokens.css`.
+- On a primitive's root, a view may set layout only (margin, grid placement,
+  flex), never appearance (colour, border, opacity, type weight). Add a primitive
+  prop and a gallery sample instead; never override primitive internals.
 - A theme or profile difference is a token, or a rule scoped without `:root`.
 - Mockups in design sessions use the real token names and the real
   primitives' class names, so the look reaches the implementer.
@@ -24,10 +27,10 @@ All live in `src/components/ui/`.
 | Job | Primitive | Notes |
 |---|---|---|
 | A command with a text label | `Button` | `variant`: `primary` (one per screen), `tonal`, `text`, `danger`. Optional leading `icon`. `type="submit"` inside a form. |
-| A command shown only as an icon | `IconButton` | `label` is required and becomes the accessible name. The hit target is at least `--md-target-min`. |
+| A command shown only as an icon | `IconButton` | `label` is required and becomes the accessible name. The hit target is `--md-target-min`. `variant="text"` is transparent; `variant="tonal"` gives floating controls an opaque surface and an e-ink hairline. |
 | An on/off setting | `Switch` | `v-model` boolean, `label` required. Not for a one-off action: use a `Button`. |
-| A container, phase or agent state | `StatusChip` | Never map wire values by hand: `containerStatus`, `agentStatus` and `rowStatuses` in `components/ui/status.ts` turn a row into chips. An unknown value becomes a neutral chip with its raw text. |
-| A row of a list (container, repo, setting) | `ListRow` | `title`/`secondary` props or slots, a default body slot, a `trailing` slot for controls. `to` makes the whole row a route link; controls in the body and trailing slots stay their own targets. Height follows `--md-target-row`. `wrap` keeps long names readable and trailing chips above the body without view overrides of primitive internals. |
+| A container, phase or agent state | `StatusChip` | Never map wire values by hand: `containerStatus`, `agentStatus` and `rowStatuses` in `components/ui/status.ts` turn wire values into chips. Use `listStatuses(row)` for list policy: phase first, otherwise stopped only (no Running/Frozen chip), then agent and emphasized recent-idle age. Use the mapper's label casing everywhere. `emphasis` owns strong weight. An unknown value becomes a neutral chip with its raw text. |
+| A row of a list (container, repo, setting) | `ListRow` | `title`/`secondary` props or slots, a default body slot, a `trailing` slot for controls. `to` makes the whole row a route link; controls in the body and trailing slots stay their own targets. Height follows `--md-target-row`. `context` gives supporting ancestors reduced prominence, or a dashed hairline in e-ink. `wrap` keeps long names readable and trailing chips above the body without view overrides of primitive internals. |
 | A glyph | `Icon` | `name` from `material-symbols/paths.ts`, `size` small/medium/large. Takes `currentColor`. Without `label` it is decorative (`aria-hidden`). |
 | A modal question or form, or a side drawer | `Dialog` | `title` required, `description` optional, `placement="drawer"` for a side panel. Body in the default slot; buttons in the `#actions` slot, whose `close` slot prop closes it. A trigger in `#trigger`, or drive `v-model:open`. |
 | A list of actions behind a button | `Menu` | `label`, `items` (`MenuItem`: `value`, `label`, optional `icon`, `disabled`, `variant: "danger"`), `select` event with the value. The trigger goes in `#trigger`. |
@@ -68,7 +71,8 @@ a component. The names are Material 3 roles under the `md` prefix.
 | Hit targets | `--md-target-min`, `--md-target-row` | `min` 44px: the smallest any control may be. `row` 48px with a fine pointer, 56px with a coarse one. |
 | Layers | `--md-layer-*` (bottom to top: `raised`, `sticky`, `scrim`, `dialog`, `popover`) | Every z-index. A menu or select opened from a dialog sits above it. |
 | State layers | `--md-state-*` (`hover-opacity`, `pressed-opacity`) | Through `ui-state-layer`; zero in e-ink. |
-| Context | `--md-context-opacity` | Filtered context ancestors remain at half opacity; the e-ink theme uses a dashed hairline instead of grey. |
+| Emphasis | `--md-type-emphasis-weight` | Strong weight for meaningful supporting status, such as recent activity; owned by `StatusChip`'s `emphasis` prop. |
+| Context | `--md-context-opacity` | Reduced visual prominence for supporting context rather than primary results. `ListRow`'s `context` prop owns this treatment; e-ink keeps full black ink and uses a dashed hairline instead of grey. |
 | Disabled | `--md-disabled-*` (`content-opacity`, `container-opacity`) | Material 3 fading; none in e-ink (no greys). |
 | Focus ring | `--md-focus-ring-*` (`width`, `offset`) | Through `ui-focus-ring`; kept in every theme. |
 | Motion | `--md-motion-*` (`duration`, `easing`) | Every transition. `--md-motion-duration` is 150ms in the normal profile and 0ms in the e-ink profile and under reduced motion. |
