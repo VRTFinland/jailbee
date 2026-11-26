@@ -30,15 +30,24 @@ def server(make_server: Callable[..., E2EServer], tmp_path: Path) -> E2EServer:
     push_live(server, SESSION_ID)
     stamp = datetime(2026, 11, 2, tzinfo=UTC)
     with Session(server.engine) as db:
-        db.add(ContainerSession(container_name="work-main", agent="claude", session_id=OTHER_ID,
-                                first_seen=stamp, last_seen=stamp))
+        db.add(
+            ContainerSession(
+                container_name="work-main",
+                agent="claude",
+                session_id=OTHER_ID,
+                first_seen=stamp,
+                last_seen=stamp,
+            )
+        )
         db.commit()
     return server
 
 
 def push_live(server: E2EServer, *ids: str) -> None:
     live = AgentSummary("claude", "busy", None, None, len(ids), session_ids=ids)
-    server.push(snapshot_of(repo_group("work", container("work-main", "work", agent_status=(live,)))))
+    server.push(
+        snapshot_of(repo_group("work", container("work-main", "work", agent_status=(live,))))
+    )
 
 
 @pytest.mark.parametrize("entry", ["main", "work"])
@@ -52,7 +61,9 @@ def test_single_live_session_replaces_list_and_back_reaches_front_page(
     expect(page.get_by_role("heading", name="JailBee", exact=True)).to_be_visible()
     page.get_by_role("link", name=entry, exact=True).click()
     expect(page.get_by_role("heading", name=SESSION_TITLE, exact=True)).to_be_visible()
-    page.get_by_role("navigation", name="Breadcrumb").get_by_role("link", name="work", exact=True).click()
+    page.get_by_role("navigation", name="Breadcrumb").get_by_role(
+        "link", name="work", exact=True
+    ).click()
     expect(page.get_by_role("heading", name="work", exact=True)).to_be_visible()
     expect(page.get_by_role("switch", name="Live only", exact=True)).to_be_checked()
     expect(page.locator("li.session")).to_have_count(1)
@@ -69,7 +80,9 @@ def test_two_live_sessions_keep_the_list_and_toggle_reveals_history(
     second = "33333333-3333-4333-8333-333333333333"
     push_live(server, SESSION_ID, second)
     page.get_by_role("link", name=entry, exact=True).click()
-    expect(page.get_by_role("heading", name="work" if entry == "work" else "work-main", exact=True)).to_be_visible()
+    expect(
+        page.get_by_role("heading", name="work" if entry == "work" else "work-main", exact=True)
+    ).to_be_visible()
     expect(page.locator("li.session")).to_have_count(2)
     expect(page.get_by_role("searchbox", name="Search earlier sessions")).to_have_count(0)
     page.get_by_role("switch", name="Live only", exact=True).uncheck()
@@ -89,7 +102,9 @@ def test_session_preferences_survive_reload_and_no_live_has_one_tap_escape(
     page.get_by_role("switch", name="Show only live sessions").uncheck()
     page.reload()
     expect(page.get_by_role("switch", name="Show only live sessions")).not_to_be_checked()
-    expect(page.get_by_role("switch", name="Open the only live session directly")).not_to_be_checked()
+    expect(
+        page.get_by_role("switch", name="Open the only live session directly")
+    ).not_to_be_checked()
     page.get_by_role("link", name="JailBee", exact=True).click()
     page.get_by_role("link", name="main", exact=True).click()
     expect(page.get_by_role("switch", name="Live only", exact=True)).not_to_be_checked()

@@ -108,9 +108,7 @@ def _live_keys(c: ContainerInfo) -> list[tuple[str, str]]:
     return list(keys)
 
 
-def live_session_containers(
-    snapshot: Snapshot | None, prefix: str
-) -> dict[tuple[str, str], str]:
+def live_session_containers(snapshot: Snapshot | None, prefix: str) -> dict[tuple[str, str], str]:
     """Running session keys and their containers, from the same source as the live list."""
     if snapshot is None:
         return {}

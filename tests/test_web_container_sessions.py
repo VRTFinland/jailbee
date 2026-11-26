@@ -135,7 +135,9 @@ def test_repo_live_marks_use_the_same_snapshot_as_the_container_list(client: Tes
     }
 
 
-def test_repo_live_sessions_include_a_process_whose_transcript_is_not_written_yet(home: Path) -> None:
+def test_repo_live_sessions_include_a_process_whose_transcript_is_not_written_yet(
+    home: Path,
+) -> None:
     (home / "projects" / "-work-repo" / f"{SESSION_A}.jsonl").unlink()
     for client in open_client(home):
         rows = client.get("/api/repos/alpha/sessions").json()["sessions"]

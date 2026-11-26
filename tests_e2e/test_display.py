@@ -25,8 +25,10 @@ def session_list_preferences(page: Page) -> None:
 
     Default live filtering and shortcut navigation are covered in test_live_sessions.
     """
-    page.add_init_script("localStorage.setItem('jailbee.liveSessionsOnly', '0'); "
-                         "localStorage.setItem('jailbee.openOnlyLiveSession', '0')")
+    page.add_init_script(
+        "localStorage.setItem('jailbee.liveSessionsOnly', '0'); "
+        "localStorage.setItem('jailbee.openOnlyLiveSession', '0')"
+    )
 
 
 @pytest.fixture

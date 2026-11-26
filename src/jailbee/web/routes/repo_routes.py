@@ -49,7 +49,9 @@ async def repo_sessions(prefix: str, ctx: Context, _auth: RequireSession) -> Ses
                 title=r.title,
                 last_activity=r.last_activity,
                 models=list(r.models),
-                container=live.get((r.agent, r.session_id), containers.get((r.agent, r.session_id))),
+                container=live.get(
+                    (r.agent, r.session_id), containers.get((r.agent, r.session_id))
+                ),
                 live=(r.agent, r.session_id) in live,
             )
             for r in rows
