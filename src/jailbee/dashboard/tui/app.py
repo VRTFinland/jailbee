@@ -102,9 +102,10 @@ class _OnAppThread:
     Output never blocks the runner's pump: chunks pile up under a lock and at
     most one flush is posted, which hands the app thread their coalesced text
     (a blocking hand-off would stall the child once its pipe fills while the
-    app thread is busy, e.g. in a tmux hand-off). A question blocks, after
-    draining the output before it; :meth:`drain` settles what is still pending
-    before the batch finishes.
+    app thread is busy, e.g. in a tmux hand-off). Question announcements
+    are posted too, so the prompt handler can capture suspension at arrival
+    before waiting on the app thread. They drain earlier output first;
+    :meth:`drain` settles what is still pending before the batch finishes.
     """
 
     def __init__(
@@ -147,7 +148,10 @@ class _OnAppThread:
             self.drain()
             self._inner.question(index, asking)
 
-        self._on_app_thread(ask)
+        if asking:
+            self._post(ask)
+        else:
+            self._on_app_thread(ask)
 
 
 class DashboardApp(App[int], inherit_bindings=False):

@@ -96,6 +96,64 @@ def test_followup_opens_after_answer_and_timer_does_not_disarm(mocker, tmp_path)
     asyncio.run(scenario())
 
 
+def test_question_arriving_during_blocking_handoff_opens_queue_not_modal(mocker, tmp_path):
+    release = Event()
+    arriving = Event()
+    ready = Event()
+    answers = []
+
+    def run(argv, *, on_prompt, **kwargs):
+        ready.set()
+        assert release.wait(5)
+        answers.append(on_prompt(Prompt(1, "text", "Name?")))
+        return drunner.RunResult(status=0)
+
+    app = make_app(mocker, [RepoGroup("alpha", str(tmp_path), None, [ci("alpha-a", "alpha")])])
+    app.action_runner = run
+    app.threaded_actions = True
+
+    call_from_thread = app.call_from_thread
+
+    def relay(*args, **kwargs):
+        if app.session.handed_off:
+            arriving.set()
+        return call_from_thread(*args, **kwargs)
+
+    mocker.patch.object(app, "call_from_thread", side_effect=relay)
+
+    def terminal_command():
+        release.set()
+        assert arriving.wait(5)
+        return 0
+
+    async def scenario():
+        async with app.run_test() as pilot:
+            try:
+                app.session.run_dashboard_command("alpha-a", "container", ["start", "alpha-a"])
+                assert await asyncio.to_thread(ready.wait, 5)
+                assert app.hand_off(terminal_command) == 0
+                async with asyncio.timeout(5):
+                    while not any(e.pending_question for e in app.session.queue):
+                        await pilot.pause(0.01)
+                assert not app.modal_open
+                assert app.session.overlay is not None
+                assert app.session.overlay.purpose == "queue"
+                await pilot.press("enter")
+                async with asyncio.timeout(5):
+                    while not isinstance(app.screen, pm.TextModal):
+                        await pilot.pause(0.01)
+                await pilot.press("x", "enter")
+                async with asyncio.timeout(5):
+                    while not answers:
+                        await pilot.pause(0.01)
+                assert answers == ["x"]
+            finally:
+                release.set()
+                app.exit()
+
+    asyncio.run(scenario())
+
+
 def test_routing_inputs_are_independent():
     from jailbee.dashboard.notifications import should_show_question
 
