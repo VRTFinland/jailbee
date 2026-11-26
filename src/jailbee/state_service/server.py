@@ -15,7 +15,7 @@ import logging
 import os
 import time
 from collections.abc import Callable
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -85,6 +85,9 @@ class _Client:
     dashboard_id: str | None = None
     excluded_prefixes: frozenset[str] = frozenset()
     active: bool = True
+    replaying: bool = False
+    pending: list[bytes] = field(default_factory=list)
+    pending_bytes: int = 0
 
 
 def cancel_action_question(prompt: object) -> None:
@@ -183,34 +186,34 @@ class StateServer:
                     hello.dashboard_id,
                     frozenset(hello.excluded_prefixes),
                 )
+                client.replaying = True
                 self._clients.add(client)
-                if not self._send_action(client, ActionSyncStart()):
+                entries = [entry for entry in self._actions.values() if self._in_scope(entry, client)]
+                if not self._send_action(client, ActionSyncStart(), replay=True):
                     return
-                for entry in self._actions.values():
-                    if self._in_scope(entry, client):
-                        if not self._send_action(client, replace(entry, output="")):
-                            return
-                    if self._in_scope(entry, client) and entry.output:
-                        if not self._send_action(
-                            client, ActionOutput(entry.entry_id, entry.output)
-                        ):
-                            return
-                    if self._in_scope(entry, client) and entry.finished:
-                        if not self._send_action(
-                            client,
-                            ActionFinish(
-                                entry.entry_id,
-                                entry.status,
-                                entry.refused,
-                                entry.error,
-                                entry.cancelled,
-                                entry.declined,
-                            ),
-                        ):
-                            return
-                if not self._send_action(client, ActionSyncEnd()):
+                for entry in entries:
+                    if not self._send_action(client, replace(entry, output=""), replay=True):
+                        return
+                    if entry.output and not self._send_action(
+                        client, ActionOutput(entry.entry_id, entry.output), replay=True
+                    ):
+                        return
+                    if entry.finished and not self._send_action(
+                        client,
+                        ActionFinish(entry.entry_id, entry.status, entry.refused, entry.error,
+                                     entry.cancelled, entry.declined), replay=True,
+                    ):
+                        return
+                    await asyncio.wait_for(writer.drain(), DRAIN_TIMEOUT_SECONDS)
+                if not self._send_action(client, ActionSyncEnd(), replay=True):
                     return
-                await writer.drain()
+                await asyncio.wait_for(writer.drain(), DRAIN_TIMEOUT_SECONDS)
+                while client.pending:
+                    line = client.pending.pop(0)
+                    client.pending_bytes -= len(line)
+                    writer.write(line)
+                    await asyncio.wait_for(writer.drain(), DRAIN_TIMEOUT_SECONDS)
+                client.replaying = False
                 if self._latest is not None:
                     writer.write(encode(self._latest))
                     await writer.drain()
@@ -232,7 +235,7 @@ class StateServer:
                     settle = min(max(message.settle, 0.0), MAX_SETTLE_SECONDS)
                     self._fast_until = max(self._fast_until, self._clock() + settle)
                 self._wake.set()
-        except (ProtocolError, ConnectionError, ValueError) as exc:
+        except (ProtocolError, ConnectionError, ValueError, TimeoutError) as exc:
             # ValueError: a line over the reader's limit (LimitOverrunError's base).
             log.info("dropping a client: %s", exc)
         finally:
@@ -387,12 +390,21 @@ class StateServer:
         | ActionDismissed
         | ActionSyncStart
         | ActionSyncEnd,
+        *,
+        replay: bool = False,
     ) -> bool:
         transport = client.writer.transport
         if client not in self._clients or transport is None or transport.is_closing():
             self._drop(client)
             return False
         line = encode(message)
+        if client.replaying and not replay:
+            if client.pending_bytes + len(line) > MAX_ACTION_BUFFER_BYTES:
+                self._drop(client)
+                return False
+            client.pending.append(line)
+            client.pending_bytes += len(line)
+            return True
         if transport.get_write_buffer_size() + len(line) > MAX_ACTION_BUFFER_BYTES:
             log.info("dropping action client that cannot keep up")
             self._drop(client)
