@@ -19,7 +19,7 @@ def test_question_opens_after_dispatch_without_interaction(mocker, tmp_path):
         return drunner.RunResult(status=0)
 
     app = make_app(mocker, [RepoGroup("alpha", str(tmp_path), None, [ci("alpha-a", "alpha")])])
-    app.action_runner = run
+    app.session.client.action_runner = run
     app.threaded_actions = True
 
     async def scenario():
@@ -41,7 +41,7 @@ def test_key_after_dispatch_defers_question(mocker, tmp_path):
         return drunner.RunResult(status=0)
 
     app = make_app(mocker, [RepoGroup("alpha", str(tmp_path), None, [ci("alpha-a", "alpha")])])
-    app.action_runner = run
+    app.session.client.action_runner = run
     app.threaded_actions = True
 
     async def scenario():
@@ -76,7 +76,7 @@ def test_followup_opens_only_without_interaction_after_answer(mocker, tmp_path, 
         return drunner.RunResult(status=0)
 
     app = make_app(mocker, [RepoGroup("alpha", str(tmp_path), None, [ci("alpha-a", "alpha")])])
-    app.action_runner = run
+    app.session.client.action_runner = run
     app.threaded_actions = True
 
     async def scenario():
@@ -137,7 +137,7 @@ def test_question_arriving_during_blocking_handoff_opens_queue_not_modal(
         return drunner.RunResult(status=0)
 
     app = make_app(mocker, [RepoGroup("alpha", str(tmp_path), None, [ci("alpha-a", "alpha")])])
-    app.action_runner = run
+    app.session.client.action_runner = run
     app.threaded_actions = True
 
     call_from_thread = app.call_from_thread
@@ -237,7 +237,7 @@ def test_click_on_dashboard_disarms_action(mocker, tmp_path):
         return drunner.RunResult(status=0)
 
     app = make_app(mocker, [RepoGroup("alpha", str(tmp_path), None, [ci("alpha-a", "alpha")])])
-    app.action_runner = run
+    app.session.client.action_runner = run
     app.threaded_actions = True
 
     async def scenario():

@@ -220,8 +220,8 @@ def test_existing_branch_create_asks_in_a_modal_and_preserves_decline_hint(
 
     app = make_app(mocker, [group], jobs=JobRunner)
     app.threaded_actions = True
-    app.action_runner = runner.run_action
-    app.action_spawn = spawn
+    app.session.client.action_runner = runner.run_action
+    app.session.client.action_spawn = spawn
 
     async def main():
         async with app.run_test() as pilot:

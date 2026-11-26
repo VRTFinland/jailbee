@@ -672,8 +672,8 @@ def test_pilot_an_expanded_running_entry_updates_live(mocker, tmp_path):
 
     app = make_app(mocker, [_pilot_group(tmp_path)])
     app.threaded_actions = True
-    app.action_runner = drunner.run_action
-    app.action_spawn = spawn
+    app.session.client.action_runner = drunner.run_action
+    app.session.client.action_spawn = spawn
 
     def shown(app) -> str:  # type: ignore[no-untyped-def]
         screen = app.screen
@@ -966,8 +966,8 @@ def _pilot_two_entries(mocker, tmp_path):  # type: ignore[no-untyped-def]
 
     app = make_app(mocker, [_pilot_group(tmp_path)])
     app.threaded_actions = True
-    app.action_runner = drunner.run_action
-    app.action_spawn = spawn
+    app.session.client.action_runner = drunner.run_action
+    app.session.client.action_spawn = spawn
     return app, children
 
 
@@ -1136,7 +1136,9 @@ def test_a_question_drains_the_output_before_it():
 def test_a_crashed_action_worker_still_settles_its_entries(mocker, tmp_path):
     from tests.dashboard_pilot import drive
 
-    mocker.patch.object(drunner, "run_actions", side_effect=RuntimeError("boom"))
+    from tests.dashboard_pilot import FakeStateClient
+
+    mocker.patch.object(FakeStateClient, "run_action", side_effect=RuntimeError("boom"))
     seen: list[list[str]] = []
 
     def start_and_look(app) -> None:  # type: ignore[no-untyped-def]
