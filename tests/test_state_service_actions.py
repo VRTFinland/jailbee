@@ -340,10 +340,13 @@ def test_unrestricted_remote_orphan_runs_from_home(runtime_dir, tmp_path, monkey
 
     class Child:
         stdout = None
+
         def __init__(self, sock):
             sock.close()
+
         def wait(self):
             return 0
+
         def kill(self):
             pass
 
@@ -353,16 +356,38 @@ def test_unrestricted_remote_orphan_runs_from_home(runtime_dir, tmp_path, monkey
 
     paths.ensure_runtime_dir()
     server = StateServer(FakeGatherer(), version="v1", action_spawn=spawn)
-    thread = threading.Thread(target=lambda: asyncio.run(server.serve(paths.socket_path())), daemon=True)
+    thread = threading.Thread(
+        target=lambda: asyncio.run(server.serve(paths.socket_path())), daemon=True
+    )
     thread.start()
     track_server(server, thread)
     _until(paths.socket_path().exists)
-    client = StateClient(None, dashboard_id="remote", transport="ssh", version="v1", spawn=lambda: None)
+    client = StateClient(
+        None, dashboard_id="remote", transport="ssh", version="v1", spawn=lambda: None
+    )
     client.start()
     try:
         client.wait_first_snapshot(3)
-        client.run_action(RunAction(117, ["orphan", "destroy", "x"], str(tmp_path), "x", False, "remote", "none", str(tmp_path), "arbitrary", environment={"PATH": "/bin"}))
-        _until(lambda: client.action_rejection(117) is not None or (117 in client.action_entries() and client.action_entries()[117].finished))
+        client.run_action(
+            RunAction(
+                117,
+                ["orphan", "destroy", "x"],
+                str(tmp_path),
+                "x",
+                False,
+                "remote",
+                "none",
+                str(tmp_path),
+                "arbitrary",
+                environment={"PATH": "/bin"},
+            )
+        )
+        _until(
+            lambda: (
+                client.action_rejection(117) is not None
+                or (117 in client.action_entries() and client.action_entries()[117].finished)
+            )
+        )
         assert client.action_rejection(117) is None
         assert spawned == [tmp_path]
     finally:
