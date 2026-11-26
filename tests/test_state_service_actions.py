@@ -559,6 +559,23 @@ def test_finished_action_survives_server_restart(runtime_dir, tmp_path):
         client.close()
 
 
+def test_corrupt_persisted_action_does_not_prevent_service_start(tmp_path, caplog):
+    from sqlalchemy import create_engine
+    from sqlmodel import Session
+
+    from jailbee.db import _ensure_schema
+    from jailbee.db.models import ActionEntryRow
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'state.db'}")
+    _ensure_schema(engine)
+    with Session(engine) as session:
+        session.add(ActionEntryRow(entry_id=123, state="done", payload="not json"))
+        session.commit()
+
+    StateServer(FakeGatherer(), version="v1", engine=engine)
+    assert "123" in caplog.text
+
+
 def test_running_action_is_interrupted_after_restart(runtime_dir, tmp_path):
     from sqlalchemy import create_engine
 
