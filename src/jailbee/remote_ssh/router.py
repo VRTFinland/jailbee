@@ -416,7 +416,7 @@ class RemoteUnlocks:
             network=config.network,
             mounts=config.mounts or bool(config.mount_roots),
             orchestration=config.orchestration != "off",
-            agent_chat=getattr(config, "agent_chat", False),
+            agent_chat=config.agent_chat,
             waypipe_available=waypipe_on,
             transport=transport,
         )

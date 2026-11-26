@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -14,6 +15,9 @@ from jailbee.web.protocol import ChatAvailability
 if TYPE_CHECKING:
     from jailbee.config import Config
     from jailbee.web.context import WebContext
+
+
+log = logging.getLogger(__name__)
 
 
 def target(
@@ -40,7 +44,11 @@ def target(
     if len(owners) != 1:
         return Outcome("no_live_session", "No live session")
     owner = owners[0]
-    cfg = load_repo_config(Path(group.repo_root))
+    try:
+        cfg = load_repo_config(Path(group.repo_root))
+    except Exception:
+        log.warning("Unable to load repository configuration for agent chat")
+        return Outcome("configuration_error", "Repository configuration unavailable")
     return cfg, (ctx.deps.incus_factory or Incus)(), owner
 
 
@@ -48,7 +56,11 @@ def availability(ctx: WebContext, prefix: str, agent: str, session_id: str) -> C
     result = target(ctx, prefix, agent, session_id)
     if not isinstance(result, Outcome):
         cfg, incus, owner = result
-        result = agent_input.availability(cfg, incus, owner, session_id)
+        try:
+            result = agent_input.availability(cfg, incus, owner, session_id)
+        except Exception:
+            log.warning("Unable to check agent chat availability")
+            result = Outcome("delivery_error", "Agent chat unavailable")
     return ChatAvailability(
         available=result.code == "available", code=result.code, message=result.message
     )
@@ -59,4 +71,8 @@ def send(ctx: WebContext, prefix: str, agent: str, session_id: str, text: str) -
     if isinstance(result, Outcome):
         return result
     cfg, incus, owner = result
-    return agent_input.send(cfg, incus, owner, session_id, text)
+    try:
+        return agent_input.send(cfg, incus, owner, session_id, text)
+    except Exception:
+        log.warning("Unable to deliver agent chat message")
+        return Outcome("delivery_error", "Agent chat unavailable")

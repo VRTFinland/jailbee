@@ -12226,17 +12226,14 @@ def agent_say_cmd(
     cfg = _load_or_exit(config)
     incus, full = _resolve_existing(cfg, container)
     if session is None:
-        if not any(
-            c.get("name") == full and c.get("status", "").lower() == "running"
-            for c in incus.list_containers()
-        ):
-            error("Container not running")
-            raise typer.Exit(3)
         try:
             sessions = agent_input.live_sessions(cfg, incus, full)
+        except agent_input.ContainerNotRunningError as exc:
+            error(str(exc))
+            raise typer.Exit(3) from exc
         except IncusError as exc:
             error(str(exc))
-            raise typer.Exit(1) from exc
+            raise typer.Exit(9) from exc
         session = prompting.choose_one(
             "session",
             [
