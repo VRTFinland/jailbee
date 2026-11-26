@@ -26,6 +26,7 @@ from jailbee.host_target import SyncTarget
 from jailbee.lifecycle import ContainerInfo, ServiceState
 from jailbee.orchestration.view import ChildView, GrantView
 from jailbee.procstat import ProcessActivity, ProcessMemory
+from jailbee.prompt_channel import Prompt
 from jailbee.sysstat import DiskStatus, LoadStatus, MemoryStatus
 from jailbee.update_check import UpdateNotice
 
@@ -71,7 +72,8 @@ from jailbee.update_check import UpdateNotice
 # 44 distinguishes registered repos with unloadable configs from true orphans.
 # 45 adds action hosting messages. 46 adds action scope and dismissal.
 # 47 adds an atomic action replay boundary.
-PROTOCOL = 47
+# 48 adds shared action questions and answers.
+PROTOCOL = 48
 
 # Allows escaped output tails and ordinary snapshots while bounding incoming lines.
 MAX_WIRE_LINE_BYTES = 16 * 1024 * 1024
@@ -191,6 +193,27 @@ class ActionSyncEnd:
 
 
 @dataclass(frozen=True)
+class ActionQuestion:
+    entry_id: int
+    question_id: int
+    prompt: Prompt
+
+
+@dataclass(frozen=True)
+class AnswerActionQuestion:
+    entry_id: int
+    question_id: int
+    value: Any
+
+
+@dataclass(frozen=True)
+class ActionQuestionResolved:
+    entry_id: int
+    question_id: int
+    answered_by: str | None
+
+
+@dataclass(frozen=True)
 class ActionOutput:
     entry_id: int
     chunk: str
@@ -234,6 +257,9 @@ Message = (
     | ActionSyncStart
     | ActionSyncEnd
     | ActionOutput
+    | ActionQuestion
+    | AnswerActionQuestion
+    | ActionQuestionResolved
     | ActionFinish
     | ActionRejected
     | DismissAction
@@ -246,6 +272,9 @@ _NAMES: dict[type[Any], str] = {
     ActionSyncStart: "action_sync_start",
     ActionSyncEnd: "action_sync_end",
     ActionOutput: "action_output",
+    ActionQuestion: "action_question",
+    AnswerActionQuestion: "answer_action_question",
+    ActionQuestionResolved: "action_question_resolved",
     ActionFinish: "action_finish",
     ActionRejected: "action_rejected",
     DismissAction: "dismiss_action",

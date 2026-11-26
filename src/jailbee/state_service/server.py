@@ -18,9 +18,10 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from jailbee import __version__
+from jailbee.prompt_channel import Prompt
 from jailbee.state_service.paths import ensure_runtime_dir, lock_path, socket_path
 from jailbee.state_service.protocol import (
     MAX_WIRE_LINE_BYTES,
@@ -29,10 +30,13 @@ from jailbee.state_service.protocol import (
     ActionEntry,
     ActionFinish,
     ActionOutput,
+    ActionQuestion,
+    ActionQuestionResolved,
     ActionRejected,
     ActionSyncEnd,
     ActionSyncStart,
     Active,
+    AnswerActionQuestion,
     DismissAction,
     Hello,
     ProtocolError,
@@ -91,11 +95,6 @@ class _Client:
     pending_bytes: int = 0
 
 
-def cancel_action_question(prompt: object) -> None:
-    """Cancel questions until service-side question routing is implemented."""
-    return None
-
-
 class StateServer:
     def __init__(
         self,
@@ -110,6 +109,8 @@ class StateServer:
         self._action_spawn = action_spawn
         self._engine = engine
         self._actions: dict[int, ActionEntry] = {}
+        self._questions: dict[int, tuple[ActionQuestion, asyncio.Future[Any]]] = {}
+        self._question_serial = 0
         if engine is not None:
             from jailbee.db.actions import load
 
@@ -226,6 +227,11 @@ class StateServer:
                         replay=True,
                     ):
                         return
+                    question = self._questions.get(entry.entry_id)
+                    if question is not None and not self._send_action(
+                        client, question[0], replay=True
+                    ):
+                        return
                     await asyncio.wait_for(writer.drain(), DRAIN_TIMEOUT_SECONDS)
                 if not self._send_action(client, ActionSyncEnd(), replay=True):
                     return
@@ -250,6 +256,8 @@ class StateServer:
                     self._start_action(client, message)
                 elif isinstance(message, DismissAction):
                     self._dismiss_action(client, message.entry_id)
+                elif isinstance(message, AnswerActionQuestion):
+                    self._answer_question(client, message)
                 elif isinstance(message, Active):
                     client.active = message.value
                 elif isinstance(message, Refresh):
@@ -304,6 +312,18 @@ class StateServer:
         def send_output(chunk: str) -> None:
             loop.call_soon_threadsafe(self._action_output, request.entry_id, chunk)
 
+        disconnected = threading.Event()
+
+        def ask(prompt: Prompt) -> Any:
+            future = asyncio.run_coroutine_threadsafe(
+                self._ask_question(request.entry_id, prompt, disconnected), loop
+            )
+            return future.result()
+
+        def disconnect() -> None:
+            disconnected.set()
+            loop.call_soon_threadsafe(self._resolve_question, request.entry_id, None, None)
+
         def run() -> None:
             try:
                 result = run_action(
@@ -311,7 +331,8 @@ class StateServer:
                     cwd=Path(request.cwd),
                     transport=request.transport,
                     policy=None,
-                    on_prompt=cancel_action_question,
+                    on_prompt=ask,
+                    on_disconnect=disconnect,
                     spawn=self._action_spawn or popen_spawn,
                     on_output=send_output,
                     address_flags=request.address_flags,
@@ -344,6 +365,52 @@ class StateServer:
         self._action_tasks.add(task)
         task.add_done_callback(self._action_tasks.discard)
 
+    async def _ask_question(
+        self, entry_id: int, prompt: Prompt, disconnected: threading.Event
+    ) -> Any:
+        if disconnected.is_set():
+            return None
+        self._question_serial += 1
+        question = ActionQuestion(entry_id, self._question_serial, prompt)
+        future: asyncio.Future[Any] = asyncio.get_running_loop().create_future()
+        self._questions[entry_id] = (question, future)
+        entry = replace(self._actions[entry_id], state="awaiting")
+        self._actions[entry_id] = entry
+        self._broadcast_action(entry)
+        self._action_changed(entry)
+        self._broadcast_action(question)
+        try:
+            return await future
+        finally:
+            if self._questions.get(entry_id, (None, None))[0] == question:
+                self._questions.pop(entry_id, None)
+
+    def _answer_question(self, client: _Client, answer: AnswerActionQuestion) -> None:
+        entry = self._actions.get(answer.entry_id)
+        pending = self._questions.get(answer.entry_id)
+        if (
+            entry is None
+            or pending is None
+            or not client.dashboard_id
+            or not self._in_scope(entry, client)
+            or pending[0].question_id != answer.question_id
+        ):
+            return
+        self._resolve_question(answer.entry_id, answer.value, client.dashboard_id)
+
+    def _resolve_question(self, entry_id: int, value: Any, answered_by: str | None) -> None:
+        pending = self._questions.pop(entry_id, None)
+        if pending is None:
+            return
+        question, future = pending
+        entry = replace(self._actions[entry_id], state="running")
+        self._actions[entry_id] = entry
+        self._broadcast_action(entry)
+        self._action_changed(entry)
+        if not future.done():
+            future.set_result(value)
+        self._broadcast_action(ActionQuestionResolved(entry_id, question.question_id, answered_by))
+
     def _in_scope(self, entry: ActionEntry, client: _Client) -> bool:
         if entry.prefix in client.excluded_prefixes:
             return False
@@ -355,7 +422,14 @@ class StateServer:
             return False
         return True
 
-    def _broadcast_action(self, message: ActionEntry | ActionOutput | ActionFinish) -> None:
+    def _broadcast_action(
+        self,
+        message: ActionEntry
+        | ActionOutput
+        | ActionFinish
+        | ActionQuestion
+        | ActionQuestionResolved,
+    ) -> None:
         entry = self._actions[message.entry_id] if not isinstance(message, ActionEntry) else message
         for recipient in list(self._clients):
             if self._in_scope(entry, recipient):
@@ -441,7 +515,9 @@ class StateServer:
         | ActionRejected
         | ActionDismissed
         | ActionSyncStart
-        | ActionSyncEnd,
+        | ActionSyncEnd
+        | ActionQuestion
+        | ActionQuestionResolved,
         *,
         replay: bool = False,
     ) -> bool:
