@@ -45,6 +45,10 @@ def test_expanded_tool_input_uses_the_current_theme_palette(
         assert colour[0] == colour[1], (theme, token, colour)
         if theme == "eink":
             assert colour[0] == "rgb(0, 0, 0)"
+    expect(code.locator(".nt").first).to_have_css("font-weight", "700")
+    expect(code.locator(".kc").first).to_have_css("font-weight", "700")
+    if theme == "eink":
+        expect(code.locator(".s2").first).to_have_css("font-style", "italic")
 
 
 @pytest.mark.parametrize("theme", ["light", "dark", "eink"])
