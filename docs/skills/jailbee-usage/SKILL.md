@@ -1868,10 +1868,16 @@ clears the container's outbox, `v`/`m` toggle preview and raw manifest, `r`
 refreshes, `q` quits. On a narrow terminal Enter on a leaf row (a description,
 a reply, a comment) shows the preview in the list's place; Esc goes back. Off a terminal it prints the overview table. The
 dashboard's container menu opens the same box for its container. Dashboard
-publication uses the shared action runner: questions are modals, output and
-URLs or failure reasons stay in the notification queue, including over SSH.
-Quitting the terminal dashboard cancels pending questions, even while a modal
-is still opening. PR creations use it too; only the standalone manager hands over a terminal. The
+publication uses the shared action runner, including over SSH. Questions wait
+in Notifications (`Q`) unless the user is still with the action (its critical
+output modal is on top, or no interaction followed dispatch or the previous
+answer). Select an awaiting entry to answer; its modal shows the command,
+target and output tail. `Later` / Esc leaves the command waiting without a
+timeout; `Abort command` / Ctrl-C in the question cancels it. Returning from
+tmux opens the queue for new questions, not a question modal. Quitting with
+pending questions confirms how many commands will be aborted; with none,
+there is no extra confirmation. Output, URLs and failure reasons stay in the
+queue. PR creations use it too; only the standalone manager hands over a terminal. The
 Qt dashboard has a native window for it. Over remote SSH the manager is
 read-only. The scriptable forms address a proposal as `pr/<manifest>.json` or
 `issue/<manifest>.json`:
