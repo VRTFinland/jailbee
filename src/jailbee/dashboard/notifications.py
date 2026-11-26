@@ -227,6 +227,12 @@ class NotificationQueue:
             text = OUTPUT_DROPPED_MARKER + body[-OUTPUT_KEEP_CHARS:]
         self._entries[entry_id] = replace(entry, output=text)
 
+    def replace_output(self, entry_id: int, text: str) -> None:
+        """Mirror the service's authoritative capped output without appending it twice."""
+        entry = self._entries.get(entry_id)
+        if entry is not None:
+            self._entries[entry_id] = replace(entry, output=text)
+
     def set_awaiting(self, entry_id: int, awaiting: bool) -> None:
         """A prompt-channel question opened (``awaiting``) or was answered."""
         entry = self._entries.get(entry_id)
