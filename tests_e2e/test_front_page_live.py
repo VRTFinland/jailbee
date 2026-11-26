@@ -39,15 +39,25 @@ def test_front_page_actions_and_rows_match_gallery_primitives(
     row = page.get_by_role("listitem").filter(has=page.get_by_role("link", name="main", exact=True))
     expect(row).to_be_visible()
     action = page.get_by_role("button", name="Log out", exact=True)
-    actual = action.evaluate("el => { const s = getComputedStyle(el); return [s.borderRadius, s.color, s.minHeight] }")
-    row_look = row.evaluate("el => { const s = getComputedStyle(el); return [s.borderRadius, s.backgroundColor, s.borderColor] }")
+    actual = action.evaluate(
+        "el => { const s = getComputedStyle(el); return [s.borderRadius, s.color, s.minHeight] }"
+    )
+    row_look = row.evaluate(
+        "el => { const s = getComputedStyle(el); return [s.borderRadius, "
+        "s.backgroundColor, s.borderColor] }"
+    )
     page.goto(f"{server.url}/#/ui")
     label = {"light": "Light", "dark": "Dark", "eink": "E-ink"}[theme]
     panel = page.get_by_role("region", name=f"{label} theme, normal profile", exact=True)
     reference = panel.get_by_role("button", name="text", exact=True)
-    assert actual == reference.evaluate("el => { const s = getComputedStyle(el); return [s.borderRadius, s.color, s.minHeight] }")
+    assert actual == reference.evaluate(
+        "el => { const s = getComputedStyle(el); return [s.borderRadius, s.color, s.minHeight] }"
+    )
     reference_row = panel.get_by_role("listitem").filter(has_text="fix-issue-165").first
-    assert row_look == reference_row.evaluate("el => { const s = getComputedStyle(el); return [s.borderRadius, s.backgroundColor, s.borderColor] }")
+    assert row_look == reference_row.evaluate(
+        "el => { const s = getComputedStyle(el); return [s.borderRadius, "
+        "s.backgroundColor, s.borderColor] }"
+    )
 
 
 def test_row_header_stays_above_cells_and_long_names_remain_readable(
@@ -150,8 +160,11 @@ def test_row_phases_have_distinct_icons_and_labels_in_the_eink_theme(
     # The shared chip replaces phase-specific row edges. Its visible words and
     # distinct painted vector keep every state legible without colour or fades.
     for name, label in (
-        ("boot", "booting"), ("auto", "autostart"), ("build", "job"),
-        ("broken", "failed"), ("off", "Stopped"),
+        ("boot", "booting"),
+        ("auto", "autostart"),
+        ("build", "job"),
+        ("broken", "failed"),
+        ("off", "Stopped"),
     ):
         row = logged_in.get_by_role("listitem").filter(
             has=logged_in.get_by_role("link", name=name, exact=True)
