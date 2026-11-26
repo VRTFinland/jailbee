@@ -193,8 +193,9 @@ def test_critical_question_still_opens_after_another_live_output_was_closed(mock
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize("wrapped", [False, True])
 @pytest.mark.parametrize("while_mounting", [False, True])
-def test_dead_child_clears_pending_question(mocker, tmp_path, caplog, while_mounting):
+def test_dead_child_clears_pending_question(mocker, tmp_path, caplog, while_mounting, wrapped):
     import threading
 
     from jailbee.prompt_channel import CommandEnd
@@ -228,7 +229,9 @@ def test_dead_child_clears_pending_question(mocker, tmp_path, caplog, while_moun
 
     app = make_app(mocker, [RepoGroup("alpha", str(tmp_path), None, [ci("alpha-a", "alpha")])])
     app.threaded_actions = True
-    app.action_runner = drunner.run_action
+    from functools import partial
+
+    app.action_runner = partial(drunner.run_action) if wrapped else drunner.run_action
     app.action_spawn = spawn
 
     async def scenario():
@@ -331,7 +334,13 @@ def test_exit_cancels_all_deferred_commands(mocker, tmp_path):
             async with asyncio.timeout(5):
                 while sum(e.pending_question is not None for e in app.session.queue) != 2:
                     await pilot.pause(0.01)
+            frame = app.frame
             app.exit()
+            # Force a queued repaint/settle to run after its children unmount,
+            # as a cancelled command's final update can do during teardown.
+            await frame.query_one("#bottom").remove()
+            app.refresh_frame()
+            await frame.settle_native()
         assert await asyncio.to_thread(finished.wait, 5)
         assert answers == [None, None]
 
@@ -401,4 +410,4 @@ def test_question_arrival_updates_queue_and_notice(mocker, tmp_path):
     prompt = Prompt(1, "text", "Name?")
     assert not session.question_arrived(entry_id, prompt, on_top=False, queue_key="N")
     assert session.queue.get(entry_id).pending_question == prompt
-    assert "N" in session.notice
+    assert session.notice == "'jailbee start alpha' awaiting answer · N: queue"

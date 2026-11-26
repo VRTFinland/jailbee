@@ -66,7 +66,8 @@ def test_escape_defers_a_question_and_it_can_be_reopened(mocker, tmp_path, contr
     asyncio.run(scenario())
 
 
-def test_disconnect_closes_the_displayed_question(mocker, tmp_path):
+@pytest.mark.parametrize("covered", [False, True])
+def test_disconnect_closes_the_displayed_question(mocker, tmp_path, covered):
     from jailbee.prompt_channel import CommandEnd
 
     close = threading.Event()
@@ -102,13 +103,19 @@ def test_disconnect_closes_the_displayed_question(mocker, tmp_path):
             try:
                 app.session.run_dashboard_command("alpha-a", "container", ["merge", "alpha-a"])
                 await mounted_question(app, pilot, pm.TextModal)
+                question = app.screen
+                if covered:
+                    app.show_output("Other action", "Still reading", failed=False)
+                    await mounted_question(app, pilot, pm.OutputScreen)
+                    covering = app.screen
                 close.set()
                 async with asyncio.timeout(5):
-                    while (
-                        isinstance(app.screen, pm.TextModal)
-                        or not next(iter(app.session.queue)).finished
-                    ):
+                    while question in app.screen_stack or not next(iter(app.session.queue)).finished:
                         await pilot.pause(0.01)
+                if covered:
+                    assert app.screen is covering
+                    await pilot.press("escape")
+                    assert question not in app.screen_stack
                 assert next(iter(app.session.queue)).pending_question is None
             finally:
                 close.set()

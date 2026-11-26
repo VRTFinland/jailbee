@@ -20,7 +20,8 @@ before editing `## Unreleased`.
   still open immediately while you are with the action (its critical modal is
   on top, or no interaction has followed dispatch or your previous answer).
   Each question shows the command, target and output tail, with `Later` (Esc)
-  to keep it waiting and `Abort command` (Ctrl-C) to cancel explicitly.
+  to keep it waiting and `Abort command` (Ctrl-C) to cancel explicitly; a closed
+  command channel removes its question, including beneath another screen.
   Returning from tmux opens the queue for new questions, not a question modal;
   quitting with pending questions confirms how many commands will be aborted.
   The queue counts pending questions separately from failures: `?` and "awaiting

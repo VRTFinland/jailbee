@@ -17,7 +17,7 @@ import codecs
 import json
 import logging
 import os
-import select
+import selectors
 import socket
 import subprocess
 import sys
@@ -290,7 +290,7 @@ def run_actions(
 
             if progress is not None and handler is not None:
                 run_common["on_prompt"] = _announcing(handler, progress, index)
-            if progress is not None and on_entry_disconnect is not None and runner_fn is run_action:
+            if progress is not None and on_entry_disconnect is not None:
                 entry_id = progress.entry_id(index)
                 run_common["on_disconnect"] = lambda entry_id=entry_id: on_entry_disconnect(
                     entry_id
@@ -406,18 +406,22 @@ def run_action(
         disconnected = threading.Event()
 
         def watch() -> None:
-            while not stop_watch.is_set():
-                try:
-                    ready, _, _ = select.select([ui_sock], [], [], 0.1)
-                    if ready and not ui_sock.recv(1, socket.MSG_PEEK):
-                        disconnected.set()
-                        if on_disconnect is not None:
-                            on_disconnect()
+            try:
+                with selectors.DefaultSelector() as selector:
+                    selector.register(ui_sock, selectors.EVENT_READ)
+                    while not stop_watch.is_set():
+                        if selector.select(0.1):
+                            if not ui_sock.recv(1, socket.MSG_PEEK):
+                                break
+                            stop_watch.wait(0.05)
+                    else:
                         return
-                    if ready:
-                        stop_watch.wait(0.05)
-                except OSError:
-                    return
+            except Exception:
+                # An unusable channel must not leave its question waiting forever.
+                log.debug("prompt channel watcher failed", exc_info=True)
+            disconnected.set()
+            if on_disconnect is not None:
+                on_disconnect()
 
         watcher = threading.Thread(target=watch, daemon=True)
         watcher.start()
@@ -425,7 +429,8 @@ def run_action(
             answer = on_prompt(prompt)
         finally:
             stop_watch.set()
-            watcher.join()
+            # A frontend callback may itself be waiting on a closing UI thread.
+            watcher.join(timeout=0.2)
         if disconnected.is_set():
             raise ConnectionAbortedError("prompt channel closed while awaiting an answer")
         cancelled |= answer is None
