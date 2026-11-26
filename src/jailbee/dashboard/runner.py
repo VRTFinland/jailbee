@@ -292,7 +292,9 @@ def run_actions(
                 run_common["on_prompt"] = _announcing(handler, progress, index)
             if progress is not None and on_entry_disconnect is not None and runner_fn is run_action:
                 entry_id = progress.entry_id(index)
-                run_common["on_disconnect"] = lambda entry_id=entry_id: on_entry_disconnect(entry_id)
+                run_common["on_disconnect"] = lambda entry_id=entry_id: on_entry_disconnect(
+                    entry_id
+                )
 
             try:
                 result = runner_fn(item.argv, cwd=item.cwd, on_output=sink, **run_common)
