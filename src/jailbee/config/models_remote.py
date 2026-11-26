@@ -156,6 +156,10 @@ class RemotePolicy(BaseModel):
     model_config = ConfigDict(extra="forbid")
     _label: ClassVar[str] = "remote"
 
+    agent_chat: bool = Field(
+        default=False,
+        description="Allow remote sessions to send messages to live agents.",
+    )
     commands: RemoteCommandPolicy = Field(
         default_factory=RemoteCommandPolicy,
         description="Shared command policy for all remote entry points.",

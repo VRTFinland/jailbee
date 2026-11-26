@@ -32,6 +32,7 @@ from jailbee.web.transcript_render import RenderCache, render_entries
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
 
+    from jailbee.incus import Incus
     from jailbee.remote_ssh.repo_scope import RemoteRepoScope
     from jailbee.state_service.protocol import Snapshot
     from jailbee.web.file_watch import WatchFactory
@@ -77,6 +78,8 @@ class WebDeps:
     file_watch: WatchFactory | None = None
     """Starts a watch on a followed transcript; None uses inotify (polling
     where it is unavailable)."""
+    agent_chat: bool = False
+    incus_factory: Callable[[], Incus] | None = None
     warm_session_cache: bool = False
     """Read every visible repository's session info in the background at
     start-up (`WebContext.start_warm_up`). The real server turns it on; tests

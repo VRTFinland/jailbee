@@ -55,7 +55,7 @@ TOTP_REPLAY_WINDOW = timedelta(seconds=90)
 TOTP_ISSUER = "JailBee"
 
 AuthEventKind = Literal[
-    "login", "login_failed", "backoff", "logout", "revoke", "key_added", "rename"
+    "login", "login_failed", "backoff", "logout", "revoke", "key_added", "rename", "agent_message"
 ]
 LoginMethod = Literal["pin", "totp", "fido2"]
 
@@ -325,7 +325,7 @@ def record_event(
         event,
         method or "-",
         device_name,
-        source or "-",
+        "[private]" if event == "agent_message" else source or "-",
         at.isoformat(),
     )
     with Session(engine) as s:
