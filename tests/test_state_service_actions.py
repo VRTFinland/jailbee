@@ -875,7 +875,9 @@ def test_batch_shutdown_never_starts_pending_action(runtime_dir, tmp_path):
     thread.start()
     track_server(server, thread)
     _until(paths.socket_path().exists)
-    client = StateClient(None, dashboard_id="one", version="v1", spawn=lambda: None, backoff=(0.05,))
+    client = StateClient(
+        None, dashboard_id="one", version="v1", spawn=lambda: None, backoff=(0.05,)
+    )
     client.start()
     try:
         client.wait_first_snapshot(3)
@@ -924,7 +926,9 @@ def test_batch_continues_after_nonzero_exit(runtime_dir, tmp_path):
     thread.start()
     track_server(server, thread)
     _until(paths.socket_path().exists)
-    client = StateClient(None, dashboard_id="one", version="v1", spawn=lambda: None, backoff=(0.05,))
+    client = StateClient(
+        None, dashboard_id="one", version="v1", spawn=lambda: None, backoff=(0.05,)
+    )
     client.start()
     try:
         client.wait_first_snapshot(3)
@@ -933,7 +937,9 @@ def test_batch_continues_after_nonzero_exit(runtime_dir, tmp_path):
             for i in (101, 102)
         ]
         client.run_action_batch(RunActionBatch(requests))
-        _until(lambda: bool(client.action_entries().get(102) and client.action_entries()[102].finished))
+        _until(
+            lambda: bool(client.action_entries().get(102) and client.action_entries()[102].finished)
+        )
         assert [client.action_entries()[i].status for i in (101, 102)] == [7, 0]
     finally:
         client.close()
