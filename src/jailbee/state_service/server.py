@@ -13,13 +13,16 @@ import contextlib
 import fcntl
 import logging
 import os
+import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Literal
 
 from jailbee import __version__
+from jailbee.prompt_channel import Prompt
 from jailbee.state_service.paths import ensure_runtime_dir, lock_path, socket_path
 from jailbee.state_service.protocol import (
     MAX_WIRE_LINE_BYTES,
@@ -28,15 +31,22 @@ from jailbee.state_service.protocol import (
     ActionEntry,
     ActionFinish,
     ActionOutput,
+    ActionQuestion,
+    ActionQuestionResolved,
     ActionRejected,
     ActionSyncEnd,
     ActionSyncStart,
     Active,
+    ActivityQuery,
+    AnswerActionQuestion,
     DismissAction,
+    Drain,
     Hello,
     ProtocolError,
     Refresh,
     RunAction,
+    RunActionBatch,
+    ServiceActivity,
     Shutdown,
     Snapshot,
     decode,
@@ -46,7 +56,7 @@ from jailbee.state_service.protocol import (
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
 
-    from jailbee.dashboard.runner import Spawner
+    from jailbee.dashboard.runner import ActionCancellation, Spawner
     from jailbee.incus import Incus
     from jailbee.state_service.gatherer import Gatherer
     from jailbee.state_service.service_probe import ServiceProbe
@@ -55,6 +65,7 @@ log = logging.getLogger(__name__)
 
 IDLE_TIMEOUT_SECONDS = 30.0
 TICK_SECONDS = 0.1
+ACTION_PRUNE_INTERVAL_SECONDS = 60.0
 # A client that cannot take a snapshot within this long is dropped, so one
 # wedged dashboard never stalls the others.
 DRAIN_TIMEOUT_SECONDS = 5.0
@@ -84,15 +95,11 @@ class _Client:
     cwd_root: Path | None
     dashboard_id: str | None = None
     excluded_prefixes: frozenset[str] = frozenset()
+    transport: Literal["none", "ssh", "web"] = "none"
     active: bool = True
     replaying: bool = False
     pending: list[bytes] = field(default_factory=list)
     pending_bytes: int = 0
-
-
-def cancel_action_question(prompt: object) -> None:
-    """Cancel questions until service-side question routing is implemented."""
-    return None
 
 
 class StateServer:
@@ -109,11 +116,17 @@ class StateServer:
         self._action_spawn = action_spawn
         self._engine = engine
         self._actions: dict[int, ActionEntry] = {}
+        self._questions: dict[int, tuple[ActionQuestion, asyncio.Future[Any]]] = {}
+        self._question_serial = 0
         if engine is not None:
             from jailbee.db.actions import load
 
             self._actions = {entry.entry_id: entry for entry in load(engine)}
         self._action_tasks: set[asyncio.Task[None]] = set()
+        self._action_cancellations: dict[int, ActionCancellation] = {}
+        self._persist_pending: dict[int, ActionEntry | None] = {}
+        self._persist_task: asyncio.Task[None] | None = None
+        self._persistence_closed = False
         self._gatherer = gatherer
         self._version = version
         self._idle_timeout = idle_timeout
@@ -126,6 +139,7 @@ class StateServer:
         self._refresh = False
         self._fast_until = 0.0
         self._stopping = False
+        self._draining = False
         self._idle_since = clock()
         self._wake = asyncio.Event()
 
@@ -139,16 +153,42 @@ class StateServer:
             await self._schedule()
         finally:
             server.close()
+            for cancellation in self._action_cancellations.values():
+                cancellation.cancel()
+            for entry_id in list(self._questions):
+                self._resolve_question(entry_id, None, None)
+            if self._action_tasks:
+                await asyncio.wait(self._action_tasks, timeout=5)
             for client in list(self._clients):
                 self._drop(client)
             # `wait_closed` blocks on open connections (3.12+), so close them all.
             for writer in list(self._writers):
                 _abort(writer)
             await server.wait_closed()
+            # Action callbacks may arrive while the current write is in flight.
+            # Drain them before closing persistence; later callbacks belong to a
+            # stopped service and must not create orphan tasks.
+            while self._persist_task is not None:
+                task = self._persist_task
+                await asyncio.shield(task)
+                if self._persist_task is task:
+                    self._persist_task = None
+            self._persistence_closed = True
 
     async def _schedule(self) -> None:
+        next_prune = self._clock() + ACTION_PRUNE_INTERVAL_SECONDS
         while not self._stopping:
-            if not self._clients and self._clock() - self._idle_since >= self._idle_timeout:
+            if self._draining and not self._action_tasks and not self._questions:
+                return
+            if self._clock() >= next_prune:
+                self._prune_finished_actions()
+                next_prune = self._clock() + ACTION_PRUNE_INTERVAL_SECONDS
+            if (
+                not self._clients
+                and not self._action_tasks
+                and not self._questions
+                and self._clock() - self._idle_since >= self._idle_timeout
+            ):
                 log.info("no clients for %.0fs; exiting", self._idle_timeout)
                 return
             refresh, self._refresh = self._refresh, False
@@ -185,6 +225,7 @@ class StateServer:
                     Path(hello.cwd_root) if hello.cwd_root else None,
                     hello.dashboard_id,
                     frozenset(hello.excluded_prefixes),
+                    hello.transport,
                 )
                 client.replaying = True
                 self._clients.add(client)
@@ -200,17 +241,26 @@ class StateServer:
                         client, ActionOutput(entry.entry_id, entry.output), replay=True
                     ):
                         return
-                    if entry.finished and not self._send_action(
-                        client,
-                        ActionFinish(
-                            entry.entry_id,
-                            entry.status,
-                            entry.refused,
-                            entry.error,
-                            entry.cancelled,
-                            entry.declined,
-                        ),
-                        replay=True,
+                    if (
+                        entry.finished
+                        and entry.state != "interrupted"
+                        and not self._send_action(
+                            client,
+                            ActionFinish(
+                                entry.entry_id,
+                                entry.status,
+                                entry.refused,
+                                entry.error,
+                                entry.cancelled,
+                                entry.declined,
+                            ),
+                            replay=True,
+                        )
+                    ):
+                        return
+                    question = self._questions.get(entry.entry_id)
+                    if question is not None and not self._send_action(
+                        client, self._question_for_client(client, question[0]), replay=True
                     ):
                         return
                     await asyncio.wait_for(writer.drain(), DRAIN_TIMEOUT_SECONDS)
@@ -228,15 +278,33 @@ class StateServer:
                     await writer.drain()
             while line := await reader.readline():
                 message = decode(line)
+                if isinstance(message, (Shutdown, Drain)) and hello.transport != "none":
+                    log.warning("remote client attempted service lifecycle control")
+                    break
                 if isinstance(message, Shutdown):
                     log.info("shutdown requested by a client")
                     self._stopping = True
+                elif isinstance(message, (ActivityQuery, Drain)):
+                    if isinstance(message, Drain):
+                        self._draining = True
+                    writer.write(
+                        encode(
+                            ServiceActivity(
+                                len(self._action_tasks), len(self._questions), self._draining
+                            )
+                        )
+                    )
+                    await writer.drain()
                 elif client is None:
                     continue
+                elif isinstance(message, RunActionBatch):
+                    self._start_batch(client, message)
                 elif isinstance(message, RunAction):
                     self._start_action(client, message)
                 elif isinstance(message, DismissAction):
                     self._dismiss_action(client, message.entry_id)
+                elif isinstance(message, AnswerActionQuestion):
+                    self._answer_question(client, message)
                 elif isinstance(message, Active):
                     client.active = message.value
                 elif isinstance(message, Refresh):
@@ -254,54 +322,153 @@ class StateServer:
             else:
                 writer.close()
 
-    def _start_action(self, client: _Client, request: RunAction) -> None:
-        from jailbee.dashboard.runner import popen_spawn, run_action
+    def _check_policy(self, client: _Client, argv: list[str]) -> Any:
+        from jailbee.dashboard.commands import check_dashboard_command
+        from jailbee.global_config import default_global_config_path, load_global_config
 
+        policy = None
+        if client.transport != "none":
+            config, _ = load_global_config(default_global_config_path())
+            policy = getattr(config.remote, client.transport)
+        check_dashboard_command(
+            argv, policy, transport=client.transport, excluded_prefixes=client.excluded_prefixes
+        )
+        return policy
+
+    @staticmethod
+    def _repo_free_action(argv: list[str]) -> bool:
+        from jailbee.remote_ssh.router import command_path
+
+        return command_path(argv).startswith("orphan ")
+
+    def _remote_repo(self, client: _Client, root: str, cwd: str) -> tuple[str, str]:
+        from jailbee.global_config import default_global_config_path, load_global_config
+        from jailbee.remote_ssh.repo_scope import registered_repos
+
+        config, _ = load_global_config(default_global_config_path())
+        policy = getattr(config.remote, client.transport)
+        root_path, cwd_path = Path(root).resolve(), Path(cwd).resolve()
+        matches = [
+            repo
+            for repo in registered_repos(engine=self._engine)
+            if repo.root.resolve() == root_path
+        ]
+        if not matches or matches[0].prefix in policy.excluded_repos:
+            raise ValueError("repository is not visible to this remote dashboard")
+        if not cwd_path.is_relative_to(root_path):
+            raise ValueError("action directory is outside the registered repository")
+        if client.cwd_root is not None and not root_path.is_relative_to(client.cwd_root.resolve()):
+            raise ValueError("repository is outside the dashboard scope")
+        return str(root_path), matches[0].prefix
+
+    def _question_for_client(self, client: _Client, question: ActionQuestion) -> ActionQuestion:
+        entry = self._actions[question.entry_id]
+        try:
+            self._check_policy(client, entry.argv)
+        except (ValueError, OSError):
+            return replace(question, can_answer=False, reason="answer in a local dashboard")
+        return question
+
+    def _prepare_action(
+        self, client: _Client, request: RunAction
+    ) -> tuple[ActionEntry, Any] | None:
+        if self._draining:
+            self._send_action(client, ActionRejected(request.entry_id, "state service is draining"))
+            return None
         if not client.dashboard_id or request.origin != client.dashboard_id:
             self._send_action(
                 client, ActionRejected(request.entry_id, "dashboard identity mismatch")
             )
-            return
+            return None
         if request.entry_id <= 0 or request.entry_id >= 2**63 or request.entry_id in self._actions:
             self._send_action(
                 client, ActionRejected(request.entry_id, "invalid or duplicate action id")
             )
-            return
+            return None
+        try:
+            policy = self._check_policy(client, request.argv)
+            root, prefix, cwd = request.repo_root, request.prefix, request.cwd
+            if client.transport != "none":
+                if self._repo_free_action(request.argv):
+                    root = cwd = str(Path.home().resolve())
+                    prefix = ""
+                else:
+                    root, prefix = self._remote_repo(client, request.repo_root, request.cwd)
+        except (ValueError, OSError) as exc:
+            self._send_action(client, ActionRejected(request.entry_id, str(exc)))
+            return None
         entry = ActionEntry(
             request.entry_id,
             request.argv,
-            request.cwd,
+            cwd,
             request.target,
             request.critical,
             request.origin,
-            request.transport,
-            request.repo_root,
-            request.prefix,
+            client.transport,
+            root,
+            prefix,
         )
         entry = replace(
             entry,
-            cwd_root=request.cwd_root or request.repo_root,
-            excluded_prefixes=list(request.excluded_prefixes),
+            cwd_root=(root if client.transport != "none" else request.cwd_root or root),
+            excluded_prefixes=(
+                list(client.excluded_prefixes)
+                if client.transport != "none"
+                else list(request.excluded_prefixes)
+            ),
         )
+        return entry, policy
+
+    def _start_action(self, client: _Client, request: RunAction) -> None:
+        prepared = self._prepare_action(client, request)
+        if prepared is None:
+            return
+        entry, policy = prepared
         self._actions[entry.entry_id] = entry
-        self._action_changed(entry)
         self._broadcast_action(entry)
+        self._action_changed(entry)
+        self._launch_action(client, request, entry, policy)
+
+    def _launch_action(
+        self, client: _Client, request: RunAction, entry: ActionEntry, policy: Any
+    ) -> asyncio.Task[None]:
+        from jailbee.dashboard.runner import ActionCancellation, popen_spawn, run_action
+
+        cwd = entry.cwd
         loop = asyncio.get_running_loop()
 
         def send_output(chunk: str) -> None:
-            loop.call_soon_threadsafe(self._action_output, request.entry_id, chunk)
+            with contextlib.suppress(RuntimeError):
+                loop.call_soon_threadsafe(self._action_output, request.entry_id, chunk)
+
+        disconnected = threading.Event()
+        cancellation = ActionCancellation()
+        self._action_cancellations[request.entry_id] = cancellation
+
+        def ask(prompt: Prompt) -> Any:
+            future = asyncio.run_coroutine_threadsafe(
+                self._ask_question(request.entry_id, prompt, disconnected), loop
+            )
+            return future.result()
+
+        def disconnect() -> None:
+            disconnected.set()
+            loop.call_soon_threadsafe(self._resolve_question, request.entry_id, None, None)
 
         def run() -> None:
             try:
                 result = run_action(
                     request.argv,
-                    cwd=Path(request.cwd),
-                    transport=request.transport,
-                    policy=None,
-                    on_prompt=cancel_action_question,
+                    cwd=Path(cwd),
+                    transport=client.transport,
+                    policy=policy,
+                    on_prompt=ask,
+                    on_disconnect=disconnect,
                     spawn=self._action_spawn or popen_spawn,
                     on_output=send_output,
                     address_flags=request.address_flags,
+                    cancellation=cancellation,
+                    environment=request.environment,
                 )
                 finish = ActionFinish(
                     request.entry_id,
@@ -313,13 +480,139 @@ class StateServer:
                 )
             except Exception as exc:
                 finish = ActionFinish(request.entry_id, error=str(exc))
-            loop.call_soon_threadsafe(self._action_finish, finish)
+            with contextlib.suppress(RuntimeError):
+                loop.call_soon_threadsafe(self._action_finish, finish, cancellation.cancelled)
 
-        task = asyncio.create_task(asyncio.to_thread(run))
+        async def wait_for_action() -> None:
+            done = loop.create_future()
+
+            def work() -> None:
+                try:
+                    run()
+                finally:
+                    with contextlib.suppress(RuntimeError):
+                        loop.call_soon_threadsafe(done.set_result, None)
+
+            threading.Thread(target=work, name="jailbee-action", daemon=True).start()
+            await done
+
+        task = asyncio.create_task(wait_for_action())
+        self._action_tasks.add(task)
+
+        def action_done(done: asyncio.Task[None]) -> None:
+            self._action_tasks.discard(done)
+            self._action_cancellations.pop(request.entry_id, None)
+            if not self._clients and not self._action_tasks and not self._questions:
+                self._idle_since = self._clock()
+            self._wake.set()
+
+        task.add_done_callback(action_done)
+        return task
+
+    def _start_batch(self, client: _Client, batch: RunActionBatch) -> None:
+        requests = batch.requests
+        if not requests:
+            return
+        ids = [request.entry_id for request in requests]
+        if len(set(ids)) != len(ids):
+            self._send_action(client, ActionRejected(ids[0], "invalid or duplicate action id"))
+            return
+        prepared = []
+        for request in requests:
+            item = self._prepare_action(client, request)
+            if item is None:
+                if request is not requests[0]:
+                    self._send_action(client, ActionRejected(ids[0], "batch rejected"))
+                return
+            prepared.append(item)
+        for entry, _policy in prepared:
+            self._actions[entry.entry_id] = entry
+            self._broadcast_action(entry)
+            self._action_changed(entry)
+
+        async def run_batch() -> None:
+            for _index, (request, (entry, policy)) in enumerate(
+                zip(requests, prepared, strict=True)
+            ):
+                if self._stopping:
+                    break
+                await self._launch_action(client, request, entry, policy)
+                finished = self._actions.get(entry.entry_id)
+                if finished is None or finished.error is not None or finished.refused is not None:
+                    break
+            else:
+                return
+            for remaining in requests[_index + (0 if self._stopping else 1) :]:
+                self._action_finish(ActionFinish(remaining.entry_id, error="batch stopped"), True)
+
+        task = asyncio.create_task(run_batch())
         self._action_tasks.add(task)
         task.add_done_callback(self._action_tasks.discard)
 
+    async def _ask_question(
+        self, entry_id: int, prompt: Prompt, disconnected: threading.Event
+    ) -> Any:
+        if disconnected.is_set():
+            return None
+        self._question_serial += 1
+        question = ActionQuestion(entry_id, self._question_serial, prompt)
+        future: asyncio.Future[Any] = asyncio.get_running_loop().create_future()
+        self._questions[entry_id] = (question, future)
+        entry = replace(self._actions[entry_id], state="awaiting")
+        self._actions[entry_id] = entry
+        self._broadcast_action(entry)
+        self._action_changed(entry)
+        self._broadcast_action(question)
+        try:
+            return await future
+        finally:
+            if self._questions.get(entry_id, (None, None))[0] == question:
+                self._questions.pop(entry_id, None)
+
+    def _answer_question(self, client: _Client, answer: AnswerActionQuestion) -> None:
+        entry = self._actions.get(answer.entry_id)
+        pending = self._questions.get(answer.entry_id)
+        if (
+            entry is None
+            or pending is None
+            or not client.dashboard_id
+            or not self._in_scope(entry, client)
+            or pending[0].question_id != answer.question_id
+        ):
+            return
+        try:
+            self._check_policy(client, entry.argv)
+        except (ValueError, OSError) as exc:
+            self._send_action(client, ActionRejected(answer.entry_id, str(exc)))
+            return
+        self._resolve_question(answer.entry_id, answer.value, client.dashboard_id)
+
+    def _resolve_question(self, entry_id: int, value: Any, answered_by: str | None) -> None:
+        pending = self._questions.pop(entry_id, None)
+        if pending is None:
+            return
+        question, future = pending
+        entry = replace(self._actions[entry_id], state="running")
+        self._actions[entry_id] = entry
+        self._broadcast_action(entry)
+        self._action_changed(entry)
+        if not future.done():
+            future.set_result(value)
+        self._broadcast_action(ActionQuestionResolved(entry_id, question.question_id, answered_by))
+
     def _in_scope(self, entry: ActionEntry, client: _Client) -> bool:
+        if client.transport != "none":
+            try:
+                if self._repo_free_action(entry.argv):
+                    return (
+                        client.cwd_root is None
+                        and Path(entry.cwd).resolve() == Path.home().resolve()
+                    )
+                root, prefix = self._remote_repo(client, entry.repo_root, entry.cwd)
+            except (ValueError, OSError):
+                return False
+            if root != str(Path(entry.repo_root).resolve()) or prefix != entry.prefix:
+                return False
         if entry.prefix in client.excluded_prefixes:
             return False
         if client.cwd_root is None or entry.cwd_root is None:
@@ -330,11 +623,23 @@ class StateServer:
             return False
         return True
 
-    def _broadcast_action(self, message: ActionEntry | ActionOutput | ActionFinish) -> None:
+    def _broadcast_action(
+        self,
+        message: ActionEntry
+        | ActionOutput
+        | ActionFinish
+        | ActionQuestion
+        | ActionQuestionResolved,
+    ) -> None:
         entry = self._actions[message.entry_id] if not isinstance(message, ActionEntry) else message
         for recipient in list(self._clients):
             if self._in_scope(entry, recipient):
-                self._send_action(recipient, message)
+                outgoing = (
+                    self._question_for_client(recipient, message)
+                    if isinstance(message, ActionQuestion)
+                    else message
+                )
+                self._send_action(recipient, outgoing)
 
     def _dismiss_action(self, client: _Client, entry_id: int) -> None:
         entry = self._actions.get(entry_id)
@@ -356,17 +661,22 @@ class StateServer:
             output = OUTPUT_DROPPED_MARKER + output[-OUTPUT_KEEP_CHARS:]
         entry = replace(entry, output=output)
         self._actions[entry_id] = entry
-        self._action_changed(entry)
         self._broadcast_action(ActionOutput(entry_id, chunk))
+        self._action_changed(entry)
 
-    def _action_finish(self, finish: ActionFinish) -> None:
+    def _action_finish(self, finish: ActionFinish, interrupted: bool = False) -> None:
         entry = replace(
             self._actions[finish.entry_id],
+            finished_at=datetime.now(UTC),
             finished=True,
-            state="done"
-            if finish.status == 0
-            and not (finish.error or finish.refused or finish.cancelled or finish.declined)
-            else "failed",
+            state=(
+                "interrupted"
+                if interrupted
+                else "done"
+                if finish.status == 0
+                and not (finish.error or finish.refused or finish.cancelled or finish.declined)
+                else "failed"
+            ),
             status=finish.status,
             refused=finish.refused,
             error=finish.error,
@@ -374,20 +684,53 @@ class StateServer:
             declined=finish.declined,
         )
         self._actions[finish.entry_id] = entry
-        self._action_changed(entry)
         self._broadcast_action(finish)
+        self._action_changed(entry)
+        self._prune_finished_actions()
+
+    def _prune_finished_actions(self) -> None:
+        from jailbee.db.actions import prune_finished
+
+        entries, evicted = prune_finished(list(self._actions.values()), now=datetime.now(UTC))
+        evicted_entries = {entry.entry_id: entry for entry in self._actions.values()}
+        self._actions = {entry.entry_id: entry for entry in entries}
+        for entry_id in evicted:
+            entry = evicted_entries[entry_id]
+            self._action_dismissed(entry_id)
+            message = ActionDismissed(entry_id)
+            for recipient in list(self._clients):
+                if self._in_scope(entry, recipient):
+                    self._send_action(recipient, message)
 
     def _action_changed(self, entry: ActionEntry) -> None:
-        if self._engine is not None:
-            from jailbee.db.actions import save
-
-            save(self._engine, entry)
+        self._queue_persist(entry.entry_id, entry)
 
     def _action_dismissed(self, entry_id: int) -> None:
-        if self._engine is not None:
-            from jailbee.db.actions import delete
+        self._queue_persist(entry_id, None)
 
-            delete(self._engine, entry_id)
+    def _queue_persist(self, entry_id: int, entry: ActionEntry | None) -> None:
+        if self._engine is None or self._persistence_closed:
+            return
+        self._persist_pending[entry_id] = entry
+        if self._persist_task is None or self._persist_task.done():
+            self._persist_task = asyncio.create_task(self._persist_actions())
+
+    async def _persist_actions(self) -> None:
+        from jailbee.db.actions import delete, save
+
+        assert self._engine is not None
+        while self._persist_pending:
+            # Coalesce rapidly arriving output before rewriting the snapshot.
+            await asyncio.sleep(0.1)
+            pending, self._persist_pending = self._persist_pending, {}
+            for entry_id, entry in pending.items():
+                try:
+                    if entry is None:
+                        await asyncio.to_thread(delete, self._engine, entry_id)
+                    else:
+                        await asyncio.to_thread(save, self._engine, entry)
+                except Exception:
+                    log.exception("Could not persist action %s", entry_id)
 
     def _send_action(
         self,
@@ -398,7 +741,9 @@ class StateServer:
         | ActionRejected
         | ActionDismissed
         | ActionSyncStart
-        | ActionSyncEnd,
+        | ActionSyncEnd
+        | ActionQuestion
+        | ActionQuestionResolved,
         *,
         replay: bool = False,
     ) -> bool:

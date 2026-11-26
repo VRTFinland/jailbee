@@ -41,8 +41,8 @@ from jailbee.db.view_prefs import ViewState
 from jailbee.global_config import DashboardConfig, GlobalConfig
 from jailbee.state_service.protocol import (
     ActionEntry,
-    ActionFinish,
-    ActionOutput,
+    ActionQuestion,
+    ActionQuestionResolved,
     RunAction,
     Snapshot,
 )
@@ -97,7 +97,15 @@ class FakeStateClient:
     every time, so a test that mutates it changes what the next tick sees."""
 
     def __init__(
-        self, groups, *, git_enabled=False, status=None, fail=None, update=None, system=None
+        self,
+        groups,
+        *,
+        git_enabled=False,
+        status=None,
+        fail=None,
+        update=None,
+        system=None,
+        excluded_prefixes=(),
     ):  # type: ignore[no-untyped-def]
         self.groups = groups
         self.update = update
@@ -110,15 +118,19 @@ class FakeStateClient:
         self.closed = False
         self.seq = 1  # a test bumps it to serve a "new" snapshot
         self.dashboard_id = "pilot-dashboard"
+        self.excluded_prefixes = tuple(excluded_prefixes)
         self.action_requests: list[RunAction] = []
         self._action_entries: dict[int, ActionEntry] = {}
-        self._action_events: list[Any] = []
+        self._action_questions: dict[int, ActionQuestion] = {}
+        self._question_resolutions: list[ActionQuestionResolved] = []
+        self._question_waiters: dict[int, tuple[threading.Event, list[Any]]] = {}
+        self._question_serial = 0
+        self.question_disconnected = threading.Event()
         self.action_runner = subprocess_runner
         self.action_spawn = None
         self.app: tapp.DashboardApp | None = None
 
-    def run_action(self, request):  # type: ignore[no-untyped-def]
-        """Simulate the action-host boundary, including the temporary requester prompt seam."""
+    def _register_action(self, request):  # type: ignore[no-untyped-def]
         self.action_requests.append(request)
         entry = ActionEntry(
             request.entry_id,
@@ -132,45 +144,45 @@ class FakeStateClient:
             request.prefix,
         )
         self._action_entries[entry.entry_id] = entry
-        self._action_events.append(entry)
+        return entry
+
+    def run_action(self, request, *, registered=False, synchronous=False):  # type: ignore[no-untyped-def]
+        """Simulate the action-host boundary, including the requester prompt seam."""
+        entry = (
+            self._action_entries[request.entry_id] if registered else self._register_action(request)
+        )
         app = self.app
 
         def output(chunk):  # type: ignore[no-untyped-def]
             current = self._action_entries[entry.entry_id]
             self._action_entries[entry.entry_id] = replace(current, output=current.output + chunk)
-            self._action_events.append(ActionOutput(entry.entry_id, chunk))
 
         def prompt(question):  # type: ignore[no-untyped-def]
-            if app is None:
-                return None
-            owned = app.session.queue.get(entry.entry_id) is not None
-            handoff_epoch = app._handoff_epoch
-            if owned:
+            self._question_serial += 1
+            event = threading.Event()
+            answer: list[Any] = []
+            self._question_waiters[entry.entry_id] = (event, answer)
+            self._action_questions[entry.entry_id] = ActionQuestion(
+                entry.entry_id, self._question_serial, question
+            )
+            if app is not None:
+                app._on_app_thread(app.refresh_frame)
+            event.wait(30)
+            return answer[0] if answer else None
 
-                def announce():  # type: ignore[no-untyped-def]
-                    current = app.session.queue.get(entry.entry_id)
-                    text = self._action_entries[entry.entry_id].output
-                    if current is not None and text.startswith(current.output):
-                        app.session._entry_output(entry.entry_id, text[len(current.output) :])
-                    app.session._entry_question(entry.entry_id, True)
-
-                app._on_app_thread(announce)
-            try:
-                if app._prompts_closed:
-                    return None
-
-                async def ask():  # type: ignore[no-untyped-def]
-                    answer = await app._ask(
-                        question, entry.entry_id if owned else None, handoff_epoch
-                    )
-                    if owned:
-                        app.session._entry_question(entry.entry_id, False)
-                    return answer
-
-                return app.call_from_thread(ask)
-            finally:
-                if owned:
-                    app._on_app_thread(lambda: app.session._entry_question(entry.entry_id, False))
+        def disconnect():  # type: ignore[no-untyped-def]
+            self.question_disconnected.set()
+            question = self._action_questions.pop(entry.entry_id, None)
+            if question is not None:
+                waiter = self._question_waiters.pop(entry.entry_id, None)
+                if waiter is not None:
+                    waiter[1].append(None)
+                    waiter[0].set()
+                self._question_resolutions.append(
+                    ActionQuestionResolved(entry.entry_id, question.question_id, None)
+                )
+                if app is not None:
+                    app._on_app_thread(app.refresh_frame)
 
         def run():  # type: ignore[no-untyped-def]
             extra = {} if self.action_spawn is None else {"spawn": self.action_spawn}
@@ -179,11 +191,11 @@ class FakeStateClient:
                     request.argv,
                     cwd=Path(request.cwd),
                     transport=request.transport,
-                    policy=app.session.ssh_policy if app else None,
+                    policy=None,
                     client=app.remote_client if app else None,
                     on_prompt=prompt,
                     on_output=output,
-                    on_disconnect=(lambda: app._disconnect_entry(entry.entry_id)) if app else None,
+                    on_disconnect=disconnect,
                     **extra,
                 )
             except Exception as exc:
@@ -194,24 +206,21 @@ class FakeStateClient:
             self._action_entries[entry.entry_id] = replace(
                 current,
                 finished=True,
+                state=(
+                    "done"
+                    if result.status == 0
+                    and not (result.error or result.refused or result.cancelled or result.declined)
+                    else "failed"
+                ),
                 status=result.status,
                 refused=result.refused,
                 error=result.error,
                 cancelled=result.cancelled,
                 declined=result.declined,
             )
-            self._action_events.append(
-                ActionFinish(
-                    entry.entry_id,
-                    result.status,
-                    result.refused,
-                    result.error,
-                    result.cancelled,
-                    result.declined,
-                )
-            )
+            disconnect()
 
-        if app is not None and app.threaded_actions:
+        if not synchronous and app is not None and app.threaded_actions:
             threading.Thread(target=run, daemon=True).start()
         else:
             run()
@@ -227,9 +236,53 @@ class FakeStateClient:
     def action_entries(self):  # type: ignore[no-untyped-def]
         return self._action_entries.copy()
 
-    def drain_action_events(self):  # type: ignore[no-untyped-def]
-        events, self._action_events = self._action_events, []
-        return events
+    def run_action_batch(self, batch):  # type: ignore[no-untyped-def]
+        for request in batch.requests:
+            self._register_action(request)
+
+        def run():
+            for index, request in enumerate(batch.requests):
+                self.run_action(request, registered=True, synchronous=True)
+                entry = self._action_entries[request.entry_id]
+                if entry.refused is not None or entry.error is not None:
+                    for remaining in batch.requests[index + 1 :]:
+                        entry = self._action_entries[remaining.entry_id]
+                        self._action_entries[remaining.entry_id] = replace(
+                            entry, finished=True, state="interrupted", error="batch stopped"
+                        )
+                    break
+
+        if self.app is None or self.app.threaded_actions:
+            threading.Thread(target=run, daemon=True).start()
+        else:
+            run()
+
+    def release_test_questions(self):  # type: ignore[no-untyped-def]
+        for event, answer in list(self._question_waiters.values()):
+            answer.append(None)
+            event.set()
+
+    def action_questions(self):  # type: ignore[no-untyped-def]
+        return self._action_questions.copy()
+
+    def drain_question_resolutions(self):  # type: ignore[no-untyped-def]
+        result, self._question_resolutions = self._question_resolutions, []
+        return result
+
+    def answer_action_question(self, entry_id, question_id, value):  # type: ignore[no-untyped-def]
+        question = self._action_questions.get(entry_id)
+        if question is None or question.question_id != question_id:
+            return
+        del self._action_questions[entry_id]
+        self._question_resolutions.append(
+            ActionQuestionResolved(entry_id, question_id, self.dashboard_id)
+        )
+        event, answer = self._question_waiters.pop(entry_id)
+        answer.append(value)
+        event.set()
+
+    def action_connection(self):  # type: ignore[no-untyped-def]
+        return 1
 
     def wait_first_snapshot(self, timeout):  # type: ignore[no-untyped-def]
         self.events.append(("wait",))
@@ -249,7 +302,7 @@ class FakeStateClient:
         )
 
     def status(self):  # type: ignore[no-untyped-def]
-        return self._status
+        return "dashboard detached" if self.closed else self._status
 
     def refresh(self):  # type: ignore[no-untyped-def]
         self.events.append(("refresh",))
@@ -627,6 +680,14 @@ def make_app(  # type: ignore[no-untyped-def]
     # (prompts, threads) is covered by tests/test_dashboard_tui_runner.py.
     app.threaded_actions = False
     client.app = app
+    # Detach the test client on shutdown; the fake host and its prompts survive.
+    exit_app = app.exit
+
+    def detach(*args, **kwargs):  # type: ignore[no-untyped-def]
+        client.close()
+        return exit_app(*args, **kwargs)
+
+    app.exit = detach  # type: ignore[method-assign]
     client.action_runner = subprocess_runner
     # The output screens an action asked for: (title, text, failed).
     app.outputs = []  # type: ignore[attr-defined]

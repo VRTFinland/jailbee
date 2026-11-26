@@ -46,7 +46,7 @@ from jailbee.dashboard.tui.native import (
 )
 from jailbee.dashboard.tui.outbox_box import OutboxBox
 from jailbee.dashboard.tui.overlay import overlay_key
-from jailbee.dashboard.tui.prompt_modals import LATER, OutputScreen, modal_for
+from jailbee.dashboard.tui.prompt_modals import LATER, OutputScreen, ReadOnlyQuestion, modal_for
 from jailbee.dashboard.tui.session import (
     DOUBLE_CLICK_KINDS,
     OVERLAY_GLOBAL_TOKENS,
@@ -62,6 +62,7 @@ from jailbee.remote_ssh.repo_scope import RemoteRepoScope
 
 if TYPE_CHECKING:
     from textual.driver import Driver
+    from textual.screen import Screen
 
     from jailbee.incus import Incus
 
@@ -235,6 +236,8 @@ class DashboardApp(App[int], inherit_bindings=False):
         self._prompts_closed = False
         self._handoff_epoch = 0  # odd while suspended; detects a hand-off spanning a relay
         self._answers = AnswerRegistry()
+        self._shared_questions: dict[int, int] = {}
+        self._question_modals: dict[int, Screen[Any]] = {}
         self._output_screen: OutputScreen | None = None  # the one a live entry follows
         self._critical_screen: OutputScreen | None = None
 
@@ -254,6 +257,8 @@ class DashboardApp(App[int], inherit_bindings=False):
         """Run ``fn`` on the real terminal with the dashboard suspended."""
         client = self.session.client
         attention_before = self.session.queue.attention_items()
+        # A hand-off moves attention away even if a question reaches us later.
+        self.session.user_interacted()
         self._handoff_epoch += 1
         self.session.begin_hand_off()
         # Nothing of this dashboard is on screen while `fn` runs: let the
@@ -269,10 +274,14 @@ class DashboardApp(App[int], inherit_bindings=False):
             # The snapshot is as old as the command was long.
             client.set_active(True)
             client.refresh()
+            self.session.tick()
+            self._sync_questions()
             self.session.end_hand_off(attention_before)
             self._handoff_epoch += 1
             # `fn` may have set its own OSC 2 title: rewrite ours on the next frame.
             self._last_title = None
+            self._painted = None
+            self.refresh_frame()
             self._painted = None
 
     # --- action runner -----------------------------------------------------
@@ -320,7 +329,7 @@ class DashboardApp(App[int], inherit_bindings=False):
             self._on_app_thread(settle)
 
         if self.threaded_actions:
-            self.run_worker(work, thread=True, exit_on_error=False)
+            threading.Thread(target=work, daemon=True).start()
         else:
             work()
 
@@ -354,6 +363,8 @@ class DashboardApp(App[int], inherit_bindings=False):
         if threading.get_ident() == self._ui_thread:
             fn()
             return
+        if self._prompts_closed or not self.is_running:
+            return
         try:
             self.call_from_thread(fn)
         except (Exception, asyncio.CancelledError):
@@ -373,6 +384,58 @@ class DashboardApp(App[int], inherit_bindings=False):
             loop.call_soon_threadsafe(fn)
         except (Exception, asyncio.CancelledError):
             logger.debug("app-thread post dropped", exc_info=True)
+
+    def _sync_questions(self) -> None:
+        client = self.session.client
+        get_questions = getattr(client, "action_questions", None)
+        if get_questions is None:
+            return
+        questions = get_questions()
+        resolutions = client.drain_question_resolutions()
+        answered_elsewhere = False
+        for resolution in resolutions:
+            entry_id = resolution.entry_id
+            if self._shared_questions.get(entry_id) != resolution.question_id:
+                continue
+            if resolution.answered_by is not None and resolution.answered_by != client.dashboard_id:
+                answered_elsewhere = True
+            self._answers.resolve(entry_id, None)
+            self._answers.hide(entry_id)
+            self.session.queue.set_awaiting(entry_id, False)
+            self._shared_questions.pop(entry_id, None)
+        for entry_id, question_id in list(self._shared_questions.items()):
+            current = questions.get(entry_id)
+            if current is None or current.question_id != question_id:
+                self._answers.resolve(entry_id, None)
+                self._answers.hide(entry_id)
+                self.session.queue.set_awaiting(entry_id, False)
+                self._shared_questions.pop(entry_id, None)
+        entries = client.action_entries()
+        for entry_id, question in questions.items():
+            if self._shared_questions.get(entry_id) == question.question_id:
+                continue
+            entry = self.session.queue.get(entry_id)
+            item = entries.get(entry_id)
+            if entry is None or item is None or entry.finished:
+                continue
+            self._shared_questions[entry_id] = question.question_id
+            answer = asyncio.get_running_loop().create_future()
+            self._answers.register(entry_id, answer)
+            origin = item.origin == client.dashboard_id
+            on_top = origin and (
+                self.session.question_in_foreground(entry_id)
+                and self.screen is self._critical_screen
+                if entry.foreground
+                else not self.modal_open
+            )
+            show = self.session.question_arrived(
+                entry_id, question.prompt, on_top=on_top, queue_key="Q"
+            )
+            if show and origin:
+                self.show_question(entry_id)
+        if answered_elsewhere:
+            self.session.set_notice("answered in another dashboard")
+        self.session.queue_changed()
 
     def _disconnect_entry(self, entry_id: int) -> None:
         def cancel() -> None:
@@ -441,20 +504,36 @@ class DashboardApp(App[int], inherit_bindings=False):
         answer = self._answers.get(entry_id)
         if entry is None or entry.pending_question is None or answer is None:
             return
+        questions = self.session.client.action_questions()
+        shared = questions.get(entry_id)
+        readonly = shared is not None and not shared.can_answer
         if not self._answers.show(entry_id):
             return
 
         def resolve(value: Any) -> None:
-            self._answers.hide(entry_id)
-            if value is not LATER:
+            if self._question_modals.get(entry_id) is modal:
+                self._question_modals.pop(entry_id, None)
+                self._answers.hide(entry_id)
+            if not readonly and value is not LATER:
                 if not answer.done():
                     self.session.question_answered(entry_id)
+                question_id = self._shared_questions.get(entry_id)
+                if question_id is not None and not answer.done():
+                    self.session.client.answer_action_question(entry_id, question_id, value)
+                    self.session.queue.set_awaiting(entry_id, False)
+                    self.session.queue_changed()
                 self._resolve_answer(answer, value)
 
-        modal = modal_for(entry.pending_question, entry=entry)
+        modal = (
+            ReadOnlyQuestion(
+                entry.pending_question, entry, shared.reason or "answer in a local dashboard"
+            )
+            if readonly and shared is not None
+            else modal_for(entry.pending_question, entry=entry)
+        )
 
         def close_resolved(_future: asyncio.Future[Any]) -> None:
-            if self._prompts_closed or not self.screen_stack or not self._answers.shown(entry_id):
+            if self._prompts_closed or not self.screen_stack:
                 return
             if self.screen is modal:
                 modal.dismiss(None)
@@ -463,10 +542,13 @@ class DashboardApp(App[int], inherit_bindings=False):
                 # covered question, leaving the user's current screen untouched.
                 self._screen_stack.remove(modal)
                 modal._pop_result_callback()
-                self._answers.hide(entry_id)
+                if self._question_modals.get(entry_id) is modal:
+                    self._question_modals.pop(entry_id, None)
+                    self._answers.hide(entry_id)
                 self.call_later(modal.remove)
 
         answer.add_done_callback(close_resolved)
+        self._question_modals[entry_id] = modal
         self.push_screen(modal, resolve)
 
     def _cancel_pending_prompts(self) -> None:
@@ -648,6 +730,7 @@ class DashboardApp(App[int], inherit_bindings=False):
         if self._prompts_closed:
             return
         self.session.tick(spin=spin)
+        self._sync_questions()
         title = self.session.title()
         if title != self._last_title:
             # Only on change: an OSC 2 write on every frame makes some
@@ -673,27 +756,13 @@ class DashboardApp(App[int], inherit_bindings=False):
 
     def _after(self, outcome: Outcome) -> None:
         if outcome == "quit":
-            count = sum(entry.pending_question is not None for entry in self.session.queue)
-            if count:
-                noun = "command is" if count == 1 else "commands are"
-                prompt = Prompt(
-                    0,
-                    "confirm",
-                    f"{count} {noun} waiting for an answer. Quitting aborts them. Quit?",
-                )
-                self.push_screen(modal_for(prompt), self._confirm_quit)
-            else:
-                self._confirm_quit(True)
+            self.quit_requested = True
+            self.exit(0)
             return
         if outcome == "toggle-mouse":
             self.toggle_mouse()
             return
         self.refresh_frame()
-
-    def _confirm_quit(self, confirmed: bool | None) -> None:
-        if confirmed:
-            self.quit_requested = True
-            self.exit(0)
 
     def toggle_mouse(self) -> None:
         """`M`: mouse reporting on or off for this session."""

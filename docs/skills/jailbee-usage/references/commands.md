@@ -1187,10 +1187,24 @@ Queue rows show questions as "awaiting answer" in the accent colour, not as erro
 Click any badge count or press `Q` to open the queue. Background actions are
 hosted by the shared state service. Entries, live output and dismissal are shared
 by dashboards in the same repo scope; reconnecting includes output so far.
-Entries persist until dismissed. A service restart marks unfinished entries as
-"interrupted", in the failure colour and count. Only the originating dashboard
-opens a critical action's modal automatically. Shared questions and action-aware
-service lifetime are later slices; for now a service-hosted question is cancelled.
+A service restart marks unfinished entries as "interrupted", in the failure
+colour and count. Only the originating dashboard opens a critical action's modal
+automatically. The service publishes pending questions to dashboards in scope;
+the originating dashboard applies the interaction-based deferral rule, while
+other dashboards leave them pending. Answering or aborting from an allowed
+dashboard settles the current question once; a modal answered elsewhere closes
+with a notice. `Later` remains local and does not answer the command. Neither
+questions nor their answers are persisted. Finished history retains the newest
+100 entries for at most seven days; running and awaiting entries are never
+pruned. Closing a dashboard does not cancel its actions or questions and asks
+no quit confirmation. The service's idle timer starts only after no clients or
+live work remain. Remote start, answer and abort requests are checked against
+the transport's host-side policy; a disallowed question is read-only with
+"answer in a local dashboard". When upgrading with live actions in an older
+service, wait and drain is the local dashboard's default; replacement explicitly
+interrupts its action process groups. Remote dashboards cannot replace or drain
+the shared service. Accepted bulk actions are sequenced by the service and keep
+running after the initiating dashboard closes.
 
 The menu, in order: `Attach tmux`, then `Launch →` with one "Launch
 `<name>`" entry per app the repo's GUI registry declares (browsers, the

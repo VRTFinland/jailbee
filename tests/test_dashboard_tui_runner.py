@@ -75,7 +75,7 @@ def test_quit_driver_waits_for_mounted_question_before_exiting(mocker, tmp_path)
 
         mocker.patch.object(pm.ConfirmModal, "on_mount", held_mount)
         async with app.run_test() as pilot:
-            app.run_actions([drunner.ActionRun(["merge", "alpha-x"], tmp_path)], lambda _: None)
+            app.session.run_dashboard_command("alpha-x", "container", ["merge", "alpha-x"])
             await mounting.wait()
 
             async def quit_when_ready():
@@ -93,7 +93,8 @@ def test_quit_driver_waits_for_mounted_question_before_exiting(mocker, tmp_path)
                 await quitting
 
     asyncio.run(asyncio.wait_for(main(), _RUN_SECONDS))
-    assert isinstance(spawn.child.answers[0], Cancel)
+    assert not spawn.child.answers
+    app.session.client.release_test_questions()
     spawn.child._thread.join(_JOIN_SECONDS)
     assert not spawn.child._thread.is_alive()
 
@@ -146,7 +147,8 @@ def test_exit_while_prompt_is_mounting_does_not_report_an_exception(mocker, tmp_
     asyncio.run(asyncio.wait_for(main(), _RUN_SECONDS))
     errors.assert_not_called()
     assert not [record for record in caplog.records if record.levelno >= 40]
-    assert isinstance(spawn.child.answers[0], Cancel)
+    assert not spawn.child.answers
+    app.session.client.release_test_questions()
     spawn.child._thread.join(_JOIN_SECONDS)
     assert not spawn.child._thread.is_alive()
 
@@ -244,7 +246,14 @@ def test_outbox_publish_uses_runner_modal_and_keeps_queue_result(mocker, tmp_pat
         ssh_policy=RemoteSSHConfig(),
     )
     app.threaded_actions = True
-    app.session.client.action_runner = drunner.run_action
+
+    def host_runner(argv, **kwargs):
+        # The service resolves SSH policy on the host, not from the dashboard.
+        if transport == "ssh":
+            kwargs["policy"] = RemoteSSHConfig()
+        return drunner.run_action(argv, **kwargs)
+
+    app.session.client.action_runner = host_runner
     spawn = Spawns([_prompt(question="Publish proposal?", default=False)])
     app.session.client.action_spawn = spawn
     hand_off = mocker.patch.object(app, "hand_off", side_effect=AssertionError("terminal hand-off"))
@@ -458,16 +467,17 @@ def test_teardown_with_contextual_question_does_not_log_callback_error(mocker, t
     assert not [record for record in caplog.records if record.levelno >= 40]
 
 
-def test_quitting_with_a_question_pending_cancels_it_and_the_app_exits(mocker, tmp_path):
+def test_quitting_with_a_question_pending_detaches_and_the_app_exits(mocker, tmp_path):
     spawn = Spawns([_prompt()])
 
     async def script(app, pilot):
         await _confirm_modal(pilot, app)
-        app.exit(0)  # force teardown cancels even an open question
+        app.exit(0)
 
     app = _drive(mocker, tmp_path, spawn, script)  # wait_for: a hang fails the test
     assert not app.quit_requested
-    assert isinstance(spawn.child.answers[0], Cancel)  # the child was told, so it exited
+    assert not spawn.child.answers
+    app.session.client.release_test_questions()
     spawn.child._thread.join(_JOIN_SECONDS)
     assert not spawn.child._thread.is_alive()
 

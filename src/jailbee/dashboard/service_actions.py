@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import secrets
 import time
 from collections.abc import Sequence
@@ -12,10 +13,12 @@ from jailbee.dashboard.commands import Transport
 from jailbee.dashboard.model import RepoGroup
 from jailbee.dashboard.notifications import NotificationQueue
 from jailbee.dashboard.runner import ActionOutcome, ActionRun, RunProgress, RunResult, _TailBuffer
+from jailbee.state_service import StateServiceUnavailable
 from jailbee.state_service.client import DISCONNECTED
-from jailbee.state_service.protocol import ActionEntry, RunAction
+from jailbee.state_service.protocol import ActionEntry, RunAction, RunActionBatch
 
 POLL_SECONDS = 0.05
+RECONNECT_TIMEOUT_SECONDS = 30.0
 
 
 class _NoProgress:
@@ -37,11 +40,18 @@ class ActionClient(Protocol):
     @property
     def dashboard_id(self) -> str | None: ...
 
+    @property
+    def excluded_prefixes(self) -> Sequence[str]: ...
+
     def run_action(self, request: RunAction) -> None: ...
+
+    def run_action_batch(self, request: RunActionBatch) -> None: ...
 
     def action_entries(self) -> dict[int, ActionEntry]: ...
 
     def status(self) -> str | None: ...
+
+    def action_connection(self) -> int | None: ...
 
     def action_rejection(self, entry_id: int) -> str | None: ...
 
@@ -66,6 +76,7 @@ def run_actions(
     outcome_text = _TailBuffer()
     outputs: list[str] = []
     results: list[RunResult] = []
+    requests: list[RunAction] = []
     for index, item in enumerate(runs):
         entry_id = progress.entry_id(index)
         root = str(item.cwd.resolve())
@@ -92,36 +103,88 @@ def run_actions(
             transport=transport,
             repo_root=root,
             prefix=prefix or root,
+            excluded_prefixes=list(client.excluded_prefixes),
+            environment=dict(os.environ),
         )
-        if entry_id in client.action_entries():
+        requests.append(request)
+    batch_sent = False
+    batch_acknowledged = False
+    batch_generation: int | None = None
+    for index, request in enumerate(requests):
+        entry_id = request.entry_id
+        if entry_id in client.action_entries() and not batch_sent:
             results.append(RunResult(error="invalid or duplicate action id"))
             outputs.append("")
             break
-        try:
-            client.run_action(request)
-        except Exception as exc:
-            message = str(exc) or client.status() or DISCONNECTED
-            results.append(RunResult(error=message))
-            outputs.append("")
-            break
         last_output = ""
+        sent = batch_sent
+        sent_generation: int | None = batch_generation
+        acknowledged = batch_acknowledged
+        uncertain_generation: int | None = None
+        disconnected_at: float | None = None
         while True:
+            generation = client.action_connection()
+            entries = client.action_entries()
+            snapshot = entries.get(entry_id)
+            if len(requests) > 1 and any(item.entry_id in entries for item in requests):
+                batch_acknowledged = True
+                acknowledged = True
+                sent = batch_sent = True
             rejection = client.action_rejection(entry_id)
-            if rejection is not None:
+            if snapshot is not None:
+                acknowledged = True
+                sent = True
+                if len(requests) > 1:
+                    batch_sent = True
+                uncertain_generation = None
+            elif rejection is not None:
                 results.append(RunResult(refused=rejection))
                 outputs.append("")
                 return ActionOutcome(results, outcome_text.text(), outputs)
-            snapshot = client.action_entries().get(entry_id)
-            if client.status() is not None and (snapshot is None or not snapshot.finished):
-                results.append(RunResult(error=client.status() or DISCONNECTED))
+            if snapshot is not None and snapshot.finished:
+                generation = generation or sent_generation or 1
+            if generation is None or (
+                uncertain_generation is not None and generation == uncertain_generation
+            ):
+                if disconnected_at is None:
+                    disconnected_at = time.monotonic()
+                if time.monotonic() - disconnected_at >= RECONNECT_TIMEOUT_SECONDS:
+                    results.append(RunResult(error=client.status() or DISCONNECTED))
+                    outputs.append(last_output)
+                    outcome_text.append(last_output)
+                    return ActionOutcome(results, outcome_text.text(), outputs)
+                time.sleep(POLL_SECONDS)
+                continue
+            disconnected_at = None
+            # Batch entries are published together before any action starts;
+            # a replay containing only other IDs must not cause a resubmit.
+            if (
+                acknowledged
+                and snapshot is None
+                and (sent_generation != generation or batch_acknowledged)
+            ):
+                results.append(RunResult(error="action missing after state service reconnect"))
                 outputs.append(last_output)
+                outcome_text.append(last_output)
                 return ActionOutcome(results, outcome_text.text(), outputs)
+            if sent and not acknowledged and sent_generation != generation:
+                sent = False
+                batch_sent = False
+            if not sent:
+                try:
+                    if len(requests) == 1:
+                        client.run_action(request)
+                    else:
+                        client.run_action_batch(RunActionBatch(requests))
+                        batch_sent = True
+                        batch_generation = generation
+                    sent = True
+                    sent_generation = generation
+                except (OSError, StateServiceUnavailable):
+                    uncertain_generation = generation
+                continue
             if snapshot is None:
                 time.sleep(POLL_SECONDS)
-                if client.status() is not None:
-                    results.append(RunResult(error=client.status() or DISCONNECTED))
-                    outputs.append("")
-                    return ActionOutcome(results, outcome_text.text(), outputs)
                 continue
             text = snapshot.output
             if text.startswith(last_output):
@@ -129,7 +192,6 @@ def run_actions(
             else:
                 chunk = text
             if chunk:
-                outcome_text.append(chunk)
                 replace_output = getattr(progress, "replace_output", None)
                 if replace_output is not None:
                     replace_output(index, text)
@@ -147,6 +209,7 @@ def run_actions(
                     )
                 )
                 outputs.append(text)
+                outcome_text.append(text)
                 if snapshot.refused is not None or snapshot.error is not None:
                     return ActionOutcome(results, outcome_text.text(), outputs)
                 break

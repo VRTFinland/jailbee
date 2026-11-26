@@ -18,6 +18,7 @@ import json
 import logging
 import os
 import selectors
+import signal
 import socket
 import subprocess
 import sys
@@ -55,6 +56,48 @@ class ChildProcess(Protocol):
     def wait(self) -> int: ...
 
     def kill(self) -> None: ...
+
+
+class ActionCancellation:
+    """Thread-safe force-stop handle for a running action."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._cancelled = False
+        self._child: ChildProcess | None = None
+        self._socket: socket.socket | None = None
+
+    @property
+    def cancelled(self) -> bool:
+        with self._lock:
+            return self._cancelled
+
+    def attach(self, child: ChildProcess, sock: socket.socket) -> None:
+        with self._lock:
+            self._child, self._socket = child, sock
+            if self._cancelled:
+                self._stop()
+
+    def cancel(self) -> None:
+        with self._lock:
+            self._cancelled = True
+            self._stop()
+
+    def detach(self) -> None:
+        with self._lock:
+            self._child, self._socket = None, None
+
+    def _stop(self) -> None:
+        if self._child is not None:
+            try:
+                self._child.kill()
+            except (OSError, ProcessLookupError):
+                pass
+        if self._socket is not None:
+            try:
+                self._socket.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
 
 
 # spawn(argv, cwd=, env=, prompt_sock=) -> child. The spawner owns `prompt_sock`
@@ -154,7 +197,7 @@ class _PopenChild:
         return self._proc.wait()
 
     def kill(self) -> None:
-        self._proc.kill()
+        os.killpg(self._proc.pid, signal.SIGKILL)
 
 
 def popen_spawn(
@@ -171,6 +214,7 @@ def popen_spawn(
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             pass_fds=(fd,),
+            start_new_session=True,
         )
     finally:
         prompt_sock.close()
@@ -178,18 +222,23 @@ def popen_spawn(
 
 
 def _child_env(
-    transport: Transport, policy: RemotePolicy | None, client: str | None = None
+    transport: Transport,
+    policy: RemotePolicy | None,
+    client: str | None = None,
+    *,
+    base: Mapping[str, str] | None = None,
 ) -> dict[str, str]:
+    environment = os.environ if base is None else base
     if transport == "none" or policy is None:
-        return dict(os.environ)
+        return dict(environment)
     from jailbee.remote_ssh.repo_scope import scope_for_session
     from jailbee.remote_ssh.session import child_environment, host_restricted
 
-    excluded = sorted(scope_for_session().excluded | frozenset(policy.excluded_repos))
+    excluded = sorted(scope_for_session(environment).excluded | frozenset(policy.excluded_repos))
     return child_environment(
-        os.environ,
+        environment,
         transport=transport,
-        restricted=host_restricted(policy.restrict_host),
+        restricted=host_restricted(policy.restrict_host, environment),
         excluded_repos=excluded,
         client=client,
     )
@@ -334,17 +383,21 @@ def run_action(
     on_output: OutputSink,
     client: str | None = None,
     address_flags: Sequence[str] = (),
+    environment: Mapping[str, str] | None = None,
     spawn: Spawner = popen_spawn,
     audit: AuditSink | None = None,
     on_disconnect: Callable[[], None] | None = None,
+    cancellation: ActionCancellation | None = None,
 ) -> RunResult:
     """Run ``jailbee <argv>`` and return how it ended; blocks until it exits.
 
     ``argv`` is the action without the program name and is policy-checked
     exactly as given. ``address_flags`` (``--config`` ...) are added only for
     the local transport. ``client`` is the remote client's identity (key
-    fingerprint, device name) for the audit record. ``on_prompt`` runs on the
-    calling thread, one prompt at a time; ``on_output`` runs on a helper thread.
+    fingerprint, device name) for the audit record. ``environment`` is the
+    caller's base environment; omitted preserves the historical process environment.
+    ``on_prompt`` runs on the calling thread, one prompt at a time; ``on_output``
+    runs on a helper thread.
     A refusal returns ``RunResult(refused=...)`` and starts nothing. A handler
     exception kills the child, is audited as ``error`` and propagates.
     """
@@ -373,14 +426,17 @@ def run_action(
         record("refused")
         return RunResult(refused=reason)
     try:
-        check_dashboard_command(argv, policy, transport=transport)
+        from jailbee.remote_ssh.repo_scope import scope_for_session
+
+        excluded = scope_for_session(environment).excluded if environment is not None else None
+        check_dashboard_command(argv, policy, transport=transport, excluded_prefixes=excluded)
     except (RouteError, ValueError) as exc:  # ValueError: unreadable repo scope snapshot
         record("refused")
         return RunResult(refused=str(exc))
 
     full = cli_argv(dact.addressed(argv, address_flags, transport=transport))
     try:
-        env = _child_env(transport, policy, client)
+        env = _child_env(transport, policy, client, base=environment)
     except Exception as exc:  # scope snapshot unreadable: fail closed, nothing started
         record("refused")
         return RunResult(refused=f"remote policy snapshot unavailable: {exc}")
@@ -394,6 +450,8 @@ def run_action(
         record("error")
         return RunResult(error=str(exc))
 
+    if cancellation is not None:
+        cancellation.attach(child, ui_sock)
     reader = threading.Thread(target=_pump, args=(child, on_output), daemon=True)
     reader.start()
     ui = UiEnd(ui_sock)
@@ -442,19 +500,25 @@ def run_action(
     except ConnectionAbortedError:
         ui.close()
         status = child.wait()
-        reader.join()
+        reader.join(timeout=2)
+        if cancellation is not None:
+            cancellation.detach()
         record(f"exit:{status}")
         return RunResult(status=status or 1, cancelled=True)
     except BaseException:
         child.kill()
         child.wait()
-        reader.join()
+        reader.join(timeout=2)
         ui.close()
+        if cancellation is not None:
+            cancellation.detach()
         record("error")
         raise
     ui.close()
     status = child.wait()
-    reader.join()
+    reader.join(timeout=2)
+    if cancellation is not None:
+        cancellation.detach()
     record(f"exit:{status}")
     return RunResult(status=status, cancelled=cancelled, declined=declined)
 

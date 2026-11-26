@@ -95,8 +95,8 @@ _Avoid_: base — that is `base_branch`
 **Prompt channel**:
 The private connection over which a dashboard action's child command puts its
 questions to the action host and receives answers. Background dashboard actions
-are hosted by the state service; commands run directly in a terminal keep their
-terminal prompts.
+are hosted by the state service, which shares pending questions with dashboards;
+commands run directly in a terminal keep their terminal prompts.
 _Avoid_: askpass, prompt hook
 
 **Pending question**:

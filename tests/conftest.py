@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-import errno
 import functools
 import itertools
 import os
 import shlex
 import shutil
-import subprocess
 import tempfile
 import weakref
 
@@ -521,7 +519,7 @@ def typed_confirmations(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
-def _block_real_incus(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+def _block_real_incus(monkeypatch: pytest.MonkeyPatch, _test_isolation_dir: Path) -> Iterator[None]:
     """Fail any test that runs the real ``incus`` binary.
 
     The unit suite is fully mocked, but nothing enforced it: a test whose
@@ -530,35 +528,39 @@ def _block_real_incus(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     exist answers nothing. The CI runner has no ``incus``, so the same test
     failed there with "`incus` not found in PATH", and nowhere else.
 
-    Every exec of a bare ``incus`` (resolved via PATH) raises the same
-    ``FileNotFoundError`` the CI runner does, so the code under test takes
-    CI's path locally too. The test is then failed at teardown even if that
-    code swallowed the resulting ``IncusError`` — a leak that happens to
+    Every exec of a bare ``incus`` (resolved via PATH) runs a shim that exits
+    with status 127. The test is then failed at teardown even if the code
+    under test swallowed the resulting failure — a leak that happens to
     exit the way a test expects is still a test that never ran what it
     names. A fake ``incus`` addressed by absolute path
     (``Incus(binary=str(tmp_path / "incus"))``, as ``test_incus.py``'s
     ``exec_lines`` tests do) is not blocked.
 
-    Patches ``Popen._execute_child`` — the one point every ``subprocess``
-    entry (``run``, ``check_output``, ``Popen``) passes through — so a test
-    that mocks ``subprocess.run`` is unaffected, and only an exec that
-    would really happen is seen.
+    A test-local PATH shim covers the parent and any child CLI process. It
+    records attempted Incus invocations and fails; explicit fake binaries
+    remain untouched.
     """
     attempts: list[list[str]] = []
-    # Private CPython API, absent from typeshed's stubs.
-    real_execute_child = subprocess.Popen._execute_child  # type: ignore[attr-defined]
-
-    def guarded(
-        self: subprocess.Popen[Any], args: Any, executable: Any, *rest: Any, **kwargs: Any
-    ) -> Any:
-        argv = [args] if isinstance(args, (str, bytes, os.PathLike)) else list(args)
-        if os.fsdecode(executable if executable is not None else argv[0]) == "incus":
-            attempts.append([os.fsdecode(a) for a in argv])
-            raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), "incus")
-        return real_execute_child(self, args, executable, *rest, **kwargs)
-
-    monkeypatch.setattr(subprocess.Popen, "_execute_child", guarded)
+    shim_dir = _test_isolation_dir / "incus-guard"
+    shim_dir.mkdir()
+    marker = _test_isolation_dir / "incus-attempts"
+    monkeypatch.setenv("JAILBEE_TEST_INCUS_ATTEMPTS", str(marker))
+    shim = shim_dir / "incus"
+    shim.write_text(
+        "#!/bin/sh\n"
+        'if [ -n "$JAILBEE_TEST_INCUS_ATTEMPTS" ]; then\n'
+        '  printf \'%s\\n\' "$*" >> "$JAILBEE_TEST_INCUS_ATTEMPTS"\n'
+        "fi\n"
+        "exit 127\n"
+    )
+    shim.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{shim_dir}{os.pathsep}{os.environ['PATH']}")
     yield
+    try:
+        marker_text = marker.read_text()
+    except FileNotFoundError:
+        marker_text = ""
+    attempts.extend(line.split() for line in marker_text.splitlines())
     if attempts:
         ran = "\n".join(f"  {shlex.join(a)}" for a in attempts)
         pytest.fail(
