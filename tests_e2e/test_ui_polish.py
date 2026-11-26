@@ -84,6 +84,11 @@ def test_drawer_has_side_sheet_shape_and_respects_motion(
         assert scrim.evaluate("el => parseFloat(getComputedStyle(el).animationDuration)") > 0
         # Observe actual travel, not merely a nonzero duration or an animation name.
         assert drawer.evaluate("""el => {
+            // Restart synchronously: a busy host may finish entry before this assertion.
+            const name = getComputedStyle(el).animationName;
+            el.style.animationName = 'none';
+            void el.offsetWidth;
+            el.style.animationName = name;
             const animation = el.getAnimations()[0];
             animation.pause(); animation.currentTime = 0;
             const start = el.getBoundingClientRect().left;
