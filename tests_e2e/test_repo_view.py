@@ -36,7 +36,7 @@ def test_repo_sessions_match_gallery_rows_and_metadata_opens_the_transcript(
     page.evaluate("t => localStorage.setItem('jailbee.theme', t)", theme)
     page.reload()
     page.get_by_role("link", name="work", exact=True).click()
-    link = page.get_by_role("link", name=SESSION_TITLE, exact=True)
+    link = page.get_by_role("link", name=re.compile(rf"^{re.escape(SESSION_TITLE)} claude unattributed "))
     row = page.get_by_role("listitem").filter(has=link)
     expect(row).to_be_visible()
     expect(row).to_contain_text("claude")

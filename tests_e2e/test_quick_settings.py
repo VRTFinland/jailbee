@@ -27,7 +27,7 @@ def test_floating_trigger_has_opaque_surface_and_panel_tracks_its_target_size(
         theme,
     )
     page.reload()
-    trigger = page.get_by_role("button", name="Quick settings", exact=True, include_hidden=True)
+    trigger = page.get_by_role("button", name="Quick settings", exact=True)
     expect(trigger).to_be_visible()
     assert trigger.evaluate("el => getComputedStyle(el).backgroundColor") not in {
         "transparent",
@@ -43,7 +43,11 @@ def test_floating_trigger_has_opaque_surface_and_panel_tracks_its_target_size(
     trigger.click()
     panel = page.get_by_role("dialog", name="Quick settings")
     expect(panel).to_be_visible()
-    button_box, panel_box = trigger.bounding_box(), panel.bounding_box()
+    # The open modal deliberately hides its trigger from the accessibility tree.
+    button_box = page.get_by_role(
+        "button", name="Quick settings", exact=True, include_hidden=True
+    ).bounding_box()
+    panel_box = panel.bounding_box()
     assert button_box and panel_box
     assert button_box["height"] == 64
     assert 0 <= panel_box["y"] - (button_box["y"] + button_box["height"]) <= 8
@@ -53,7 +57,7 @@ def test_floating_trigger_has_opaque_surface_and_panel_tracks_its_target_size(
 def test_menu_is_at_right_edge_and_does_not_overlap_title(logged_in: Page, width: int) -> None:
     page = logged_in
     page.set_viewport_size({"width": width, "height": 600})
-    icon = page.get_by_role("button", name="Quick settings", exact=True, include_hidden=True)
+    icon = page.get_by_role("button", name="Quick settings", exact=True)
     heading = page.get_by_role("heading", name="JailBee", exact=True)
     expect(icon).to_be_visible()
     icon_box = icon.bounding_box()
@@ -86,7 +90,7 @@ def test_menu_context_paging_and_live_preferences(
         page.get_by_role("radio", name="E-ink (page turns, no animation, slow refresh)").check()
         page.get_by_role("button", name="Close settings").click()
         expect(page.get_by_role("dialog", name="Settings")).to_have_count(0)
-    icon = page.get_by_role("button", name="Quick settings", exact=True, include_hidden=True)
+    icon = page.get_by_role("button", name="Quick settings", exact=True)
     open_quick_settings(page)
     panel = page.get_by_role("dialog", name="Quick settings")
     expect(panel.get_by_role("button", name="All", exact=True)).to_have_count(0)
@@ -95,7 +99,9 @@ def test_menu_context_paging_and_live_preferences(
     reveal_setting(page, "switch", "Show thinking")
     panel.get_by_role("switch", name="Show thinking").check()
     reveal_setting(page, "combobox", "Agent context")
-    panel.get_by_role("combobox", name="Agent context").select_option("collapsed")
+    context = panel.get_by_role("combobox", name="Agent context")
+    context.select_option("collapsed")
+    assert context.evaluate("el => Math.abs(el.getBoundingClientRect().width - el.closest('.context-row').getBoundingClientRect().width) <= 1")
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
     assert panel.evaluate("el => el.getBoundingClientRect().bottom <= innerHeight - 32")
     if profile == "eink":
@@ -332,7 +338,7 @@ def test_escape_after_font_stepper_disables_closes_menu(logged_in: Page) -> None
     page.keyboard.press("Escape")
     expect(panel).to_have_count(0)
     expect(
-        page.get_by_role("button", name="Quick settings", exact=True, include_hidden=True)
+        page.get_by_role("button", name="Quick settings", exact=True)
     ).to_be_focused()
 
 
@@ -356,7 +362,7 @@ def test_escape_on_closed_select_closes_menu_and_restores_focus(
     page.keyboard.press("Escape")
     expect(panel).to_have_count(0)
     expect(
-        page.get_by_role("button", name="Quick settings", exact=True, include_hidden=True)
+        page.get_by_role("button", name="Quick settings", exact=True)
     ).to_be_focused()
 
 

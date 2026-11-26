@@ -44,6 +44,20 @@ describe("Button", () => {
         expect(mount(Button, {slots: {default: "Go"}}).get("button").attributes("disabled")).toBeUndefined()
     })
 
+    it.each(["compact", "narrow", "truncate"] as const)("toggles %s without changing the full name or click behaviour", async (option) => {
+        const label = "A long prompt excerpt for the reader"
+        const wrapper = mount(Button, {props: {[option]: true}, slots: {default: label}})
+        const button = wrapper.get("button")
+        expect(button.attributes(`data-${option}`)).toBe("true")
+        expect(button.text()).toBe(label)
+        await button.trigger("click")
+        expect(wrapper.emitted("click")).toHaveLength(1)
+        await wrapper.setProps({[option]: false})
+        expect(button.attributes(`data-${option}`)).toBeUndefined()
+        expect(button.text()).toBe(label)
+        wrapper.unmount()
+    })
+
     it("can submit a form", () => {
         const wrapper = mount(Button, {props: {type: "submit"}, slots: {default: "Log in"}})
         expect(wrapper.get("button").attributes("type")).toBe("submit")
@@ -58,6 +72,19 @@ describe("Button", () => {
 })
 
 describe("IconButton", () => {
+    it("toggles compact density without losing its accessible name or click event", async () => {
+        const wrapper = mount(IconButton, {props: {icon: "back", label: "Previous page", compact: true}})
+        const button = wrapper.get("button")
+        expect(button.attributes("data-compact")).toBe("true")
+        expect(button.attributes("aria-label")).toBe("Previous page")
+        await button.trigger("click")
+        expect(wrapper.emitted("click")).toHaveLength(1)
+        await wrapper.setProps({compact: false})
+        expect(button.attributes("data-compact")).toBeUndefined()
+        expect(button.attributes("aria-label")).toBe("Previous page")
+        wrapper.unmount()
+    })
+
     it("defaults to text and exposes a tonal variant for floating controls", () => {
         const text = mount(IconButton, {props: {icon: "menu", label: "Menu"}})
         const tonal = mount(IconButton, {props: {icon: "menu", label: "Menu", variant: "tonal"}})

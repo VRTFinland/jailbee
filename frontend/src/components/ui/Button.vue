@@ -29,7 +29,6 @@ defineEmits<{click: [event: MouseEvent]}>()
 </template>
 
 <style src="./state-layer.css"></style>
-<style src="./compact.css"></style>
 
 <style scoped>
 .button {
@@ -82,6 +81,22 @@ defineEmits<{click: [event: MouseEvent]}>()
     border-color: var(--md-hairline);
     background: var(--md-surface);
     color: var(--md-on-surface);
+}
+/* The full target extends upwards, never into the reader's bottom guard. */
+.button[data-compact] {
+    min-width: var(--md-target-min);
+    min-height: 0;
+    height: var(--md-space-24);
+    padding: 0 var(--md-space-4);
+    overflow: visible;
+}
+.button[data-compact]::after {
+    content: "";
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    height: var(--md-target-min);
 }
 .button[data-narrow] {
     min-width: var(--md-target-min);

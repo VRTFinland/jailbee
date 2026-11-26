@@ -66,6 +66,9 @@ def test_page_controls_preserve_readable_height_keys_taps_and_jump_clearance(
     for button in nav.locator("button").all():
         box = button.bounding_box()
         assert box is not None and box["x"] >= 0 and box["x"] + box["width"] <= 640
+        if mode != "side":
+            assert box["height"] <= 28
+            assert box["y"] + box["height"] <= guard["y"]
 
     # Compact chrome retains a full 44px target extending upward, not into
     # the bottom guard. Check actual hit testing, not only pseudo-element CSS.

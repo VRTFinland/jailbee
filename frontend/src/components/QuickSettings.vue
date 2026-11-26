@@ -182,7 +182,7 @@ onBeforeUnmount(() => {
 .font-row > span { flex: 1 1 5rem; }
 .font-row button { flex-shrink: 0; }
 .toggle-row { justify-content: space-between; }
-.context-row { flex-wrap: wrap; }
+.context-row { display: block; }
 .view-heading { padding-block: var(--md-space-8); }
 .menu-pages { display: flex; align-items: center; justify-content: space-between; padding-top: var(--md-space-8); }
 .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }

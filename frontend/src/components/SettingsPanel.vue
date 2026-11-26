@@ -29,6 +29,7 @@ const PROFILE_LABELS: Record<DisplayProfile, string> = {
     eink: "E-ink (page turns, no animation, slow refresh)",
 }
 
+const props = defineProps<{inDrawer?: boolean}>()
 const dashboard = useDashboard()
 const deviceName = ref("")
 const deviceError = ref("")
@@ -66,7 +67,7 @@ function number(event: Event): number {
 </script>
 
 <template>
-    <div class="settings-panel">
+    <div class="settings-panel" :class="{'settings-panel-drawer': props.inDrawer}">
         <p class="muted">Display choices are kept on this device only.</p>
 
         <fieldset>
@@ -184,6 +185,7 @@ function number(event: Event): number {
     margin: 0 auto;
     padding: var(--md-space-16);
 }
+.settings-panel-drawer { padding: 0; }
 .muted {
     color: var(--md-on-surface-variant);
 }

@@ -1,6 +1,7 @@
 import {config} from "@vue/test-utils"
 config.global.stubs.DialogPortal = {template: "<slot />"}
 import {flushPromises, mount} from "@vue/test-utils"
+import userEvent from "@testing-library/user-event"
 import {afterEach, describe, expect, it, vi} from "vitest"
 import {createMemoryHistory} from "vue-router"
 import {clearToken, setToken} from "./api"
@@ -96,8 +97,8 @@ describe("App", () => {
         await flushPromises()
         const dialog = wrapper.get('[role="dialog"][aria-label="Settings"]')
         expect(dialog.element.contains(document.activeElement)).toBe(true)
-        await dialog.trigger("keydown", {key: "Tab", shiftKey: true})
-        expect(dialog.element.contains(document.activeElement)).toBe(true)
+        await userEvent.setup().tab({shift: true})
+        expect(document.activeElement).toBe(wrapper.get('[aria-label="Agent context"]').element)
         await wrapper.get('[aria-label="Close settings"]').trigger("click")
         await new Promise(resolve => setTimeout(resolve, 20))
         await flushPromises()
