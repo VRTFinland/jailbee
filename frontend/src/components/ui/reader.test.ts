@@ -11,6 +11,7 @@ it("exposes disclosure state, emits its next value and follows external changes"
     await button.trigger("click")
     expect(wrapper.emitted("update:open")).toEqual([[true]])
     expect(button.attributes("aria-expanded")).toBe("true")
+    await wrapper.setProps({open: true})
     await wrapper.setProps({open: false})
     expect(button.attributes("aria-expanded")).toBe("false")
     await wrapper.setProps({error: true})

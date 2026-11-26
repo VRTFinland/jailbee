@@ -44,7 +44,9 @@ All live in `src/components/ui/`.
 26px bar / 28px indicator. Drawn chrome is compact, but a pseudo-element extends
 the hit area upwards to `--md-target-min`, never into the bottom guard. Leave
 that area clear of other targets; do not use this density for ordinary forms.
-The Reader gallery group shows these controls and the transcript primitives.
+`Button`'s `truncate` option keeps prompt excerpts to one line with an ellipsis
+while preserving their full accessible names. The Reader gallery group shows
+these controls and the transcript primitives.
 
 Shared helper classes are prefixed `ui-` so no view class collides with them:
 `ui-state-layer` (Material 3 hover/pressed overlay) and `ui-focus-ring` in

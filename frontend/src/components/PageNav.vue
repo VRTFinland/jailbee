@@ -97,7 +97,7 @@ watch(() => settings.pageControls, async () => {
     top: 0;
     bottom: calc(var(--guard-bottom) + var(--page-nav-height));
     width: 8vw;
-    z-index: calc(var(--md-layer-raised) - 1);
+    z-index: auto;
     padding: 0;
     background: none;
     border: none;
