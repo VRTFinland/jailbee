@@ -36,6 +36,22 @@ PREAMBLE = "\n".join(
 )
 
 
+UNATTENDED_INSTRUCTIONS = """## Unattended questions
+Do not use dialogs for questions or enter plan mode yourself. Ask in this exact format:
+
+❓ **Q<n>** - **<title>**: body
+a) option
+b) option
+➡️ <letter>: rationale
+
+Use decimal question numbers unique across the conversation, including answered questions.
+The recommendation line is optional; its leading letter selects an option. Without a letter,
+➡️ recommends yes. No options means an open question. Accept answers such as 12a / Q12a
+(or Q12: a); "yes" accepts the recommendation. Keep questions in the conversation so they
+can be answered from any device.
+"""
+
+
 def source_path() -> Path:
     """Return the optional host-wide AGENTS.md beside global.yaml."""
     # global_config imports Config; keep it lazy to avoid a module cycle.
@@ -49,7 +65,7 @@ def staging_root() -> Path:
     return xdg_data_home() / "jailbee" / "agent-instructions"
 
 
-def staging_dir(agent: str, filename: str) -> Path:
+def staging_dir(agent: str, filename: str, *, unattended: bool = False) -> Path:
     """Return the host-level staging directory holding one agent's one file.
 
     One directory per (agent, file name), and that directory is what a
@@ -57,7 +73,13 @@ def staging_dir(agent: str, filename: str) -> Path:
     therefore only ever puts that file into its own containers, never into those
     of another repo that mounts a different file name for the same agent.
     """
-    return staging_root() / agent / "by-file" / filename
+    root = staging_root() / agent / "by-file" / filename
+    # Different repo settings must not overwrite each other's mounted memory.
+    return root / "unattended" if unattended else root
+
+
+def unattended_for(cfg: Config, agent: str) -> bool:
+    return agent == "claude" and cfg.claude.unattended
 
 
 def instruction_agents(cfg: Config) -> list[tuple[str, AgentGlobalInstructions]]:
@@ -71,14 +93,22 @@ def instruction_agents(cfg: Config) -> list[tuple[str, AgentGlobalInstructions]]
     ]
 
 
-def desired_content(source: Path) -> bytes:
+def instruction_prefix(source: Path, *, unattended: bool = False) -> bytes:
+    """Render JailBee's managed memory independently of the optional host content."""
+    marker = MARKER_TEMPLATE.format(source=display_path(source)).encode()
+    preamble = PREAMBLE
+    if unattended:
+        preamble += "\n\n" + UNATTENDED_INSTRUCTIONS
+    return marker + b"\n" + preamble.encode() + b"\n"
+
+
+def desired_content(source: Path, *, unattended: bool = False) -> bytes:
     """Return the marker and preamble followed by any host source bytes."""
     try:
         content = source.read_bytes()
     except FileNotFoundError:
         content = None
-    marker = MARKER_TEMPLATE.format(source=display_path(source)).encode()
-    prefix = marker + b"\n" + PREAMBLE.encode() + b"\n"
+    prefix = instruction_prefix(source, unattended=unattended)
     return prefix if content is None else prefix + b"\n" + content
 
 
@@ -101,18 +131,18 @@ def sync_global_instructions(cfg: Config) -> None:
         return
 
     source = source_path()
-    try:
-        content = desired_content(source)
-    except OSError as exc:
-        warn_plain(
-            f"cannot read {display_path(source)}: {exc} — keeping any previous copy; "
-            "otherwise staging the preamble only",
-            stderr=True,
-        )
-        content = None
-
     for name, gi in agents:
-        directory = staging_dir(name, gi.file)
+        unattended = unattended_for(cfg, name)
+        try:
+            content = desired_content(source, unattended=unattended)
+        except OSError as exc:
+            warn_plain(
+                f"cannot read {display_path(source)}: {exc} — keeping any previous copy; "
+                "otherwise staging the preamble only",
+                stderr=True,
+            )
+            content = None
+        directory = staging_dir(name, gi.file, unattended=unattended)
         target = directory / gi.file
         try:
             directory.mkdir(parents=True, exist_ok=True)
@@ -125,8 +155,7 @@ def sync_global_instructions(cfg: Config) -> None:
             if content is None:
                 if current is not None:
                     continue
-                fallback = MARKER_TEMPLATE.format(source=display_path(source)).encode()
-                _write_atomically(target, fallback + b"\n" + PREAMBLE.encode() + b"\n")
+                _write_atomically(target, instruction_prefix(source, unattended=unattended))
             elif current != content:
                 _write_atomically(target, content)
         except OSError as exc:
@@ -141,7 +170,9 @@ def missing_staging_dirs(cfg: Config) -> list[Path]:
     return [
         directory
         for name, gi in instruction_agents(cfg)
-        if not (directory := staging_dir(name, gi.file)).is_dir()
+        if not (
+            directory := staging_dir(name, gi.file, unattended=unattended_for(cfg, name))
+        ).is_dir()
     ]
 
 
@@ -153,7 +184,7 @@ def profile_devices(cfg: Config) -> dict[str, dict[str, str]]:
         path = gi.dir.replace("~", home, 1) if gi.dir.startswith("~") else gi.dir
         devices[f"agent-instructions-{device_name(name)}"] = {
             "type": "disk",
-            "source": str(staging_dir(name, gi.file)),
+            "source": str(staging_dir(name, gi.file, unattended=unattended_for(cfg, name))),
             "path": path,
             "readonly": "true",
         }

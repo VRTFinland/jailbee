@@ -666,6 +666,14 @@ UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
             "to the controller and requires linked-worktree cleanup before done"
         ),
     ),
+    UpgradeNote(
+        version=(1, 8, 10),
+        actions=frozenset({"apply"}),
+        reason=(
+            "Claude sessions default to unattended bypass mode with automatic permission "
+            "rejection and numbered questions; set agents.claude.unattended: false to opt out"
+        ),
+    ),
 )
 """What each release requires, ascending by version. Maintained by hand.
 

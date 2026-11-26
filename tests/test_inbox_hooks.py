@@ -29,6 +29,40 @@ def set_role(monkeypatch, tmp_path):
     return set_value
 
 
+@pytest.mark.parametrize("unattended", [None, "1"])
+@pytest.mark.parametrize("tool_name", ["Bash", "ExitPlanMode", "mcp__example__write"])
+def test_permission_request_denied_only_in_unattended_mode(monkeypatch, unattended, tool_name):
+    from jailbee.container_cli import container_app
+
+    monkeypatch.delenv("JAILBEE_CLAUDE_UNATTENDED", raising=False)
+    if unattended is not None:
+        monkeypatch.setenv("JAILBEE_CLAUDE_UNATTENDED", unattended)
+    result = CliRunner().invoke(
+        container_app,
+        ["inbox", "hook", "permission-request"],
+        input=json.dumps(
+            {
+                "hook_event_name": "PermissionRequest",
+                "tool_name": tool_name,
+                "tool_input": {"command": "cd x && rm -rf ./y/*"},
+            }
+        ),
+    )
+    assert result.exit_code == 0
+    if unattended is None:
+        assert result.stdout == ""
+    else:
+        output = json.loads(result.stdout)["hookSpecificOutput"]
+        assert output["hookEventName"] == "PermissionRequest"
+        assert output["decision"]["behavior"] == "deny"
+        message = output["decision"]["message"]
+        assert "auto-rejected in JailBee containers" in message
+        assert "safer" in message
+        assert "relative rm paths" in message
+        assert "unavoidable" in message
+        assert "❓" in message
+
+
 @pytest.mark.parametrize("source", ["resume", "fork", "startup", "clear", "compact"])
 @pytest.mark.parametrize("container_role", ["child", "orchestrator", "plain"])
 def test_session_start(set_role, source, container_role):

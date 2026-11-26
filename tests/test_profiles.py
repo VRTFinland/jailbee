@@ -579,6 +579,7 @@ def test_binds_profile_mounts_agent_instructions_for_claude(make_cfg, tmp_path, 
             / "claude"
             / "by-file"
             / "CLAUDE.md"
+            / "unattended"
         ),
         "path": "/etc/claude-code",
         "readonly": "true",

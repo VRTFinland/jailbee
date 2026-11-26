@@ -71,6 +71,33 @@ changes when staged or built. This is not the container repository's HEAD. With
 no build info they print just the package version; no rebuild is needed solely
 for this metadata.
 
+### Unattended Claude sessions
+
+`agents.claude.unattended` defaults to `true` for `claude` and `claude-jb`, including
+children: bypass permissions without the acceptance dialog, no AskUserQuestion or
+EnterPlanMode, and automatic rejection of remaining permission prompts by
+`jailbee inbox hook permission-request`. ExitPlanMode stays for user-entered plan
+mode. After rejection, find a safer command shape (avoid `cd` with relative `rm`
+paths); if unavoidable, ask the user in the conversation, never a dialog:
+
+```text
+❓ **Q12** - **Title**: question text
+a) first option
+b) second option
+➡️ a: rationale
+```
+
+Keep numbers unique across the conversation. Options and recommendation are
+optional; no options means an open question. A recommendation without a leading
+letter recommends yes. Answers `12a`, `Q12a`, `Q12: a` select the option; "yes"
+accepts the recommendation. The instruction is in managed-policy memory, not just
+this skill. The host can set `agents.claude.unattended: false`, run `jb apply`,
+restart running containers for the changed policy mounts, and start a new session
+to restore the previous behaviour. Settings use the existing managed drop-in;
+organizations with remote managed settings that suppress drop-ins have a known
+limitation. `agent_instructions: false` omits the question instruction, not the
+permission settings. Never change shared user settings to work around a denial.
+
 ### Choosing models
 
 Before choosing a model for a subagent or child runner, run

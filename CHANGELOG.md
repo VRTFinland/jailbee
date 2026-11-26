@@ -482,6 +482,14 @@ before editing `## Unreleased`.
   worktrees registered. The controller removes them before reporting completion;
   other message kinds remain available. The child skill now puts subagent-to-controller
   reporting first, and the child preamble tells the controller to pass that rule on.
+- Claude containers default to unattended mode for both `claude` and `claude-jb`:
+  bypass permissions without the acceptance dialog, no AskUserQuestion or
+  EnterPlanMode tools, automatic rejection of remaining permission prompts,
+  and numbered ❓ questions in managed-policy memory. ExitPlanMode remains
+  available for user-entered plan mode. Run `jb apply`, restart running
+  containers for the policy mounts, and start a new agent session; set
+  `agents.claude.unattended: false` to retain the previous behaviour
+  ([#171](https://github.com/VRTFinland/jailbee/issues/171)).
 - `jailbee git retarget` accepts already-fetched upstream branches as bases,
   without creating a local host branch. Its CLI, dashboard and shell-completion
   candidates now match the new-container base picker (local branches first,

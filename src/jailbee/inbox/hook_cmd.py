@@ -18,6 +18,15 @@ def register_hooks(inbox_app: typer.Typer) -> None:
     app = typer.Typer(help="Handle session lifecycle hooks.")
     inbox_app.add_typer(app, name="hook")
 
+    @app.command("permission-request")
+    def permission_request() -> None:
+        """Reject permission prompts when managed settings enable unattended mode."""
+        result = hooks.permission_request(
+            hooks.read_input(), unattended=os.environ.get("JAILBEE_CLAUDE_UNATTENDED") == "1"
+        )
+        if result is not None:
+            print(json.dumps(result))
+
     @app.command("session-start")
     def session_start() -> None:
         """Provide context when a session resumes or forks."""
