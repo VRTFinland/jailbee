@@ -18,6 +18,7 @@ stdout. Pure POSIX shell, no Incus and no network — nothing to mock.
 
 import importlib.resources
 import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -177,6 +178,17 @@ def test_snippet_is_world_readable(snippet: str) -> None:
     assert "chmod 0644 /etc/profile.d/jailbee-claude.sh" in after
 
 
+def test_shell_settings_option_tables_match_python() -> None:
+    from jailbee.claude_options import VALUE_OPTIONS
+
+    text = _install_sh()
+    for start, end in (("claude() (", "\n)"), ("add_settings() {", "\n}")):
+        scanner = text.split(start, 1)[1].split(end, 1)[0]
+        case = scanner.split("--settings|--settings=*)", 1)[1]
+        options = case.split(")", 1)[0].split(";;", 1)[1]
+        assert set(re.findall(r"--?[A-Za-z][A-Za-z-]*", options)) == VALUE_OPTIONS - {"--settings"}
+
+
 def test_shell_adds_settings(snippet: str, home: Path, tmp_path: Path) -> None:
     settings = tmp_path / "settings.json"
     settings.touch()
@@ -194,6 +206,33 @@ def test_shell_adds_settings(snippet: str, home: Path, tmp_path: Path) -> None:
     )
     assert result.stdout == ""
     assert record.read_text().splitlines() == ["--settings", str(settings), "-p", "hello"]
+
+
+def test_noninteractive_remote_settings_notice_is_silent(snippet: str, home: Path) -> None:
+    remote = home / ".claude/remote-settings.json"
+    remote.parent.mkdir()
+    remote.write_text('{"channelsEnabled": false}')
+    proc = _run(snippet, home)
+    assert proc.stdout == ""
+    assert proc.stderr == ""
+
+
+def test_shell_missing_settings_file_keeps_argv(snippet, home, tmp_path):
+    missing = tmp_path / "missing.json"
+    record = tmp_path / "argv"
+    binary = home / ".local/bin/claude"
+    binary.write_text('#!/bin/sh\nprintf \'%s\\n\' "$@" > "$RECORD"\n')
+    binary.chmod(0o755)
+    code = snippet.replace("/etc/claude-code/managed-settings.d/50-jailbee.json", str(missing))
+    proc = subprocess.run(
+        ["bash", "-c", code + '\nclaude --model opus -p "hello world"'],
+        env={"HOME": str(home), "PATH": f"{binary.parent}:/usr/bin:/bin", "RECORD": str(record)},
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert record.read_text().splitlines() == ["--model", "opus", "-p", "hello world"]
+    assert proc.stdout == proc.stderr == ""
 
 
 def test_interactive_remote_settings_notice(snippet: str, home: Path) -> None:
@@ -230,6 +269,12 @@ def test_interactive_remote_settings_notice(snippet: str, home: Path) -> None:
                 "--effort",
                 "--profile",
                 "-C",
+                "--mcp-config",
+                "--add-dir",
+                "--allowedTools",
+                "--tools",
+                "--plugin-dir",
+                "--permission-prompt-tool",
             )
         ],
         (["--", "--settings=prompt"], ["--settings", "FILE", "--", "--settings=prompt"]),

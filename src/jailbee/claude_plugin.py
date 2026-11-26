@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shlex
 import tempfile
 from io import StringIO
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, NotRequired, TypedDict
 
+from jailbee.claude_options import VALUE_OPTIONS
 from jailbee.paths import xdg_data_home
 
 if TYPE_CHECKING:
@@ -26,50 +28,28 @@ def with_settings(command: str) -> str:
     exactly two fixed words when present, and no arguments on older containers.
     Keep the rest of the command intact: headless presets contain expansions.
     """
+    # Keep quoted punctuation and command substitutions inside the first command.
+    first = re.match(r"""(?:\\.|'[^']*'|"(?:\\.|[^"\\])*"|\$\([^)]*\)|\$(?!\()|[^;&|'"\\$])+""", command)
+    if first is None or (first.end() < len(command) and command[first.end()] not in ";&|"):
+        return command
     try:
-        words = shlex.split(command)
+        words = shlex.split(first[0])
     except ValueError:
         return command
     if not words or Path(words[0]).name not in {"claude", "claude-jb"}:
         return command
-    value_options = {
-        "--system-prompt",
-        "--system-prompt-file",
-        "--append-system-prompt",
-        "--append-system-prompt-file",
-        "--json-schema",
-        "--model",
-        "--agent",
-        "--agents",
-        "--effort",
-        "--fallback-model",
-        "--name",
-        "-n",
-        "--session-id",
-        "--input-format",
-        "--output-format",
-        "--permission-mode",
-        "--setting-sources",
-        "--max-budget-usd",
-        "--debug-file",
-        "--profile",
-        "-P",
-        "--context",
-        "-C",
-    }
     skip_value = False
     for word in words[1:]:
         if skip_value:
             skip_value = False
             continue
-        if word in value_options:
-            skip_value = True
-            continue
         if word == "--":
             break
         if word == "--settings" or word.startswith("--settings="):
             return command
-    stream = StringIO(command)
+        if word in VALUE_OPTIONS:
+            skip_value = True
+    stream = StringIO(first[0])
     lexer = shlex.shlex(stream, posix=True)
     lexer.whitespace_split = True
     lexer.get_token()

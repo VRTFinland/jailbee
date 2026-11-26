@@ -559,6 +559,12 @@ def test_settings_added_to_proxy_launch(script, argv_env, tmp_path):
                 "--model",
                 "--agent",
                 "--effort",
+                "--mcp-config",
+                "--add-dir",
+                "--allowedTools",
+                "--tools",
+                "--plugin-dir",
+                "--permission-prompt-tool",
             )
         ],
         (["--", "--settings=prompt"], ["--settings", "FILE", "--", "--settings=prompt"]),

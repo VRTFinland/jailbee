@@ -690,6 +690,14 @@ UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
             "when remote managed settings suppress drop-ins"
         ),
     ),
+    UpgradeNote(
+        version=(1, 8, 10),
+        actions=frozenset({"apply"}),
+        reason=(
+            "syncs skills describing the Claude --settings fallback and its limits "
+            "when remote managed settings suppress drop-ins"
+        ),
+    ),
 )
 """What each release requires, ascending by version. Maintained by hand.
 

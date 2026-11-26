@@ -79,6 +79,23 @@ def test_manifest_is_ascending_and_well_formed() -> None:
     assert _manifest_shape_errors(UPGRADE_NOTES) == []
 
 
+def test_remote_settings_upgrade_notes_separate_shell_and_skill_updates():
+    from jailbee.upgrade import UPGRADE_NOTES
+
+    notes = [
+        note
+        for note in UPGRADE_NOTES
+        if note.version == (1, 8, 10) and "remote managed settings" in note.reason
+    ]
+    assert len(notes) == 2
+    assert [note.actions for note in notes] == [
+        frozenset({"base_build"}),
+        frozenset({"apply"}),
+    ]
+    assert "skills" in notes[1].reason
+    assert "--settings" in notes[1].reason
+
+
 def test_unattended_upgrade_note_advises_apply():
     from jailbee.upgrade import UPGRADE_NOTES
 

@@ -1,0 +1,51 @@
+"""Claude launcher option arities shared by settings injection and resume."""
+
+VARIADIC_OPTIONS = frozenset(
+    {
+        "--add-dir",
+        "--allowedTools",
+        "--allowed-tools",
+        "--disallowedTools",
+        "--disallowed-tools",
+        "--betas",
+        "--file",
+        "--mcp-config",
+        "--tools",
+    }
+)
+VALUE_OPTIONS = VARIADIC_OPTIONS | frozenset(
+    {
+        "--model",
+        "--autocompact",
+        "--remote-control-session-name-prefix",
+        "--permission-prompts",
+        "--permission-prompt-tool",
+        "--environment",
+        "--system-prompt",
+        "--system-prompt-file",
+        "-n",
+        "--agent",
+        "--agents",
+        "--effort",
+        "--plugin-dir",
+        "--plugin-url",
+        "--fallback-model",
+        "--name",
+        "--debug-file",
+        "--input-format",
+        "--json-schema",
+        "--max-budget-usd",
+        "--output-format",
+        "--setting-sources",
+        "--system-prompt-snapshot",
+        "--permission-mode",
+        "--settings",
+        "--session-id",
+        "-P",
+        "--profile",
+        "-C",
+        "--context",
+        "--append-system-prompt",
+        "--append-system-prompt-file",
+    }
+)

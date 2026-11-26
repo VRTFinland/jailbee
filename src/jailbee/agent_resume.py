@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from jailbee.accounts.adapters.claude import ClaudeAdapter
+from jailbee.claude_options import VALUE_OPTIONS, VARIADIC_OPTIONS
 from jailbee.config.models_agents import AutostartStep
 from jailbee.incus import IncusError
 
@@ -30,45 +31,6 @@ class ResumeEntry:
     window: str | None
 
 
-_VALUE_OPTIONS = {
-    "--model",
-    "--autocompact",
-    "--remote-control-session-name-prefix",
-    "--permission-prompts",
-    "--environment",
-    "--system-prompt",
-    "--system-prompt-file",
-    "-n",
-    "--agent",
-    "--agents",
-    "--effort",
-    "--plugin-dir",
-    "--plugin-url",
-    "--fallback-model",
-    "--name",
-    "--debug-file",
-    "--input-format",
-    "--json-schema",
-    "--max-budget-usd",
-    "--output-format",
-    "--setting-sources",
-    "--system-prompt-snapshot",
-    "--tools",
-    "--allowedTools",
-    "--disallowedTools",
-    "--permission-mode",
-    "--settings",
-    "--mcp-config",
-    "-P",
-    "--profile",
-    "-C",
-    "--context",
-    "--add-dir",
-    "--append-system-prompt",
-    "--append-system-prompt-file",
-    "--allowed-tools",
-    "--disallowed-tools",
-}
 _OPTIONAL_OPTIONS = {
     "--prompt-suggestions",
     "--worktree",
@@ -78,17 +40,7 @@ _OPTIONAL_OPTIONS = {
     "--remote-control",
 }
 _REMOVE_FLAGS = {"-r", "--resume", "-c", "--continue", "--fork-session", "-p", "--print"}
-_VARIADIC_OPTIONS = {
-    "--add-dir",
-    "--allowedTools",
-    "--allowed-tools",
-    "--disallowedTools",
-    "--disallowed-tools",
-    "--betas",
-    "--file",
-    "--mcp-config",
-    "--tools",
-}
+
 
 
 def parse_snapshot(raw: str) -> list[ResumeEntry]:
@@ -193,10 +145,10 @@ def replay_argv(launcher: Sequence[str]) -> list[str]:
                 result.append(args[index])
                 index += 1
             continue
-        if arg in _VALUE_OPTIONS or arg in _VARIADIC_OPTIONS:
+        if arg in VALUE_OPTIONS:
             result.append(arg)
             index += 1
-            if arg in _VARIADIC_OPTIONS:
+            if arg in VARIADIC_OPTIONS:
                 while index < len(args) and not args[index].startswith("-"):
                     result.append(args[index])
                     index += 1

@@ -518,7 +518,9 @@ before editing `## Unreleased`.
   remote organization settings no longer suppress the inbox follower, plugin
   hooks or unattended policy. Autostart, resume and the Claude AI PR preset
   work without a base rebuild; rebuild the base for hand-typed `claude` and
-  `claude-jb`. Explicit settings flags are preserved and the plugin loads once.
+  `claude-jb`. Explicit settings flags are preserved and the plugin loads once;
+  settings belonging to a later shell command do not suppress the fallback.
+  `jb apply` syncs the updated in-container skill guidance separately.
   `jb doctor` and interactive login notices explain remaining IDE and managed-only
   policy limits and the admin-console remedy
   ([#170](https://github.com/VRTFinland/jailbee/issues/170),
