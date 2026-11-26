@@ -40,7 +40,7 @@ def test_incus_wrapper_blocks_bare_binary_even_with_custom_path(monkeypatch, tmp
     binary.write_text(f"#!/bin/sh\nprintf invoked > {marker}\n")
     binary.chmod(0o755)
     monkeypatch.setenv("PATH", str(tmp_path))
-    with pytest.raises(AssertionError, match="unmocked.*incus"):
+    with pytest.raises(AssertionError, match=r"unmocked.*incus"):
         Incus().list_containers()
     assert not marker.exists()
 
