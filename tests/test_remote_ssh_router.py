@@ -629,6 +629,18 @@ def test_litellm_host_actions_are_denied_remotely(command: str) -> None:
         policy_allows(("litellm", command), RemoteCommandPolicy(mode="full"))
 
 
+@pytest.mark.parametrize("restricted", [True, False])
+def test_agent_say_requires_agent_chat_even_with_full_command_policy(restricted: bool) -> None:
+    from jailbee.remote_ssh.router import RemoteUnlocks
+
+    with pytest.raises(RouteError, match="agent_chat is off"):
+        policy_allows(("agent", "say", "box", "hi"), FULL, restrict_host=restricted)
+    assert policy_allows(
+        ("agent", "say", "box", "hi"), FULL, restrict_host=restricted,
+        unlocks=RemoteUnlocks(agent_chat=True),
+    ) == "agent say"
+
+
 def test_mem_is_a_container_command() -> None:
     assert policy_allows(("mem", "box", "8GiB"), FULL) == "mem"
 

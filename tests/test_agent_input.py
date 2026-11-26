@@ -32,6 +32,7 @@ def test_terminal_input_is_preserved(tmp_path, monkeypatch, frame, expected):
         '{"pid":42,"procStart":123,"status":"idle","sessionId":"abc"}'
     )
     monkeypatch.setattr(type(adapter), "session_home", lambda self, cfg, name: home)
+    monkeypatch.setattr("jailbee.agent_input.wired_adapters", lambda cfg: [adapter])
     incus = Mock()
     incus.list_containers.return_value = [{"name": "box", "status": "Running"}]
     incus.exec.side_effect = ["42 10 123\n10 1 22\n", "%1 10\n", frame, "", "", ""]
