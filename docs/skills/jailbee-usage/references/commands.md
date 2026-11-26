@@ -1187,10 +1187,14 @@ Queue rows show questions as "awaiting answer" in the accent colour, not as erro
 Click any badge count or press `Q` to open the queue. Background actions are
 hosted by the shared state service. Entries, live output and dismissal are shared
 by dashboards in the same repo scope; reconnecting includes output so far.
-Entries persist until dismissed. A service restart marks unfinished entries as
-"interrupted", in the failure colour and count. Only the originating dashboard
-opens a critical action's modal automatically. Shared questions and action-aware
-service lifetime are later slices; for now a service-hosted question is cancelled.
+A service restart marks unfinished entries as "interrupted", in the failure
+colour and count. Only the originating dashboard opens a critical action's modal
+automatically. The service publishes pending questions to dashboards in scope;
+the originating dashboard applies the interaction-based deferral rule, while
+other dashboards leave them pending. Answering or aborting from an allowed
+dashboard settles the current question once; a modal answered elsewhere closes
+with a notice. `Later` remains local and does not answer the command. Neither
+questions nor their answers are persisted.
 
 The menu, in order: `Attach tmux`, then `Launch →` with one "Launch
 `<name>`" entry per app the repo's GUI registry declares (browsers, the
