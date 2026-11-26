@@ -194,6 +194,7 @@ def test_assistant_answer_renders_markdown_structures_with_its_model(client: Tes
     answer = of_kind(client, "assistant")[0]
     html = str(answer["html"])
     assert answer["model"] == "claude-opus-5-5"
+    assert answer["text"] == ANSWER
     assert "<h2>Plan</h2>" in html
     assert re.search(r"<ul>\s*<li>first", html)
     assert "<table>" in html and "<td>a</td>" in html

@@ -1,12 +1,10 @@
 <script setup lang="ts">
-import {ref, watch} from "vue"
 import Field from "./ui/Field.vue"
 import IconButton from "./ui/IconButton.vue"
 
 const props = defineProps<{available: boolean, reason?: string, error?: string, sending?: boolean, awaiting?: boolean, status?: string}>()
 const emit = defineEmits<{send: [text: string]}>()
-const text = ref("")
-watch(() => props.status, status => { if (status === "Delivered") text.value = "" })
+const text = defineModel<string>("draft", {default: ""})
 function send() {
     if (props.available && !props.sending && !props.awaiting && text.value.trim()) emit("send", text.value)
 }

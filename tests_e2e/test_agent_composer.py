@@ -75,16 +75,24 @@ def test_composer_delivery_and_refusal(
     field = page.get_by_role("textbox", name="Message agent")
     expect(field).to_be_enabled()
     wait_until(lambda: len(server.watches.open) == 1)
-    message = "**bold**\nsecond line"
+    message = "  **bold**\nsecond line  "
     field.fill(message)
     page.get_by_role("button", name="Send message").click()
     expect(page.get_by_role("status")).to_have_text("Waiting for transcript")
     assert incus.exec_with_input.call_args.args[2] == message
     with transcript.open("a") as stream:
-        stream.write(record(1, "user", message))
+        stream.write(record(1, "user", message.strip()))
     server.watches.open[-1].fire()
     expect(page.get_by_role("status")).to_have_text("Delivered")
     expect(field).to_have_value("")
+
+    # Slash commands may produce only metadata; reloading must release the gate.
+    field.fill("/compact")
+    page.get_by_role("button", name="Send message").click()
+    expect(page.get_by_role("status")).to_have_text("Waiting for transcript")
+    expect(field).to_be_disabled()
+    page.reload()
+    expect(field).to_be_enabled()
     field.fill("Keep me")
 
     def refuse_on_post(route: Route) -> None:

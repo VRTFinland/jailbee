@@ -34,7 +34,8 @@ def test_preferences_have_menu_surface_and_spaced_rows(
     page = logged_in
     page.set_viewport_size({"width": 360, "height": 800})
     page.evaluate(
-        "([theme, profile]) => { localStorage.setItem('jailbee.theme', theme); localStorage.setItem('jailbee.displayProfile', profile) }",
+        "([theme, profile]) => { localStorage.setItem('jailbee.theme', theme); "
+        "localStorage.setItem('jailbee.displayProfile', profile) }",
         [theme, profile],
     )
     page.reload()
@@ -55,7 +56,8 @@ def test_preferences_have_menu_surface_and_spaced_rows(
         assert panel.evaluate("el => getComputedStyle(el).boxShadow") != "none"
     for row in panel.locator(".menu-row:visible").all():
         assert row.evaluate(
-            "el => el.getBoundingClientRect().height >= parseFloat(getComputedStyle(el).getPropertyValue('--md-target-row'))"
+            "el => el.getBoundingClientRect().height >= "
+            "parseFloat(getComputedStyle(el).getPropertyValue('--md-target-row'))"
         )
 
 

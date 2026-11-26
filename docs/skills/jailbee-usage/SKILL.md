@@ -1020,7 +1020,11 @@ only spawned children. Allowed in a restricted remote SSH session.
 Claude session; use `-` as TEXT to read stdin. It refuses dialogs, terminal drafts,
 and unknown prompt layouts. The web transcript reader uses the same send when
 `remote.web.agent_chat: true` (default false); `remote.ssh.agent_chat` separately
-gates the command over SSH. For disabled reasons, delivery status and auditing,
+gates the command over SSH. Controls except newline/tab are stripped; leading
+`/` and `!` invoke Claude command and shell modes as at the terminal. The web
+reader also offers numbered questions in a non-modal answer panel, with
+recommendations, summary-only send and browser-local drafts per source message.
+For disabled reasons, delivery status and auditing,
 see [web messaging](references/commands.md#web-dashboard).
 
 ## Port forwarding — `jailbee port`

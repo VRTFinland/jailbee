@@ -47,6 +47,8 @@ class AssistantText:
     text: str
     model: str | None
     kind: Literal["assistant"] = "assistant"
+    message_id: str | None = None
+    """Original assistant record shared by its text, thinking and tool blocks."""
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -58,6 +60,7 @@ class Thinking:
     text: str
     model: str | None
     kind: Literal["thinking"] = "thinking"
+    message_id: str | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -73,6 +76,7 @@ class ToolCall:
     input: dict[str, object] = field(default_factory=dict)
     model: str | None = None
     kind: Literal["tool_call"] = "tool_call"
+    message_id: str | None = None
 
 
 @dataclass(frozen=True, kw_only=True)

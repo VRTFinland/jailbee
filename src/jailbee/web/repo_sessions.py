@@ -238,6 +238,17 @@ class RepoSessions:
             read.offset,
         )
 
+    def transcript_exists(self, prefix: str, agent: str, session_id: str) -> bool:
+        """Locate a transcript without parsing its contents."""
+        for name, home in self._homes(prefix) or ():
+            if name == agent:
+                try:
+                    if get_source(name).locate(home, session_id) is not None:
+                        return True
+                except KeyError:
+                    return False
+        return False
+
     def transcript_file(
         self, prefix: str, agent: str, session_id: str, subagent_id: str | None = None
     ) -> tuple[TranscriptSource, Path] | None:

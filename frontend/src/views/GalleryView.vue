@@ -4,6 +4,7 @@
 // whole system is judged on one screen. Behind login; linked from no menu.
 // Portalled overlays preserve the sample panel's theme and display profile.
 import {reactive} from "vue"
+import AnswerPanel from "../components/ui/AnswerPanel.vue"
 import Disclosure from "../components/ui/Disclosure.vue"
 import TranscriptEntry from "../components/ui/TranscriptEntry.vue"
 import Button from "../components/ui/Button.vue"
@@ -21,6 +22,7 @@ import {rowStatuses} from "../components/ui/status"
 import {ICON_NAMES} from "../components/ui/material-symbols/paths"
 import iconLicence from "../components/ui/material-symbols/LICENSE?url&no-inline"
 import iconNotice from "../components/ui/material-symbols/NOTICE.md?url&no-inline"
+const sampleQuestions = {questions: [{number: 1, title: "Choose an approach", body: "Which approach should we take?", options: [{letter: "a", text: "Keep the current approach"}, {letter: "b", text: "Try a new approach"}], recommendation: "a", start: 0, end: 1}]}
 const THEMES = [
     {id: "light", label: "Light"},
     {id: "dark", label: "Dark"},
@@ -270,6 +272,19 @@ function typeStyle(token: string): Record<string, string> {
                                 <template #trigger><Button>Container actions</Button></template>
                             </Menu>
                         </div>
+                    </div>
+
+                    <div class="group">
+                        <h3 class="group-title">Answer bar</h3>
+                        <AnswerPanel :set="sampleQuestions" :available="true" />
+                    </div>
+                    <div class="group">
+                        <h3 class="group-title">Answer half</h3>
+                        <AnswerPanel :set="sampleQuestions" :available="true" initial-height="half" />
+                    </div>
+                    <div class="group">
+                        <h3 class="group-title">Answer full</h3>
+                        <AnswerPanel :set="sampleQuestions" :available="false" reason="Messaging is unavailable." initial-height="full" />
                     </div>
 
                     <div class="group">

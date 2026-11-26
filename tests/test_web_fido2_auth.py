@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from datetime import timedelta
 from typing import Any
+from urllib.parse import urlsplit
 
 import pytest
 
@@ -66,6 +67,11 @@ def proxied(origin: str = ORIGIN) -> dict[str, str]:
     return {"Origin": origin, "Host": PROXY_HOST}
 
 
+def public_host(origin: str = ORIGIN) -> dict[str, str]:
+    """The dashboard proxy forwards the browser-facing Host unchanged."""
+    return {"Origin": origin, "Host": urlsplit(origin).netloc}
+
+
 def register(
     setup_client: TestClient,
     setup_pin: PinHolder,
@@ -104,7 +110,7 @@ def login(
     device: str = "laptop",
     **get_kwargs: Any,
 ) -> Any:
-    begin = client.post("/api/auth/fido2/begin", headers=headers or proxied())
+    begin = client.post("/api/auth/fido2/begin", headers=headers or public_host())
     assert begin.status_code == 200, begin.text
     body = begin.json()
     return client.post(
@@ -115,7 +121,7 @@ def login(
             "credential": key.get(body["options"], **get_kwargs),
             "device_name": device,
         },
-        headers=headers or proxied(),
+        headers=headers or public_host(),
     )
 
 
@@ -163,7 +169,7 @@ def test_a_key_registered_for_one_domain_is_not_offered_at_another(
 ) -> None:
     register(setup_client, setup_pin, SoftAuthenticator(ORIGIN))
 
-    begin = client.post("/api/auth/fido2/begin", headers=proxied("https://other.example.org"))
+    begin = client.post("/api/auth/fido2/begin", headers=public_host("https://other.example.org"))
 
     assert begin.status_code == 404
 
@@ -200,7 +206,7 @@ def test_a_challenge_completes_only_once(
 ) -> None:
     key = SoftAuthenticator(ORIGIN)
     register(setup_client, setup_pin, key)
-    begin = client.post("/api/auth/fido2/begin", headers=proxied()).json()
+    begin = client.post("/api/auth/fido2/begin", headers=public_host()).json()
     body = {
         "method": "fido2",
         "challenge_id": begin["challenge_id"],
@@ -209,8 +215,8 @@ def test_a_challenge_completes_only_once(
         "device_name": "laptop",
     }
 
-    first = client.post("/api/auth", json=body, headers=proxied())
-    replay = client.post("/api/auth", json=body, headers=proxied())
+    first = client.post("/api/auth", json=body, headers=public_host())
+    replay = client.post("/api/auth", json=body, headers=public_host())
 
     assert (first.status_code, replay.status_code) == (200, 401)
 
@@ -237,7 +243,7 @@ def test_auth_methods_advertises_fido2_once_a_key_exists(
 
 
 def test_the_normal_server_cannot_register_keys(client: TestClient) -> None:
-    begin = client.post("/api/setup/fido2/begin", json={"pin": "100000"}, headers=proxied())
+    begin = client.post("/api/setup/fido2/begin", json={"pin": "100000"}, headers=public_host())
 
     assert begin.status_code == 404
 
@@ -302,7 +308,9 @@ def test_pin_guessing_does_not_lock_out_a_security_key(
     register(setup_client, setup_pin, key)
     for _ in range(6):
         last = client.post(
-            "/api/auth", json={"method": "pin", "pin": "x", "device_name": "x"}, headers=proxied()
+            "/api/auth",
+            json={"method": "pin", "pin": "x", "device_name": "x"},
+            headers=public_host(),
         )
     assert last.status_code == 429
 

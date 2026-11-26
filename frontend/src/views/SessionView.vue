@@ -1,5 +1,8 @@
 <script setup lang="ts">
 import Button from "../components/ui/Button.vue"
+import AnswerPanel from "../components/ui/AnswerPanel.vue"
+import Select from "../components/ui/Select.vue"
+import {useAnswerSets} from "../composables/useAnswerSets"
 import AgentComposer from "../components/AgentComposer.vue"
 import TranscriptEntry from "../components/ui/TranscriptEntry.vue"
 import TitleBar from "../components/TitleBar.vue"
@@ -12,7 +15,10 @@ import PageNav from "../components/PageNav.vue"
 import JumpPanel from "../components/JumpPanel.vue"
 import ToolCall from "../components/ToolCall.vue"
 import {readableBottom} from "../composables/readableBottom"
+import {questionBlocks} from "../composables/questionBlocks"
+import {answerMessages} from "../composables/answerSources"
 import {usePager} from "../composables/usePager"
+import {useAgentChat} from "../composables/useAgentChat"
 import {useDashboard} from "../dashboard"
 import type {
     EntryContent,
@@ -33,9 +39,17 @@ const transcriptEl = ref<HTMLElement | null>(null)
 const composerEl = ref<InstanceType<typeof AgentComposer> | null>(null)
 const composerHeight = ref(0)
 const navHeight = ref(0)
+const panelBottom = ref(0)
+const panelHeight = ref(0)
 function measureComposer() {
-    composerHeight.value = composerEl.value?.$el?.getBoundingClientRect().height ?? 0
-    navHeight.value = document.querySelector(".page-nav")?.getBoundingClientRect().height ?? 0
+    const composer = composerEl.value?.$el?.getBoundingClientRect() as DOMRect | undefined
+    const nav = document.querySelector(".page-nav")?.getBoundingClientRect()
+    composerHeight.value = composer?.height ?? 0
+    navHeight.value = nav?.height ?? 0
+    panelHeight.value = panelEl.value?.$el?.getBoundingClientRect().height ?? 0
+    // Reserve both input surfaces and all PageNav variants, including the
+    // compact bar's enlarged hit targets above its drawn edge.
+    panelBottom.value = window.innerHeight - Math.min(composer?.top ?? window.innerHeight, nav?.top ?? window.innerHeight)
 }
 const pager = usePager(
     () => readableTop.value,
@@ -81,40 +95,16 @@ const sessionRef = computed(() => ({
 }))
 
 const transcript = ref<TranscriptView | null>(null)
+const answerSessionKey = computed(() => JSON.stringify([prefix.value, agent.value, sessionId.value, agentId.value]))
+const loadedAnswerSession = ref("")
 const error = ref<string | null>(null)
-const sending = ref(false)
-const sendError = ref("")
-const sendStatus = ref("")
-let awaitingText: string | null = null
-let matched = false
-function matchesMessage(entries: RenderedEntry[], text: string): boolean {
-    const normalize = (value: string) => value.replace(/\r\n/g, "\n")
-    return entries.some(entry => entry.kind === "user" && !entry.meta &&
-        entry.text !== undefined && normalize(entry.text) === normalize(text))
-}
-async function sendMessage(text: string) {
-    if (sending.value || awaitingText !== null || !transcript.value?.chat?.available || agentId.value !== null) return
-    sending.value = true
-    sendError.value = ""
-    sendStatus.value = ""
-    awaitingText = text
-    matched = false
-    try {
-        const result = await apiFetch<MessageOutcome>(`/api/repos/${transcriptPath.value}/messages`, {
-            method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({text}),
-        })
-        if (result.code !== "delivered") {
-            awaitingText = null
-            sendError.value = result.message
-        } else if (matched) {
-            awaitingText = null
-            sendStatus.value = "Delivered"
-        } else sendStatus.value = "Waiting for transcript"
-    } catch {
-        awaitingText = null
-        sendError.value = "The message could not be sent."
-    } finally { sending.value = false }
-}
+const chat = useAgentChat(
+    () => !!transcript.value?.chat?.available && agentId.value === null,
+    text => apiFetch<MessageOutcome>(`/api/repos/${transcriptPath.value}/messages`, {
+        method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({text}),
+    }),
+)
+const {draft, sending, awaiting, error: sendError, status: sendStatus, send: sendMessage} = chat
 const thinking = computed(() => settings.showThinking)
 const parentTitle = ref("Parent session")
 const sessionContainer = ref<string | null>(null)
@@ -164,6 +154,59 @@ const latestAnswer = computed(() => {
     }
     return null
 })
+
+const answerSources = computed(() => agentId.value !== null || loadedAnswerSession.value !== answerSessionKey.value ? [] :
+    answerMessages([...transcript.value?.entries ?? [], ...pending.value]))
+const answerSets = useAnswerSets(
+    () => ({prefix: prefix.value, agent: agent.value, session: sessionId.value}),
+    () => answerSources.value,
+)
+const {selected: answerSource, hasNewer: newerAnswerMessage} = answerSets
+const answerSet = computed(() => agentId.value === null && loadedAnswerSession.value === answerSessionKey.value ? answerSource.value?.set ?? null : null)
+const answerSetOptions = computed(() => answerSets.sets.value.map(item => ({
+    value: item.id,
+    label: `${item.set.questions.map(question => `Q${question.number}`).join(", ")}${item.id === answerSources.value.at(-1)?.id ? ' · Latest' : ''}`,
+})))
+async function selectAnswerSet(id: string) {
+    // Choosing a set is an explicit request to reveal its source, even when
+    // e-ink has deferred the new transcript entries.
+    if (pending.value.some(entry => (entry.message_id ?? entry.id) === id)) await applyPending()
+    answerSets.select(id)
+}
+async function sendAnswers(text: string) {
+    const id = answerSource.value?.id
+    const sourceSession = answerSessionKey.value
+    if (id && await sendMessage(text) && sourceSession === answerSessionKey.value) answerSets.dismiss(id)
+}
+const panelEl = ref<InstanceType<typeof AnswerPanel> | null>(null)
+let highlighted: HTMLElement[] = []
+function clearQuestionHighlight() {
+    highlighted.forEach(el => el.classList.remove("question-highlight"))
+    highlighted = []
+}
+async function showQuestion(index: number) {
+    const source = answerSource.value
+    if (source && pending.value.some(entry => (entry.message_id ?? entry.id) === source.id)) await applyPending()
+    const set = answerSet.value
+    const question = set?.questions[index]
+    if (!source || !question || !set) return
+    const message = answerSources.value.find(message => message.id === source.id)
+    clearQuestionHighlight()
+    const documents = (message?.entries ?? []).flatMap(id => {
+        const prose = document.getElementById(entryDomId(id))?.querySelector(".prose")
+        return prose ? [prose] : []
+    })
+    highlighted = questionBlocks(documents, set, index)
+    const target = highlighted[0]
+    if (!target) return
+    highlighted.forEach(el => el.classList.add("question-highlight"))
+    following.value = false
+    await nextTick()
+    scrollProgrammatically(() => {
+        if (eink.value) pager.goToElement(target)
+        else window.scrollTo(0, target.getBoundingClientRect().top + window.scrollY - readableTop.value)
+    })
+}
 
 const atTranscriptEnd = ref(false)
 const following = ref(false)
@@ -267,6 +310,15 @@ function markScrollKey(event: KeyboardEvent) {
     if (["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key)) markScrollIntent()
 }
 
+watch(answerSet, () => {
+    clearQuestionHighlight()
+    void nextTick(() => {
+        if (panelEl.value?.$el) layoutObserver?.observe(panelEl.value.$el as Element)
+        measureComposer()
+        pager.measure()
+        measureVisibility()
+    })
+})
 watch(shown, () => void nextTick(measureVisibility))
 watch([eink, () => settings.pageControls], () => void nextTick(() => {
     const nav = document.querySelector(".page-nav")
@@ -382,12 +434,9 @@ function startFollowing(view: TranscriptView) {
         },
         view.offset,
         settings.agentContext,
-        {onAppend: (entries, chat) => {
-            if (transcript.value === activeTranscript && transcript.value && chat) transcript.value.chat = chat
-            if (awaitingText !== null && matchesMessage(entries, awaitingText)) {
-                matched = true
-                if (!sending.value) { awaitingText = null; sendStatus.value = "Delivered" }
-            }
+        {onAppend: (entries, availability) => {
+            if (transcript.value === activeTranscript && transcript.value && availability) transcript.value.chat = availability
+            if (transcript.value === activeTranscript) chat.observe(entries)
             appendQueue = appendQueue.then(async () => {
                 if (!unmounted && transcript.value === activeTranscript) await onLiveAppend(entries)
             })
@@ -397,6 +446,7 @@ function startFollowing(view: TranscriptView) {
 
 onBeforeUnmount(() => {
     unmounted = true
+    chat.reset()
     unfollow?.()
     unfollow = null
 })
@@ -473,12 +523,14 @@ async function expandMeta(id: string, event: Event) {
 }
 
 async function load() {
+    chat.reset()
+    const sourceSession = answerSessionKey.value
     try {
         const mode = settings.agentContext
         const view = await apiFetch<TranscriptView>(
             `/api/repos/${transcriptPath.value}?meta=${mode}`,
         )
-        if (mode !== settings.agentContext) return // the setting changed meanwhile: a newer load runs
+        if (mode !== settings.agentContext || sourceSession !== answerSessionKey.value) return // superseded load
         unfollow?.()
         unfollow = null
         loadedContent.value = {}
@@ -486,6 +538,7 @@ async function load() {
         pending.value = []
         unseen.value = null
         transcript.value = view
+        loadedAnswerSession.value = sourceSession
         startFollowing(view)
         await nextTick()
         if (composerEl.value?.$el) layoutObserver?.observe(composerEl.value.$el as Element)
@@ -532,6 +585,10 @@ onMounted(() => {
         sessionContainer.value = parent.container ?? null
     }).catch(() => {})
 })
+watch(() => dashboard?.state.connected, (connected, previous) => {
+    if (connected !== previous) chat.reset()
+})
+watch([prefix, agent, sessionId, agentId], () => { chat.reset(); void load() })
 // Changing Agent context re-reads the transcript and resubscribes with the new mode.
 watch(
     () => settings.agentContext,
@@ -545,7 +602,7 @@ watch(
 </script>
 
 <template>
-    <div :style="{'--session-readable-top': `${readableTop}px`, '--composer-height': `${composerHeight}px`, '--composer-nav-height': `${navHeight}px`}">
+    <div :class="{'has-answer-panel': !!answerSet}" :style="{'--session-readable-top': `${readableTop}px`, '--composer-height': `${composerHeight}px`, '--composer-nav-height': `${navHeight}px`, '--answer-panel-bottom': `${panelBottom}px`, '--answer-panel-height': `${panelHeight}px`}">
         <TitleBar @readable-top="readableTop = $event" :title="title" :crumbs="crumbs" context="session" :session="transcript ? {agent: transcript.agent, models: transcript.models, id: transcript.session_id} : null" />
         <div class="page">
             <p v-if="dashboard && !dashboard.state.connected" class="notice ui-notice">Connecting…</p>
@@ -628,11 +685,23 @@ watch(
                         </TranscriptEntry>
                     </template>
                 </article>
-                <AgentComposer v-if="agentId === null" ref="composerEl" class="agent-composer"
+                <AnswerPanel v-if="answerSet && answerSource" :key="answerSource.id" ref="panelEl" class="answer-panel-layout"
+                    :set="answerSet" :answers="answerSource.answers" :available="transcript.chat?.available ?? false" :busy="sending || awaiting"
+                    :reason="transcript.chat?.message || 'Messaging is unavailable.'" :error="sendError" :status="sendStatus"
+                    @update:answers="answerSets.updateAnswers" @send="sendAnswers" @show="showQuestion">
+                    <template #sets>
+                        <p v-if="newerAnswerMessage" role="status" class="ui-notice">A newer message arrived. These answers still belong to their original questions.</p>
+                        <Select v-if="answerSetOptions.length > 1" label="Question set" native :model-value="answerSource.id" :options="answerSetOptions" :disabled="sending || awaiting" @update:model-value="selectAnswerSet" />
+                    </template>
+                    <template #draft-actions>
+                        <Button variant="text" :disabled="sending || awaiting" @click="answerSets.dismiss(answerSource.id)">Discard answers</Button>
+                    </template>
+                </AnswerPanel>
+                <AgentComposer v-if="agentId === null" v-model:draft="draft" ref="composerEl" class="agent-composer"
                     :class="{'beside-nav': eink && settings.pageControls !== 'bar'}"
                     :available="transcript.chat?.available ?? false"
                     :reason="transcript.chat?.message || 'Messaging is unavailable.'"
-                    :sending="sending" :awaiting="sendStatus === 'Waiting for transcript'" :error="sendError" :status="sendStatus" @send="sendMessage" />
+                    :sending="sending" :awaiting="awaiting" :error="sendError" :status="sendStatus" @send="sendMessage" />
                 <Button
                     v-if="jumpLabel"
                     :variant="pending.length > 0 || unseen !== null ? 'tonal' : 'primary'"
@@ -661,6 +730,34 @@ watch(
     content: "";
     display: block;
     height: max(calc(var(--md-target-min) + var(--md-space-32)), calc(100dvh - var(--session-readable-top)));
+}
+.answer-panel-layout {
+    position: fixed;
+    left: var(--md-space-16);
+    right: var(--md-space-16);
+    bottom: calc(var(--answer-panel-bottom) + var(--md-space-8));
+    max-height: calc(100dvh - var(--session-readable-top) - var(--answer-panel-bottom) - var(--md-space-8) - var(--md-layout-reader-min));
+    z-index: var(--md-layer-sticky);
+}
+[data-profile="eink"] .answer-panel-layout {
+    left: max(var(--md-layout-page-tap-zone), var(--md-space-16));
+    right: max(var(--md-layout-page-tap-zone), var(--md-space-16));
+}
+@media (min-width: 900px) {
+    .has-answer-panel .page {
+        max-width: calc(var(--md-layout-content-max) + var(--md-space-32));
+        margin-inline: auto calc(var(--md-layout-answer-column) + var(--md-space-32));
+    }
+    .answer-panel-layout {
+        left: auto;
+        right: var(--md-space-16);
+        width: var(--md-layout-answer-column);
+        top: var(--session-readable-top);
+        bottom: auto;
+        max-height: calc(100dvh - var(--session-readable-top) - var(--answer-panel-bottom) - var(--md-space-8));
+    }
+    [data-profile="eink"] .answer-panel-layout { left: auto; right: var(--md-space-16); }
+    .has-answer-panel .agent-composer { right: calc(var(--md-layout-answer-column) + var(--md-space-32)); }
 }
 .agent-composer {
     position: fixed;
@@ -810,5 +907,15 @@ watch(
 [data-profile="eink"] .beside-nav ~ .jump-latest {
     right: calc(var(--page-controls-width) + var(--md-space-16));
     bottom: calc(var(--guard-bottom) + var(--composer-height) + var(--md-space-16));
+}
+.has-answer-panel .jump-latest {
+    bottom: calc(var(--answer-panel-bottom) + var(--answer-panel-height) + var(--md-space-16));
+}
+@media (min-width: 900px) {
+    .has-answer-panel .jump-latest {
+        right: calc(var(--md-layout-answer-column) + var(--md-space-32));
+        bottom: calc(var(--guard-bottom) + var(--composer-nav-height) + var(--composer-height) + var(--md-space-32));
+        max-width: calc(100vw - var(--md-layout-answer-column) - var(--md-space-32));
+    }
 }
 </style>

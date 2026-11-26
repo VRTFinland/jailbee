@@ -14,6 +14,7 @@ external sprite or runtime request to Google is used.
 
 | Dashboard name | Material Symbol |
 | --- | --- |
+| question | question_mark |
 | menu | more_vert |
 | back | chevron_left |
 | forward | chevron_right |

@@ -332,10 +332,7 @@ def test_web_chat_delivers_and_audits_exact_message(home, tmp_path, monkeypatch,
         "42 10 123 S 42 42 5\n10 1 22 S 10 42 5\n",
         "%1 10 1\n",
         "────────\n> \n────────\n",
-        "",
-        "",
-        "",
-    ]
+    ] * 2 + ["", "", ""]
     if refusal == "container_not_running":
         incus.list_containers.return_value = []
     elif refusal == "no_live_session":
@@ -395,6 +392,28 @@ def test_web_chat_delivers_and_audits_exact_message(home, tmp_path, monkeypatch,
         ]
         assert event.device_name == "reader"
         assert json.loads(event.source)["text"] == text
+
+
+def test_message_post_hides_excluded_repo(home):
+    for client in open_client(home):
+        response = client.post(
+            f"/api/repos/secret/sessions/claude/{SESSION_A}/messages", json={"text": "hello"}
+        )
+        assert response.status_code == 404
+
+
+def test_message_post_requires_authentication(home):
+    deps = WebDeps(
+        snapshot_source=FakeSourceFactory(),
+        engine=get_engine(),
+        pin=PinHolder(generate=pin_sequence()),
+        agent_homes={"alpha": [("claude", home)]}.get,
+    )
+    with TestClient(create_app(deps)) as client:
+        response = client.post(
+            f"/api/repos/alpha/sessions/claude/{SESSION_A}/messages", json={"text": "hello"}
+        )
+        assert response.status_code == 401
 
 
 def test_bad_repo_config_disables_chat_without_breaking_transcript(home, monkeypatch):

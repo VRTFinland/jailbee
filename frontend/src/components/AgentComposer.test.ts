@@ -11,15 +11,16 @@ describe("agent composer", () => {
         await w.setProps({sending: true})
         expect(w.get('[aria-label="Send message"]').attributes("disabled")).toBeDefined()
     })
-    it("locks the draft until the transcript confirms delivery", async () => {
-        const w = mount(AgentComposer, {props: {available: true}})
-        await w.get("textarea").setValue("first draft")
+    it("locks the draft while waiting and exposes it to the parent", async () => {
+        const w = mount(AgentComposer, {props: {available: true, draft: "first draft"}})
+        await w.get("textarea").setValue("changed draft")
         await w.setProps({awaiting: true, status: "Waiting for transcript"})
         expect(w.get("textarea").attributes("disabled")).toBeDefined()
         expect(w.get('[aria-label="Send message"]').attributes("disabled")).toBeDefined()
         await w.get('[aria-label="Send message"]').trigger("click")
         expect(w.emitted("send")).toBeUndefined()
-        await w.setProps({awaiting: false, status: "Delivered"})
+        expect(w.emitted("update:draft")?.[0]).toEqual(["changed draft"])
+        await w.setProps({awaiting: false, draft: "", status: "Delivered"})
         expect((w.get("textarea").element as HTMLTextAreaElement).value).toBe("")
     })
     it("retains text on refusal and explains unavailable chat", async () => {
