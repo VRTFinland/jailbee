@@ -3,6 +3,8 @@
 import asyncio
 from threading import Event
 
+import pytest
+
 from jailbee.dashboard import runner as drunner
 from jailbee.dashboard.model import RepoGroup
 from jailbee.dashboard.tui import prompt_modals as pm
@@ -154,13 +156,42 @@ def test_question_arriving_during_blocking_handoff_opens_queue_not_modal(mocker,
     asyncio.run(scenario())
 
 
-def test_routing_inputs_are_independent():
+@pytest.mark.parametrize(
+    ("changes", "expected"),
+    [
+        ({}, True),
+        ({"dispatch_interaction": None}, False),
+        ({"dispatch_interaction": 6}, False),
+        ({"interaction": 8}, False),
+        ({"dispatch_interaction": 6, "answer_interaction": 7}, True),
+        ({"dispatch_interaction": None, "answer_interaction": 6}, False),
+        ({"overlay": "queue"}, True),
+        ({"overlay": "other"}, False),
+        ({"on_top": False}, False),
+        ({"suspended": True}, False),
+        ({"critical": True, "foreground": True, "dispatch_interaction": None}, True),
+        ({"critical": True, "foreground": True, "overlay": "other"}, True),
+        ({"critical": True, "foreground": True, "on_top": False}, False),
+        ({"critical": True, "foreground": True, "suspended": True}, False),
+        ({"critical": False, "foreground": True}, False),
+        ({"critical": True, "foreground": False, "dispatch_interaction": None}, False),
+        ({"interaction": 0, "dispatch_interaction": 0}, True),
+    ],
+)
+def test_routing_uses_visibility_suspension_and_interaction_epochs(changes, expected):
     from jailbee.dashboard.notifications import should_show_question
 
-    assert not should_show_question(critical_foreground=False)
-    assert should_show_question(critical_foreground=True)
-    assert should_show_question(critical_foreground=False, since_dispatch=True)
-    assert should_show_question(critical_foreground=False, since_answer=True)
+    inputs = dict(
+        critical=False,
+        foreground=False,
+        on_top=True,
+        overlay="none",
+        dispatch_interaction=7,
+        answer_interaction=None,
+        interaction=7,
+        suspended=False,
+    )
+    assert should_show_question(**(inputs | changes)) is expected
 
 
 def test_click_on_dashboard_disarms_action(mocker, tmp_path):

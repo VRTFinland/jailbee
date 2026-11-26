@@ -1041,20 +1041,20 @@ class DashboardSession:
             return False
         self.queue.set_question(entry_id, prompt)
         self.queue_changed()
-        available = on_top and (
-            self.overlay is None
-            or (isinstance(self.overlay, Picker) and self.overlay.purpose == "queue")
-        )
         show = should_show_question(
-            critical_foreground=on_top and self.question_in_foreground(entry_id),
-            since_dispatch=available
-            and not entry.foreground
-            and self._action_interactions.get(entry_id) == self._interaction,
-            since_answer=available
-            and not entry.foreground
-            and self._answer_interactions.get(entry_id) == self._interaction,
+            critical=entry.critical,
+            foreground=entry.foreground,
+            on_top=on_top,
+            overlay="none"
+            if self.overlay is None
+            else "queue"
+            if isinstance(self.overlay, Picker) and self.overlay.purpose == "queue"
+            else "other",
+            dispatch_interaction=self._action_interactions.get(entry_id),
+            answer_interaction=self._answer_interactions.get(entry_id),
+            interaction=self._interaction,
+            suspended=self._handed_off,
         )
-        show = not self._handed_off and show
 
         if not show:
             self.set_notice(f"'{entry.command}' awaiting answer · {queue_key}: queue")

@@ -401,7 +401,8 @@ class DashboardApp(App[int], inherit_bindings=False):
                 prompt,
                 on_top=not handed_off
                 and (
-                    self.screen is self._critical_screen
+                    self.session.question_in_foreground(entry.id)
+                    and self.screen is self._critical_screen
                     if entry.foreground
                     else not self.modal_open
                 ),

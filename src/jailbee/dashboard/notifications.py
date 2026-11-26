@@ -45,10 +45,29 @@ def is_critical(argv: Sequence[str]) -> bool:
 
 
 def should_show_question(
-    *, critical_foreground: bool, since_dispatch: bool = False, since_answer: bool = False
+    *,
+    critical: bool,
+    foreground: bool,
+    on_top: bool,
+    overlay: Literal["none", "queue", "other"],
+    dispatch_interaction: int | None,
+    answer_interaction: int | None,
+    interaction: int,
+    suspended: bool,
 ) -> bool:
-    """Whether the user is with the action asking a prompt-channel question."""
-    return critical_foreground or since_dispatch or since_answer
+    """Whether a question may open now, without changing its queue or UI state.
+
+    ``on_top`` reports whether this action's question surface is unobstructed
+    (the owning critical output screen, or the dashboard for ordinary actions).
+    Dispatch and the last answer keep attention only until the next input.
+    """
+    if suspended or not on_top:
+        return False
+    if critical and foreground:
+        return True
+    if foreground or overlay == "other":
+        return False
+    return dispatch_interaction == interaction or answer_interaction == interaction
 
 
 @dataclass(frozen=True)
