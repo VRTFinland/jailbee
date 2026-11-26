@@ -74,6 +74,10 @@ mounts, orchestration, network and files applies to both transports, with the
 transport's own block supplying the values (refusals name it, for example
 `remote.web.network`).
 
+Agent chat is separately opt-in with `remote.web.agent_chat: true` (or
+`remote.ssh.agent_chat: true` for remote SSH commands). Web chat sends text to
+a live agent and records the message and device name in the web audit log.
+
 `remote.web` defaults to the most restrictive policy: `commands.mode:
 disabled`, no mounts, orchestration `off`, `network`, `files` and `rdp` off.
 `restrict_host` is always on for it and `false` is a config error. A web
