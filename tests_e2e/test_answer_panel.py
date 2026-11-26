@@ -186,7 +186,9 @@ def test_answers_share_composer_send_gate_and_confirm_in_transcript(
     composer = page.get_by_role("textbox", name="Message agent")
     composer.fill("Keep my free-text draft")
     panel.get_by_role("button", name="Send answers").click()
-    expect(page.locator(".agent-composer").get_by_role("status")).to_have_text("Waiting for transcript")
+    expect(page.locator(".agent-composer").get_by_role("status")).to_have_text(
+        "Waiting for transcript"
+    )
     expect(composer).to_be_disabled()
     expect(panel).to_have_count(0)
     assert incus.exec_with_input.call_count == 1
@@ -332,7 +334,9 @@ def test_drafts_restore_switch_newer_sets_and_send_old_source(
     panel.get_by_role("button", name="Summary", exact=True).click()
     expect(panel.locator("pre")).to_contain_text("Q1: Old owner")
     panel.get_by_role("button", name="Send answers").click()
-    expect(page.locator(".agent-composer").get_by_role("status")).to_have_text("Waiting for transcript")
+    expect(page.locator(".agent-composer").get_by_role("status")).to_have_text(
+        "Waiting for transcript"
+    )
     assert incus.exec_with_input.call_args.args[2] == "Q12: b – original draft\nQ1: Old owner"  # noqa: RUF001 - Spec separator.
     panel.get_by_role("button", name="Expand answers", exact=True).click()
     expect(panel.get_by_role("heading", name="Q20: New owner")).to_be_visible()
