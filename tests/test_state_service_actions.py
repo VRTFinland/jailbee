@@ -326,7 +326,9 @@ def test_allowed_ssh_action_ignores_service_environment(runtime_dir, tmp_path, m
         client.close()
 
 
-def test_global_restricted_remote_sees_orphan_question_read_only(runtime_dir, tmp_path, monkeypatch):
+def test_global_restricted_remote_sees_orphan_question_read_only(
+    runtime_dir, tmp_path, monkeypatch
+):
     from jailbee import global_config
     from jailbee.config.models_remote import RemoteCommandPolicy
     from jailbee.prompt_channel import CommandEnd, Prompt
@@ -341,33 +343,57 @@ def test_global_restricted_remote_sees_orphan_question_read_only(runtime_dir, tm
 
     class Child:
         stdout = None
+
         def __init__(self, sock):
             def ask():
                 channel = CommandEnd(sock)
                 answers.append(channel.ask(lambda n: Prompt(n, "confirm", "Proceed?")))
                 channel.close()
+
             self.thread = threading.Thread(target=ask, daemon=True)
             self.thread.start()
+
         def wait(self):
             self.thread.join(5)
             return 0
+
         def kill(self):
             pass
 
     paths.ensure_runtime_dir()
-    server = StateServer(FakeGatherer(), version="v1", action_spawn=lambda *a, **kw: Child(kw["prompt_sock"]))
-    thread = threading.Thread(target=lambda: asyncio.run(server.serve(paths.socket_path())), daemon=True)
+    server = StateServer(
+        FakeGatherer(), version="v1", action_spawn=lambda *a, **kw: Child(kw["prompt_sock"])
+    )
+    thread = threading.Thread(
+        target=lambda: asyncio.run(server.serve(paths.socket_path())), daemon=True
+    )
     thread.start()
     track_server(server, thread)
     _until(paths.socket_path().exists)
-    local = StateClient(None, dashboard_id="local", transport="none", version="v1", spawn=lambda: None)
-    remote = StateClient(None, dashboard_id="remote", transport="ssh", version="v1", spawn=lambda: None)
+    local = StateClient(
+        None, dashboard_id="local", transport="none", version="v1", spawn=lambda: None
+    )
+    remote = StateClient(
+        None, dashboard_id="remote", transport="ssh", version="v1", spawn=lambda: None
+    )
     local.start()
     remote.start()
     try:
         local.wait_first_snapshot(3)
         remote.wait_first_snapshot(3)
-        local.run_action(RunAction(118, ["orphan", "destroy", "x"], str(tmp_path), "x", False, "local", "none", str(tmp_path), ""))
+        local.run_action(
+            RunAction(
+                118,
+                ["orphan", "destroy", "x"],
+                str(tmp_path),
+                "x",
+                False,
+                "local",
+                "none",
+                str(tmp_path),
+                "",
+            )
+        )
         _until(lambda: 118 in remote.action_questions())
         question = remote.action_questions()[118]
         assert not question.can_answer
