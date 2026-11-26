@@ -750,7 +750,12 @@ action runner (see [Architecture](architecture.md#prompt-channel-and-action-runn
 and keeps drawing while it runs; the status line names the running command.
 
 - **Questions are dashboard modals.** Every question the command would ask
-  at a terminal arrives over the prompt channel and is shown as a modal:
+  at a terminal arrives over the prompt channel. A background action's question
+  waits in Notifications (`Q`): a short, silent notice names the command.
+  Select its awaiting entry with Enter or a click to answer; the command keeps
+  waiting until then, and several commands can wait independently. A critical
+  action whose output modal is in the foreground still asks immediately.
+  The question uses the same modal in either case:
   a compact "No" / "Yes" list for a confirmation, a list for a single choice,
   a checkbox list for a multiple choice (Space toggles, Enter confirms; none
   ticked is a valid answer), an input field for text and a masked one for a
@@ -770,7 +775,7 @@ and keeps drawing while it runs; the status line names the running command.
   its exit status, with everything it printed, as it prints it: the list row
   of a running entry shows its last output line, and an expanded entry's
   screen follows the output live. While a question is open the entry is
-  "awaiting answer" (the question itself is still the modal). A routine action pops up no output screen when
+  "awaiting answer", whether queued or displayed. A routine action pops up no output screen when
   it ends: a short notice says it finished (`done`, or `exited N` with the
   last output line), followed by a `Q` hint. Verbs run for their output (`git diff`,
   `job log`, `net egress ls`, `merge`, `pr push`, `git push --pr`, doctor, disk
@@ -783,7 +788,7 @@ and keeps drawing while it runs; the status line names the running command.
   start, restart or destroy runs as a background job and has no entry: its
   job row is what the queue shows, red if it fails.
   Creation first runs detached: if it needs an answer, it retries through the
-  prompt channel and asks in a modal (never with `--yes`). Declining an existing
+  prompt channel and queues its question (never with `--yes`). Declining an existing
   branch shows "Pick a different name" and is not a failure. A create failure
   before its worker starts, including a spawn error, stays as a failed entry
   with its output until dismissed, even though no job row exists yet.

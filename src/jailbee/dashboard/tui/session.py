@@ -430,6 +430,10 @@ class Terminal(Protocol):
         """
         ...
 
+    def show_question(self, entry_id: int) -> None:
+        """Open the pending question of the selected queue entry."""
+        ...
+
     def update_output(self, text: str, failed: bool = False) -> None:
         """Replace the text of the live output screen, if still open; ``failed`` styles it so."""
         ...
@@ -507,6 +511,9 @@ class _EntryProgress:
     def __init__(self, session: DashboardSession, ids: Sequence[int]) -> None:
         self._session = session
         self._ids = ids
+
+    def entry_id(self, index: int) -> int:
+        return self._ids[index]
 
     def output(self, index: int, chunk: str) -> None:
         self._session._entry_output(self._ids[index], chunk)
@@ -1007,6 +1014,11 @@ class DashboardSession:
 
     # -- critical actions: the modal and the hand-off block ---------------------
 
+    def question_in_foreground(self, entry_id: int) -> bool:
+        """Whether this entry owns the critical action modal currently open."""
+        entry = self.queue.get(entry_id)
+        return bool(entry and entry.critical and entry.foreground and self._modal_entry == entry_id)
+
     def _open_next_modal(self) -> None:
         """Open the modal of the oldest critical entry still in the foreground, if none is open."""
         if self._modal_entry is not None:
@@ -1156,6 +1168,10 @@ class DashboardSession:
                 return self.queue_picker()
             if entry.value == "close" or not entry.value.isdigit():
                 return None
+            selected = self.queue.get(int(entry.value))
+            if selected is not None and selected.pending_question is not None:
+                self.terminal.show_question(selected.id)
+                return self.queue_picker(start_index=picker.start_index)
             return self.queue_entry_picker(int(entry.value))
         entry_id = int(picker.carry[0])
         found = self.queue.get(entry_id)

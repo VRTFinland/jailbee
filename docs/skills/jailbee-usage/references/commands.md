@@ -1233,7 +1233,8 @@ Enter: `g` opens Git → on a container or the Agent picker on a repo row.
 F10 / the title's left-edge ☰ opens Global: Stop all…, Resume…,
 Accounts (`A`), Notifications (`Q`), Global config (`E`), Settings (F2), Help, Quit.
 Stop all and Resume run `jailbee stop --all` / `jailbee resume` through the
-action runner, with CLI questions as modals and results in Notifications; no
+action runner, with CLI questions waiting in Notifications (`Q`) until selected
+(Enter or click opens the question modal) and results kept there too; no
 selected repo is needed. Resume uses the state service snapshot: eligible saved
 containers offer it, as do running in-scope containers whose Incus `last_used_at`
 start identity differs from the host's completed/skipped boot record. A matching
@@ -1273,7 +1274,8 @@ positional is omitted, so leaving it implicit would fork off the wrong branch
 — then asks for the autostart profile and runs `jailbee new --background`
 detached without releasing the terminal. If preflight needs an answer (reusing
 an existing branch or widening network access), the shared create runner retries
-the command through the prompt channel and the dashboard asks in a modal. It
+the command through the prompt channel and queues its question in Notifications
+(`Q`); selecting the entry opens its modal. It
 never adds `--yes`. Declining reuse shows the CLI's "Pick a different name"
 hint and is not a failure. A failure before the background worker starts,
 including an inability to spawn the command, stays in Notifications (`Q`) with
@@ -1979,7 +1981,11 @@ leading with any failures and naming their proposals before the deletion count.
 Closing the dashboard box leaves the work running (the delete busy line says so)
 and reports that same summary as a notice.
 PR-creation verification is background work too. Dashboard publications run through
-the prompt channel, locally and over SSH: CLI questions open as modals, declining
+the prompt channel, locally and over SSH: CLI questions wait in Notifications
+until selected, without interrupting another task. A critical action whose output
+modal is in the foreground asks immediately. Several questions can wait independently;
+a short notice names each command and `Q`, without a bell. Esc or Ctrl-C in a
+question modal cancels that command; quitting cancels every pending question. Declining
 or cancelling never reports success, and the full output stays in the notification
 queue while the status notice shows only the outcome. Closing the dashboard box
 with Esc leaves confirmed publications running, including later PR creations in

@@ -1,0 +1,136 @@
+"""Deferred prompt-channel questions through the dashboard's public UI."""
+
+from __future__ import annotations
+
+import asyncio
+from threading import Event
+
+import pytest
+
+from jailbee.dashboard import runner as drunner
+from jailbee.dashboard.tui import prompt_modals as pm
+from jailbee.prompt_channel import Prompt
+from tests.dashboard_fixtures import ci
+from tests.dashboard_pilot import make_app
+from jailbee.dashboard.model import RepoGroup
+
+
+@pytest.mark.parametrize("answer_keys, expected", [(["m", "a", "i", "n", "enter"], "main"), (["escape"], None), (["ctrl+c"], None)])
+def test_background_question_waits_in_queue_until_selected(mocker, tmp_path, answer_keys, expected):
+    asked = Event()
+    answers = []
+
+    def run(argv, *, on_prompt, **kwargs):
+        asked.set()
+        answers.append(on_prompt(Prompt(1, "text", "Branch name?")))
+        return drunner.RunResult(status=0)
+
+    app = make_app(mocker, [RepoGroup("alpha", str(tmp_path), None, [ci("alpha-a", "alpha")])])
+    app.threaded_actions = True
+    app.action_runner = run
+
+    async def scenario():
+        async with app.run_test() as pilot:
+            app.session.run_dashboard_command("alpha-a", "container", ["start", "alpha-a"])
+            async with asyncio.timeout(5):
+                while not asked.is_set() or not any(e.state == "awaiting" for e in app.session.queue):
+                    await pilot.pause(0.01)
+            await pilot.pause()
+            assert len(app.screen_stack) == 1
+            entry = next(iter(app.session.queue))
+            assert entry.pending_question.question == "Branch name?"
+            assert app.session.view().queue.attention == 1
+            assert "jailbee start alpha-a" in app.session.notice
+            assert "Q" in app.session.notice
+            assert answers == []
+            await pilot.press("Q")
+            from tests.dashboard_pilot import Pick, _apply
+            await pilot.pause()
+            await _apply(pilot, app, Pick(0))
+            assert isinstance(app.screen, pm.TextModal)
+            await pilot.press(*answer_keys)
+            async with asyncio.timeout(5):
+                while not answers:
+                    await pilot.pause(0.01)
+            assert answers == [expected]
+            entry = next(iter(app.session.queue))
+            assert entry.state != "awaiting"
+            assert entry.pending_question is None
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("first", [0, 1])
+def test_two_pending_questions_are_answered_independently(mocker, tmp_path, first):
+    answers = {}
+
+    def run(argv, *, on_prompt, **kwargs):
+        answers[argv[0]] = on_prompt(Prompt(1, "text", f"Name for {argv[0]}?"))
+        return drunner.RunResult(status=0)
+
+    app = make_app(mocker, [RepoGroup("alpha", str(tmp_path), None, [ci("alpha-a", "alpha")])])
+    app.threaded_actions = True
+    app.action_runner = run
+
+    async def scenario():
+        async with app.run_test() as pilot:
+            for verb in ["start", "stop"]:
+                app.session.run_dashboard_command("alpha-a", "container", [verb, "alpha-a"])
+            async with asyncio.timeout(5):
+                while sum(e.pending_question is not None for e in app.session.queue) != 2:
+                    await pilot.pause(0.01)
+            assert len(app.screen_stack) == 1
+            for row, verb, value in [(first, ["stop", "start"][first], "one"), (1-first, ["start", "stop"][first], "two")]:
+                await pilot.press("Q") if app.session.overlay is None else None
+                await pilot.press("home", *(["down"] * row), "enter")
+                assert isinstance(app.screen, pm.TextModal)
+                await pilot.press(*value, "enter")
+                async with asyncio.timeout(5):
+                    while verb not in answers:
+                        await pilot.pause(0.01)
+                assert answers[verb] == value
+            assert not any(e.pending_question is not None for e in app.session.queue)
+
+    asyncio.run(scenario())
+
+
+def test_only_the_critical_action_whose_modal_is_foreground_opens_its_question(mocker, tmp_path):
+    answers = {}
+
+    def run(argv, *, on_prompt, **kwargs):
+        answers[argv[0]] = on_prompt(Prompt(1, "text", f"Name for {argv[0]}?"))
+        return drunner.RunResult(status=0)
+
+    app = make_app(mocker, [RepoGroup("alpha", str(tmp_path), None, [ci("alpha-a", "alpha")])])
+    app.threaded_actions = True
+    app.action_runner = run
+
+    async def scenario():
+        async with app.run_test() as pilot:
+            app.session.run_dashboard_command("alpha-a", "container", ["merge", "alpha-a"])
+            async with asyncio.timeout(5):
+                while not isinstance(app.screen, pm.TextModal):
+                    await pilot.pause(0.01)
+            await pilot.press(*"first", "enter")
+            async with asyncio.timeout(5):
+                while "merge" not in answers:
+                    await pilot.pause(0.01)
+            assert isinstance(app.screen, pm.OutputScreen)
+            # A second critical entry is foreground-marked, but its output modal
+            # is queued behind the first action: its question must not interrupt.
+            app.session.run_dashboard_command("alpha-a", "container", ["git", "pull", "alpha-a"])
+            async with asyncio.timeout(5):
+                while not any(e.pending_question is not None for e in app.session.queue):
+                    await pilot.pause(0.01)
+            await pilot.pause()
+            assert isinstance(app.screen, pm.OutputScreen)
+            assert answers == {"merge": "first"}
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("critical_foreground, expected", [(False, False), (True, True)])
+def test_question_routing_has_no_frontend_dependency(critical_foreground, expected):
+    from jailbee.dashboard.notifications import should_show_question
+
+    assert should_show_question(critical_foreground=critical_foreground) is expected

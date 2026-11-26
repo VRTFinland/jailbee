@@ -12,3 +12,4 @@ A dashboard runs an action by starting JailBee's own CLI as a child process. Unt
 
 - A test forbids prompt libraries outside `prompting`. The exceptions are named.
 - The terminal dashboard stops releasing the terminal for non-attach actions. Their output is shown by the dashboard instead.
+- A question belongs to the UI running the command, and that UI decides when to show it. Background questions can wait in the notification queue while the command's prompt handler remains blocked; answering the entry resolves only that command's question. The show-now decision is a pure function in the frontend-agnostic dashboard core.

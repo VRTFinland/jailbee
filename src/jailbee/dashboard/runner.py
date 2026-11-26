@@ -234,6 +234,10 @@ class RunProgress(Protocol):
     prompt handler's thread): a frontend moves them to its own thread.
     """
 
+    def entry_id(self, index: int) -> int:
+        """Queue entry owning the run at ``index`` (for frontend prompt routing)."""
+        ...
+
     def output(self, index: int, chunk: str) -> None: ...
 
     def question(self, index: int, asking: bool) -> None: ...

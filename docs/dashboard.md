@@ -63,8 +63,15 @@ finished one):
 
 ![One failed entry of the queue](images/dashboard/dashboard-queue-entry.png)
 
-Creating a container asks any existing-branch confirmation in a dashboard
-modal; declining shows the "Pick a different name" hint, not a failure. If
+Background commands leave their questions in the queue without interrupting
+what you are doing. A silent notice names the command and `Q`; select its
+"awaiting answer" entry with Enter or a click to open the question modal.
+Several commands can wait independently. A critical action whose output modal
+is in the foreground still asks immediately. Esc or Ctrl-C cancels the question
+and its command; quitting cancels all pending questions.
+
+Creating a container queues any existing-branch confirmation there too;
+declining shows the "Pick a different name" hint, not a failure. If
 creation fails before its background worker starts, the reason stays as a
 failed queue entry until dismissed, even when no container row exists yet.
 
