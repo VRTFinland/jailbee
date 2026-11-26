@@ -9,13 +9,16 @@ withDefaults(defineProps<{
     error?: string
     type?: "text" | "password" | "email" | "search" | "url"
     disabled?: boolean
+    multiline?: boolean
 }>(), {type: "text", help: undefined, error: undefined, disabled: false})
 const value = defineModel<string>({default: ""})
 </script>
 
 <template>
     <FieldFrame :id="id" :label="label" :help="help" :error="error" :class="$attrs.class" v-slot="{controlAttrs}">
-        <input v-model="value" v-bind="controlAttrs($attrs)" :type="type" :disabled="disabled"
+        <textarea v-if="multiline" v-model="value" v-bind="controlAttrs($attrs)" :disabled="disabled"
+            class="ui-input ui-focus-ring" />
+        <input v-else v-model="value" v-bind="controlAttrs($attrs)" :type="type" :disabled="disabled"
             class="ui-input ui-focus-ring" />
     </FieldFrame>
 </template>

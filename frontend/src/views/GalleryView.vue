@@ -233,6 +233,7 @@ function typeStyle(token: string): Record<string, string> {
                             <Field label="Container name" model-value="dev-plan" help="Use a short, descriptive name." />
                             <Field label="Invalid name" error="A name is required." />
                             <Field label="Disabled field" model-value="read-only" disabled />
+                            <Field label="Multiline field" model-value="First line&#10;Second line" multiline />
                             <Select label="Theme" help="Choose a colour theme." v-model="selectedTheme[`${theme.id}-${profile.id}`]" :options="[
                                 {value: 'light', label: 'Light'}, {value: 'dark', label: 'Dark'},
                                 {value: 'system', label: 'System', disabled: true}, {value: 'eink', label: 'E-ink'}]" />
