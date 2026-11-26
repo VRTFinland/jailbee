@@ -57,9 +57,7 @@ def test_title_bar_toggle_restores_focus_to_visible_menu(logged_in: Page) -> Non
     page.get_by_role("switch", name="Show title bar").uncheck()
     page.get_by_role("button", name="Close settings").click()
     expect(page.get_by_role("dialog", name="Settings", exact=True)).to_have_count(0)
-    expect(
-        page.get_by_role("button", name="Quick settings", exact=True)
-    ).to_be_focused()
+    expect(page.get_by_role("button", name="Quick settings", exact=True)).to_be_focused()
     expect(page.locator(".title-bar")).to_have_count(0)
 
 
@@ -109,9 +107,7 @@ def test_settings_preserves_reader_and_live_updates(
     expect(dialog).to_have_count(0)
     assert page.url == url
     assert page.evaluate("window.scrollY") == position
-    expect(
-        page.get_by_role("button", name="Quick settings", exact=True)
-    ).to_be_focused()
+    expect(page.get_by_role("button", name="Quick settings", exact=True)).to_be_focused()
     open_settings_overlay(page)
     page.keyboard.press("Escape")
     expect(dialog).to_have_count(0)

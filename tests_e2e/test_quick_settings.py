@@ -101,7 +101,8 @@ def test_menu_context_paging_and_live_preferences(
     reveal_setting(page, "combobox", "Agent context")
     context = panel.get_by_role("combobox", name="Agent context")
     context.select_option("collapsed")
-    assert context.evaluate("el => Math.abs(el.getBoundingClientRect().width - el.closest('.context-row').getBoundingClientRect().width) <= 1")
+    assert context.evaluate("""el => Math.abs(el.getBoundingClientRect().width
+        - el.closest('.context-row').getBoundingClientRect().width) <= 1""")
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
     assert panel.evaluate("el => el.getBoundingClientRect().bottom <= innerHeight - 32")
     if profile == "eink":
@@ -337,9 +338,7 @@ def test_escape_after_font_stepper_disables_closes_menu(logged_in: Page) -> None
     page.evaluate("document.activeElement.blur()")
     page.keyboard.press("Escape")
     expect(panel).to_have_count(0)
-    expect(
-        page.get_by_role("button", name="Quick settings", exact=True)
-    ).to_be_focused()
+    expect(page.get_by_role("button", name="Quick settings", exact=True)).to_be_focused()
 
 
 def test_escape_on_trigger_closes_open_menu(logged_in: Page) -> None:
@@ -361,9 +360,7 @@ def test_escape_on_closed_select_closes_menu_and_restores_focus(
     panel.get_by_role("combobox", name="Agent context").focus()
     page.keyboard.press("Escape")
     expect(panel).to_have_count(0)
-    expect(
-        page.get_by_role("button", name="Quick settings", exact=True)
-    ).to_be_focused()
+    expect(page.get_by_role("button", name="Quick settings", exact=True)).to_be_focused()
 
 
 def test_menu_follow_opt_out_keeps_live_entries_from_scrolling(
