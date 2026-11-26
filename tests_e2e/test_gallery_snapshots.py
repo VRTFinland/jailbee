@@ -65,6 +65,8 @@ def test_gallery_snapshot(
         expected.add(reference)
         if title == "Answer summary variants":
             groups.nth(index).get_by_role("button", name="Summary", exact=True).click()
+        if title == "Answer discard confirmation":
+            groups.nth(index).get_by_role("button", name="Discard answers", exact=True).click()
         try:
             assert_image_matches(
                 groups.nth(index).screenshot(animations="disabled", caret="hide", scale="css"),

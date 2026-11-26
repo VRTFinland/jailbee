@@ -344,6 +344,10 @@ function typeStyle(token: string): Record<string, string> {
                             </li>
                         </ul>
                     </div>
+                    <div class="group">
+                        <h3 class="group-title">Answer discard confirmation</h3>
+                        <AnswerPanel :set="sampleQuestions" :available="true" initial-height="half" />
+                    </div>
                 </section>
             </template>
         </div>
