@@ -66,6 +66,65 @@ def _baseline_incus():
     return incus
 
 
+def test_doctor_warns_for_remote_managed_settings(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    cfg = with_agent(_cfg(tmp_path), "claude", enabled=True).model_copy(
+        update={"credential_group": "team"}
+    )
+    holder = tmp_path / "data" / "jailbee" / "claude-credentials" / "team"
+    holder.mkdir(parents=True)
+    (holder / "remote-settings.json").write_text('{"channelsEnabled": false}')
+    result = next(
+        r for r in run_checks(cfg, _baseline_incus()) if r.name == "claude remote settings"
+    )
+    assert not result.ok
+    for text in ("IDE", "allowedChannelPlugins", "hooks", "plugins", "delete", "toggling", "last"):
+        assert text in result.detail
+
+
+@pytest.mark.parametrize("content", [None, "", "  \n", "{}", " { } "])
+def test_doctor_remote_settings_empty_is_ok(tmp_path, content):
+    cfg = with_agent(_cfg(tmp_path), "claude", enabled=True)
+    holder = tmp_path / "shared" / "claude"
+    holder.mkdir(parents=True)
+    if content is not None:
+        (holder / "remote-settings.json").write_text(content)
+    result = next(
+        r for r in run_checks(cfg, _baseline_incus()) if r.name == "claude remote settings"
+    )
+    assert result.ok and not result.skipped
+
+
+def test_doctor_remote_settings_skipped_when_disabled(tmp_path):
+    cfg = with_agent(_cfg(tmp_path), "claude", enabled=False)
+    result = next(
+        r for r in run_checks(cfg, _baseline_incus()) if r.name == "claude remote settings"
+    )
+    assert result.skipped
+
+
+@pytest.mark.parametrize("content", ["{broken", "[]", "null", "\\udcff"])
+def test_doctor_remote_settings_invalid_is_unknown(tmp_path, content):
+    cfg = with_agent(_cfg(tmp_path), "claude", enabled=True)
+    holder = tmp_path / "shared" / "claude"
+    holder.mkdir(parents=True)
+    (holder / "remote-settings.json").write_bytes(content.encode("utf-8", errors="surrogateescape"))
+    result = next(
+        r for r in run_checks(cfg, _baseline_incus()) if r.name == "claude remote settings"
+    )
+    assert not result.ok and "unknown" in result.detail
+
+
+def test_doctor_remote_settings_unreadable_is_unknown(tmp_path):
+    cfg = with_agent(_cfg(tmp_path), "claude", enabled=True)
+    path = tmp_path / "shared" / "claude" / "remote-settings.json"
+    path.mkdir(parents=True)
+    result = next(
+        r for r in run_checks(cfg, _baseline_incus()) if r.name == "claude remote settings"
+    )
+    assert not result.ok and "unknown" in result.detail
+
+
 @pytest.mark.parametrize(
     "state,expected",
     [("missing", "status: missing"), ("stopped", "status: stopped")],

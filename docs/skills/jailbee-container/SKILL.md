@@ -63,7 +63,7 @@ defines that filter. Wait excludes `--grep`, `--filter`, and `--follow`; timeout
 defaults to 300 seconds (`0` is unlimited). Exit codes: 0 match, 1 timeout, 2
 invalid input, 3 unusable pane. Session history uses the maximum configured service limit for windows created afterwards, not existing panes. See service config for named filters and each service's `logs.history_limit`.
 
-The in-container CLI offers `service` (including `ls`, `start`, `stop`, `restart`, `refresh`, `plan`, `logs`), `config validate [--config <path>]`, `host status [--json]`, `agent models [--json]`, `inbox`, `version` and `--version`. Inbox notification commands include `jailbee inbox follow` (a non-acknowledging stream) and Claude hook handlers `jailbee inbox hook session-start` / `jailbee inbox hook session-end` / `jailbee inbox hook stop`. Start/end hooks maintain the live Claude session registry so autostart can resume sessions after unclean stops as well as normal restarts. In interactive Claude Code sessions the managed JailBee plugin starts the follower automatically; headless sessions and other agents use `jailbee inbox wait` as their fallback. The plugin marketplace ships in `jailbee/claude_marketplace`; its read-only managed-settings drop-in is mounted at `/etc/claude-code/managed-settings.d`, independently of the host-wide agent-instructions mount. Other JailBee management commands run on the host, not here.
+The in-container CLI offers `service` (including `ls`, `start`, `stop`, `restart`, `refresh`, `plan`, `logs`), `config validate [--config <path>]`, `host status [--json]`, `agent models [--json]`, `inbox`, `version` and `--version`. Inbox notification commands include `jailbee inbox follow` (a non-acknowledging stream) and Claude hook handlers `jailbee inbox hook session-start` / `jailbee inbox hook session-end` / `jailbee inbox hook stop`. Start/end hooks maintain the live Claude session registry so autostart can resume sessions after unclean stops as well as normal restarts. In interactive Claude Code sessions the managed JailBee plugin starts the follower automatically; headless sessions and other agents use `jailbee inbox wait` as their fallback. The plugin marketplace ships in `jailbee/claude_marketplace`; its read-only managed-settings drop-in is mounted at `/etc/claude-code/managed-settings.d`, independently of the host-wide agent-instructions mount. JailBee also passes the same `50-jailbee.json` file with `--settings` so remote managed settings do not suppress the plugin on its launches; see the unattended-session section for limits. Other JailBee management commands run on the host, not here.
 
 `jailbee --version` and `jailbee version` include the staged host code's source
 commit when known, e.g. `1.8.9 (abc1234)`; `-dirty` marks uncommitted source
@@ -93,9 +93,13 @@ letter recommends yes. Answers `12a`, `Q12a`, `Q12: a` select the option; "yes"
 accepts the recommendation. The instruction is in managed-policy memory, not just
 this skill. The host can set `agents.claude.unattended: false`, run `jb apply`,
 restart running containers for the changed policy mounts, and start a new session
-to restore the previous behaviour. Settings use the existing managed drop-in;
-organizations with remote managed settings that suppress drop-ins have a known
-limitation. `agent_instructions: false` omits the question instruction, not the
+to restore the previous behaviour. Settings use the existing managed drop-in plus `--settings` on JailBee launches
+and shell-typed `claude`/`claude-jb` (shell changes require a rebuilt base).
+Remote managed settings can suppress drop-ins, but not this fallback. IDE binary
+launches, managed-only settings such as `allowedChannelPlugins`, and organization
+policies blocking plugins or hooks are not covered. `jb doctor` and an interactive
+login notice identify cached remote settings; delete the organization's Claude Code
+managed settings in the admin console to restore drop-ins, rather than toggling off. `agent_instructions: false` omits the question instruction, not the
 permission settings. Never change shared user settings to work around a denial.
 
 The web transcript reader offers these questions as a non-modal answer panel.

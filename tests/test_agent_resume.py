@@ -125,17 +125,34 @@ def test_replay_argv_removes_session_and_prompt_args(
 
 def test_resume_run_quotes_directory_and_adds_resume_args() -> None:
     entry = ResumeEntry(VALID_ID, "/home/dev/my repo", ("claude", "--model", "opus"), None)
-    assert (
-        resume_run(entry)
-        == f"cd '/home/dev/my repo' && exec claude --model opus --resume {VALID_ID}"
-    )
+    assert resume_run(entry).endswith(f" --model opus --resume {VALID_ID}")
+    assert "--settings" in resume_run(entry)
+    assert resume_run(entry).startswith("cd '/home/dev/my repo' && exec claude ")
+
+
+@pytest.mark.parametrize("option", [("--settings", "/custom.json"), ("--settings=/custom.json",)])
+def test_resumed_launcher_keeps_explicit_settings(option):
+    entry = ResumeEntry(VALID_ID, "/work", ("claude-jb", *option), None)
+    assert resume_run(entry).count("--settings") == 1
+    assert "/custom.json" in resume_run(entry)
+
+
+def test_resume_without_claude_enabled_keeps_launcher():
+    entry = ResumeEntry(VALID_ID, "/work", ("claude",), None)
+    assert resume_run(entry, enabled=False) == f"cd /work && exec claude --resume {VALID_ID}"
+
+
+def test_resume_settings_added_before_resume():
+    entry = ResumeEntry(VALID_ID, "/work", ("claude-jb",), None)
+    assert "--settings" in resume_run(entry)
+    assert resume_run(entry).endswith(f" --resume {VALID_ID}")
 
 
 def test_restore_matches_and_deduplicates_windows(make_cfg, tmp_path):
     from jailbee.agent_resume import restore_steps
     from jailbee.config.models_agents import AutostartStep
 
-    cfg = make_cfg(tmp_path)
+    cfg = make_cfg(tmp_path, agents={"claude": {"enabled": True}})
     step = AutostartStep(name="claude", run="exec claude", env={"keep": "yes"})
     entries = [
         ResumeEntry(VALID_ID, "/work", ("claude",), "claude"),

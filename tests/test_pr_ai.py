@@ -7,6 +7,69 @@ import json
 CLAUDE = {"claude": {"enabled": True}}
 
 
+def test_claude_headless_preset_supplies_settings(make_cfg, tmp_path):
+    import os
+    import subprocess
+
+    from jailbee.pr_ai import resolve_pr_agent
+
+    cfg = make_cfg(tmp_path, agents=CLAUDE)
+    choice = resolve_pr_agent(cfg)
+    assert choice.agent is not None
+    settings = tmp_path / "settings.json"
+    settings.write_text("{}")
+    binary = tmp_path / "claude"
+    binary.write_text('#!/bin/bash\nprintf "%s\\0" "$@"\n')
+    binary.chmod(0o755)
+    command = choice.agent.headless.replace(
+        "/etc/claude-code/managed-settings.d/50-jailbee.json", str(settings)
+    )
+    proc = subprocess.run(
+        ["bash", "-c", command],
+        capture_output=True,
+        check=True,
+        env={
+            **os.environ,
+            "PATH": f"{tmp_path}:{os.environ['PATH']}",
+            "JAILBEE_PR_MODEL": "sonnet",
+            "JAILBEE_PR_SESSION": "session-id",
+            "JAILBEE_PR_PROMPT": "quoted ' prompt $text",
+        },
+    )
+    assert proc.stdout.decode().split("\0")[:-1] == [
+        "--settings",
+        str(settings),
+        "--model",
+        "sonnet",
+        "--session-id",
+        "session-id",
+        "-p",
+        "quoted ' prompt $text",
+        "--output-format",
+        "json",
+        "--dangerously-skip-permissions",
+    ]
+    assert proc.stderr == b""
+
+
+def test_custom_claude_headless_command_gets_settings(make_cfg, tmp_path):
+    from jailbee.pr_ai import resolve_pr_agent
+
+    cfg = make_cfg(
+        tmp_path,
+        agents={
+            "claude": {
+                "enabled": True,
+                "headless": 'claude -p "$JAILBEE_PR_PROMPT"',
+            }
+        },
+    )
+    choice = resolve_pr_agent(cfg)
+    assert choice.agent is not None
+    assert "--settings" in choice.agent.headless
+    assert choice.agent.headless.endswith('-p "$JAILBEE_PR_PROMPT"')
+
+
 def _envelope(inner_text: str) -> str:
     """Wrap model text in Claude's --output-format json envelope."""
     return json.dumps({"type": "result", "result": inner_text})

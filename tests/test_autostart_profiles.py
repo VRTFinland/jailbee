@@ -4,6 +4,7 @@ import pytest
 
 from jailbee.autostart_plan import AutostartTrigger
 from jailbee.config import Autostart
+from tests.test_autostart import SETTINGS
 
 
 def profile_cfg(make_cfg, tmp_path):
@@ -649,5 +650,5 @@ def test_none_profile_child_launches_configured_runner(make_cfg, tmp_path, mocke
     stages = [call.args[3] for call in run.call_args_list]
     agent = next(s for s in stages if s.stage == "agents")
     assert [step.run for chain in agent.all_chains() for step in chain.steps] == [
-        "exec claude --model haiku"
+        f"exec claude {SETTINGS} --model haiku"
     ]

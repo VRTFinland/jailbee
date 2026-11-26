@@ -153,9 +153,11 @@ def _usable(cfg: Config, name: str) -> PrAgent | None:
     agent = cfg.agents.get(name)
     if agent is None or not agent.enabled or not agent.headless:
         return None
+    from jailbee.claude_plugin import with_settings
+
     return PrAgent(
         name=name,
-        headless=agent.headless,
+        headless=with_settings(agent.headless) if name == "claude" else agent.headless,
         model=_pr_model(cfg, name),
         resumable=name == "claude",
     )

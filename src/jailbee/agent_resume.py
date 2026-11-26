@@ -211,12 +211,17 @@ def replay_argv(launcher: Sequence[str]) -> list[str]:
     return result
 
 
-def resume_run(entry: ResumeEntry) -> str:
+def resume_run(entry: ResumeEntry, *, enabled: bool = True) -> str:
     """Build a shell-safe command to reopen the saved Claude session."""
     resume = ClaudeAdapter().resume_args(entry.session_id)
     if resume is None:
         raise ValueError("invalid Claude session id")
-    return f"cd {shlex.quote(entry.cwd)} && exec {shlex.join(replay_argv(entry.launcher))} {resume}"
+    from jailbee.claude_plugin import with_settings
+
+    command = shlex.join(replay_argv(entry.launcher))
+    if enabled:
+        command = with_settings(command)
+    return f"cd {shlex.quote(entry.cwd)} && exec {command} {resume}"
 
 
 def capture(cfg: Config, incus: Incus, container: str) -> None:
@@ -308,7 +313,7 @@ def restore_steps(
         if match is not None:
             result[match] = result[match].model_copy(
                 update={
-                    "run": resume_run(entry),
+                    "run": resume_run(entry, enabled=cfg.claude.enabled),
                     "env": {**result[match].env, BOOT_SESSION_ENV: entry.session_id},
                 }
             )
@@ -334,7 +339,7 @@ def restore_steps(
         result.append(
             AutostartStep(
                 name=name,
-                run=resume_run(entry),
+                run=resume_run(entry, enabled=cfg.claude.enabled),
                 background=True,
                 continue_on_error=True,
                 env={**env, BOOT_SESSION_ENV: entry.session_id},

@@ -682,6 +682,14 @@ UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
             "rejection and numbered questions; set agents.claude.unattended: false to opt out"
         ),
     ),
+    UpgradeNote(
+        version=(1, 8, 10),
+        actions=frozenset({"base_build"}),
+        reason=(
+            "Claude login shells and `claude-jb` pass JailBee settings on the command line "
+            "when remote managed settings suppress drop-ins"
+        ),
+    ),
 )
 """What each release requires, ascending by version. Maintained by hand.
 

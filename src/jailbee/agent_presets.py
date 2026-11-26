@@ -11,6 +11,7 @@ package names, config paths and especially host lists may drift with vendor
 releases. See docs/agents.md for how to correct one.
 """
 
+from jailbee.claude_plugin import with_settings
 from jailbee.constants import CLAUDE_API_HOSTS
 
 # opencode's vendor installer. Not interactive (unlike codex's, which needs
@@ -310,7 +311,7 @@ def claude_preset() -> dict[str, object]:
         # `--output-format json` nothing reaches stdout until the run ends, so a
         # timeout — the one failure where the transcript is worth reading — is
         # exactly the case where the reply, and the id in it, never arrive.
-        "headless": (
+        "headless": with_settings(
             'claude ${JAILBEE_PR_MODEL:+--model "$JAILBEE_PR_MODEL"} '
             '--session-id "$JAILBEE_PR_SESSION" '
             '-p "$JAILBEE_PR_PROMPT" --output-format json --dangerously-skip-permissions'
