@@ -77,9 +77,10 @@ def test_auth_controls_match_the_gallery(
         if view == "setup":
             assert appearance(page.get_by_label("Key name")) == appearance(field)
         else:
-            assert appearance(page.get_by_role("tab", name="PIN", exact=True)) == appearance(submit)
             tonal = appearance(panel.get_by_role("button", name="tonal", exact=True))
-            assert appearance(page.get_by_role("tab", name="Authenticator code")) == tonal
+            text = appearance(panel.get_by_role("button", name="text", exact=True))
+            assert appearance(page.get_by_role("tab", name="PIN", exact=True)) == tonal
+            assert appearance(page.get_by_role("tab", name="Authenticator code")) == text
             assert appearance(page.get_by_role("button", name="Use security key")) == tonal
             page.get_by_role("tab", name="Authenticator code").click()
             expect(page.get_by_label("Code", exact=True)).to_be_visible()

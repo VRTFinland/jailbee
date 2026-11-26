@@ -102,7 +102,7 @@ async function submit() {
                 :data-method="m"
                 :aria-selected="active === m"
                 class="tab"
-                :variant="active === m ? 'primary' : 'tonal'"
+                :variant="active === m ? 'tonal' : 'text'"
                 @click="choose(m)"
             >
                 {{ LABELS[m] }}
@@ -176,7 +176,6 @@ async function submit() {
 }
 .tabs {
     display: flex;
-    gap: var(--md-space-8);
     margin-top: var(--md-space-16);
 }
 .tab {
