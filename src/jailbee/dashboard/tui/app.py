@@ -219,6 +219,7 @@ class DashboardApp(App[int], inherit_bindings=False):
         self._entry_answers: dict[int, asyncio.Future[Any]] = {}
         self._shown_questions: set[int] = set()
         self._output_screen: OutputScreen | None = None  # the one a live entry follows
+        self._critical_screen: OutputScreen | None = None
 
     # --- Terminal protocol -------------------------------------------------
 
@@ -322,6 +323,8 @@ class DashboardApp(App[int], inherit_bindings=False):
         screen = OutputScreen(title, text, failed=failed, background=background)
         if live:  # only a live screen is ever rewritten; a plain one stacked on top leaves it be
             self._output_screen = screen
+        if background:  # identify the critical modal, not whichever output last streamed
+            self._critical_screen = screen
         self.push_screen(screen, None if on_close is None else lambda _result: on_close())
 
     def update_output(self, text: str, failed: bool = False) -> None:
@@ -378,7 +381,7 @@ class DashboardApp(App[int], inherit_bindings=False):
             self.session.queue_changed()
             if should_show_question(
                 critical_foreground=self.session.question_in_foreground(entry.id)
-                and self.screen is self._output_screen
+                and self.screen is self._critical_screen
             ):
                 self.show_question(entry.id)
             else:

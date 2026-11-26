@@ -129,6 +129,74 @@ def test_only_the_critical_action_whose_modal_is_foreground_opens_its_question(m
     asyncio.run(scenario())
 
 
+def test_critical_question_still_opens_after_another_live_output_was_closed(mocker, tmp_path):
+    release_question = Event()
+    answers = []
+
+    def run(argv, *, on_prompt, **kwargs):
+        assert release_question.wait(10)
+        answers.append(on_prompt(Prompt(1, "text", "Critical question?")))
+        return drunner.RunResult(status=0)
+
+    app = make_app(mocker, [RepoGroup("alpha", str(tmp_path), None, [ci("alpha-a", "alpha")])])
+    app.threaded_actions = True
+    app.action_runner = run
+
+    async def scenario():
+        async with app.run_test() as pilot:
+            try:
+                app.session.run_dashboard_command("alpha-a", "container", ["merge", "alpha-a"])
+                await pilot.pause()
+                critical_screen = app.screen
+                app.show_output("Another action", "other output", failed=False, live=True)
+                await pilot.pause()
+                await pilot.press("escape")
+                assert app.screen is critical_screen
+                release_question.set()
+                async with asyncio.timeout(5):
+                    while not any(e.pending_question for e in app.session.queue):
+                        await pilot.pause(0.01)
+                await pilot.pause()
+                assert isinstance(app.screen, pm.TextModal)
+                await pilot.press(*"yes", "enter")
+                async with asyncio.timeout(5):
+                    while not answers:
+                        await pilot.pause(0.01)
+                assert answers == ["yes"]
+            finally:
+                release_question.set()
+
+    asyncio.run(scenario())
+
+
+def test_exit_cancels_all_deferred_commands(mocker, tmp_path):
+    answers = []
+    finished = Event()
+
+    def run(argv, *, on_prompt, **kwargs):
+        answers.append(on_prompt(Prompt(1, "text", "Waiting?")))
+        if len(answers) == 2:
+            finished.set()
+        return drunner.RunResult(status=0)
+
+    app = make_app(mocker, [RepoGroup("alpha", str(tmp_path), None, [ci("alpha-a", "alpha")])])
+    app.threaded_actions = True
+    app.action_runner = run
+
+    async def scenario():
+        async with app.run_test() as pilot:
+            for verb in ["start", "stop"]:
+                app.session.run_dashboard_command("alpha-a", "container", [verb, "alpha-a"])
+            async with asyncio.timeout(5):
+                while sum(e.pending_question is not None for e in app.session.queue) != 2:
+                    await pilot.pause(0.01)
+            app.exit()
+        assert await asyncio.to_thread(finished.wait, 5)
+        assert answers == [None, None]
+
+    asyncio.run(scenario())
+
+
 @pytest.mark.parametrize("critical_foreground, expected", [(False, False), (True, True)])
 def test_question_routing_has_no_frontend_dependency(critical_foreground, expected):
     from jailbee.dashboard.notifications import should_show_question
