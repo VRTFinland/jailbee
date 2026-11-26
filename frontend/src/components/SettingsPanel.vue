@@ -215,6 +215,9 @@ legend {
 .choice {
     justify-content: flex-start;
 }
+.choice input, .slider input {
+    accent-color: var(--md-primary);
+}
 .rename {
     display: flex;
     flex-direction: column;

@@ -27,8 +27,8 @@ const scope = useOverlayScope(anchor, open)
 </script>
 
 <template>
-    <div ref="anchor">
-        <FieldFrame :id="id" :label="label" :help="help" :error="error" :class="$attrs.class" v-slot="{controlAttrs}">
+    <div ref="anchor" :class="$attrs.class">
+        <FieldFrame :id="id" :label="label" :help="help" :error="error" v-slot="{controlAttrs}">
             <select v-if="native" v-model="value" v-bind="controlAttrs($attrs)" :disabled="disabled" :name="name" :required="required"
                 class="ui-input ui-focus-ring">
                 <option v-for="option in options" :key="option.value" :value="option.value" :disabled="option.disabled">{{ option.label }}</option>

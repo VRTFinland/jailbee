@@ -79,6 +79,14 @@ describe("Quick settings", () => {
         expect(wrapper.find(".view-heading").exists()).toBe(false)
     })
 
+    it("activates a preference through its visible text label", async () => {
+        const wrapper = await menu("session")
+        const label = wrapper.findAll("label").find(label => label.text() === "Show thinking")!
+        ;(label.element as HTMLLabelElement).click()
+        await flushPromises()
+        expect(settings.showThinking).toBe(true)
+    })
+
     it("edits the existing e-ink follow preference independently of normal follow", async () => {
         settings.displayProfile = "eink"
         const wrapper = await menu("session")

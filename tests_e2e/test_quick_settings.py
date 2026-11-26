@@ -211,7 +211,7 @@ def test_small_viewport_pages_show_every_context_row_in_order(
             panel.locator(".menu-row:visible").evaluate_all(
                 "rows => rows.map(row => (row.classList.contains('font-row') "
                 "? row.querySelector('span').innerText : row.classList.contains('context-row') "
-                "? row.childNodes[0].textContent : row.innerText)"
+                "? row.querySelector('label').textContent : row.innerText)"
                 ".replace(/\\s+/g, ' ').trim())"
             )
         )
@@ -273,7 +273,7 @@ def test_resizing_menu_clamps_pages_and_keeps_all_rows_reachable(
             panel.locator(".menu-row:visible").evaluate_all(
                 "rows => rows.map(row => (row.classList.contains('font-row') "
                 "? row.querySelector('span').innerText : row.classList.contains('context-row') "
-                "? row.childNodes[0].textContent : row.innerText)"
+                "? row.querySelector('label').textContent : row.innerText)"
                 ".replace(/\\s+/g, ' ').trim())"
             )
         )
