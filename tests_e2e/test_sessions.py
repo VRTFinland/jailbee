@@ -124,9 +124,9 @@ def test_container_rows_search_and_paging_match_the_gallery(
     assert field_look == panel.get_by_role("textbox", name="Container name", exact=True).evaluate(
         css
     )
-    assert button_look == panel.get_by_role("button", name="Previous earlier sessions", exact=True).evaluate(
-        css
-    )
+    assert button_look == panel.get_by_role(
+        "button", name="Previous earlier sessions", exact=True
+    ).evaluate(css)
     panel.screenshot(path=tmp_path / f"gallery-{theme}.png")
 
 
