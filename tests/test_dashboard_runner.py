@@ -291,6 +291,49 @@ def test_real_child_asks_through_the_channel(
     assert "answer True" in "".join(out)
 
 
+def test_cancellation_stops_child_and_descendant(tmp_path):
+    import select
+
+    parent, child_sock = socket.socketpair()
+    code = (
+        "import subprocess, sys, time\n"
+        "p = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])\n"
+        "print(p.pid, flush=True)\n"
+        "time.sleep(60)\n"
+    )
+    child = runner.popen_spawn(
+        [sys.executable, "-c", code], cwd=tmp_path, env=os.environ, prompt_sock=child_sock
+    )
+    descendant = None
+    try:
+        assert child.stdout is not None
+        assert select.select([child.stdout], [], [], 10)[0]
+        descendant = int(child.stdout.readline())
+        child.kill()
+        child.wait()
+        assert select.select([child.stdout], [], [], 3)[0]
+        assert child.stdout.read() == b""
+        try:
+            status = Path(f"/proc/{descendant}/stat").read_text()
+        except FileNotFoundError:
+            status = None
+        assert status is None or status.split(") ", 1)[1][0] == "Z"
+        descendant = None
+    finally:
+        if descendant is not None:
+            try:
+                os.kill(descendant, 9)
+            except ProcessLookupError:
+                pass
+        try:
+            child.kill()
+        except ProcessLookupError:
+            pass
+        parent.close()
+        if child.stdout is not None:
+            child.stdout.close()
+
+
 def test_run_actions_runs_each_in_order_with_headers_and_stops_at_a_refusal(tmp_path):
     calls: list[list[str]] = []
 

@@ -528,18 +528,17 @@ def _block_real_incus(monkeypatch: pytest.MonkeyPatch, _test_isolation_dir: Path
     exist answers nothing. The CI runner has no ``incus``, so the same test
     failed there with "`incus` not found in PATH", and nowhere else.
 
-    Every exec of a bare ``incus`` (resolved via PATH) raises the same
-    ``FileNotFoundError`` the CI runner does, so the code under test takes
-    CI's path locally too. The test is then failed at teardown even if that
-    code swallowed the resulting ``IncusError`` — a leak that happens to
+    Every exec of a bare ``incus`` (resolved via PATH) runs a shim that exits
+    with status 127. The test is then failed at teardown even if the code
+    under test swallowed the resulting failure — a leak that happens to
     exit the way a test expects is still a test that never ran what it
     names. A fake ``incus`` addressed by absolute path
     (``Incus(binary=str(tmp_path / "incus"))``, as ``test_incus.py``'s
     ``exec_lines`` tests do) is not blocked.
 
     A test-local PATH shim covers the parent and any child CLI process. It
-    records attempted Incus invocations but returns the same missing-binary
-    failure the suite gets in CI; explicit fake binaries remain untouched.
+    records attempted Incus invocations and fails; explicit fake binaries
+    remain untouched.
     """
     attempts: list[list[str]] = []
     shim_dir = _test_isolation_dir / "incus-guard"

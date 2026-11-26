@@ -18,6 +18,7 @@ import json
 import logging
 import os
 import selectors
+import signal
 import socket
 import subprocess
 import sys
@@ -196,7 +197,7 @@ class _PopenChild:
         return self._proc.wait()
 
     def kill(self) -> None:
-        self._proc.kill()
+        os.killpg(self._proc.pid, signal.SIGKILL)
 
 
 def popen_spawn(
@@ -213,6 +214,7 @@ def popen_spawn(
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             pass_fds=(fd,),
+            start_new_session=True,
         )
     finally:
         prompt_sock.close()

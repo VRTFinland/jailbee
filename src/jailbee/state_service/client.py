@@ -527,6 +527,10 @@ class StateClient:
                     raise StaleDashboard(
                         f"jailbee was upgraded to {reply.version}; restart this dashboard"
                     )
+                if self._transport != "none":
+                    raise StaleDashboard(
+                        "replace the older state service from a local dashboard"
+                    )
                 if reply.protocol < ACTION_HOST_PROTOCOL:
                     sock.sendall(encode(Shutdown()))
                     self._await_gone(path)

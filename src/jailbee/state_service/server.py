@@ -277,6 +277,9 @@ class StateServer:
                     await writer.drain()
             while line := await reader.readline():
                 message = decode(line)
+                if isinstance(message, (Shutdown, Drain)) and hello.transport != "none":
+                    log.warning("remote client attempted service lifecycle control")
+                    break
                 if isinstance(message, Shutdown):
                     log.info("shutdown requested by a client")
                     self._stopping = True

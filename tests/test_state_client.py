@@ -322,6 +322,17 @@ def test_client_survives_a_server_killed_with_a_stale_socket_left_behind(runtime
         client.close()
 
 
+def test_remote_client_reports_that_old_service_needs_local_replacement(runtime_dir):
+    old = Spawner(version="v0")
+    old.start()
+    client = _client(Spawner(version="v1"), transport="ssh")
+    try:
+        _until(lambda: "replace the older state service" in (client.status() or ""))
+        assert old.threads[0].is_alive()
+    finally:
+        client.close()
+
+
 def test_legacy_without_action_host_is_replaced(runtime_dir, monkeypatch):
     old = Spawner(version="v0")
     old.start()

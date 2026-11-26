@@ -167,12 +167,12 @@ def test_running_waits_until_socket_listens(sock_path, monkeypatch):
 
 
 class Conn:
-    def __init__(self, path, *, version="v1", cwd=None):
+    def __init__(self, path, *, version="v1", cwd=None, transport="none"):
         self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         self.sock.settimeout(5)
         self.sock.connect(str(path))
         self.reader = self.sock.makefile("rb")
-        self.send(Hello(PROTOCOL, version, cwd))
+        self.send(Hello(PROTOCOL, version, cwd, transport=transport))
         _LIVE_CONNS.append(self)
         self.hello = self.recv()
         if version == "v1":
@@ -209,6 +209,20 @@ def test_mismatched_client_can_query_activity_and_drain_idle_server(sock_path):
     assert conn.recv() == ServiceActivity(0, 0, draining=True)
     running.thread.join(timeout=3)
     assert not running.thread.is_alive()
+
+
+@pytest.mark.parametrize("version", ["v1", "v0"])
+@pytest.mark.parametrize("control", ["shutdown", "drain"])
+def test_remote_lifecycle_control_cannot_stop_or_drain_service(sock_path, version, control):
+    from jailbee.state_service.protocol import ActivityQuery, Drain, ServiceActivity
+
+    running = Running(FakeGatherer(), sock_path)
+    remote = Conn(sock_path, version=version, transport="ssh")
+    remote.send(Shutdown() if control == "shutdown" else Drain())
+    local = Conn(sock_path, version="v0")
+    local.send(ActivityQuery())
+    assert local.recv() == ServiceActivity(0, 0, draining=False)
+    assert running.thread.is_alive()
 
 
 def test_hello_is_answered_with_the_server_version(sock_path):
