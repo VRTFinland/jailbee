@@ -178,8 +178,6 @@ function number(event: Event): number {
     </div>
 </template>
 
-<style src="./ui/fields.css"></style>
-<style src="./ui/state-layer.css"></style>
 <style scoped>
 .settings-panel {
     max-width: 36rem;
@@ -237,7 +235,7 @@ legend {
     min-height: var(--md-target-min);
 }
 .sample code {
-    font-size: var(--md-type-body-medium-size);
+    font-size: var(--font-size-code);
     font-family: var(--md-font-mono);
 }
 </style>

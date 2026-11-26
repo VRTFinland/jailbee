@@ -84,8 +84,10 @@ def test_gallery_snapshot(
         control = panel.get_by_role(
             "combobox" if name == "select" else "button", name=trigger, exact=True
         )
-        control.evaluate("el => el.scrollIntoView({block: 'start'})")
-        trigger_box = control.bounding_box()
+        trigger_box = None
+        if name == "preferences":
+            control.evaluate("el => el.scrollIntoView({block: 'start'})")
+            trigger_box = control.bounding_box()
         control.click()
         overlay = page.get_by_role(role)
         expect(overlay).to_be_visible()
