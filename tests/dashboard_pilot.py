@@ -211,7 +211,6 @@ class FakeStateClient:
                 error=result.error,
                 cancelled=result.cancelled,
                 declined=result.declined,
-                state="done" if result.status == 0 and not result.cancelled else "failed",
             )
             disconnect()
 
