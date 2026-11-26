@@ -175,6 +175,38 @@ def test_untouched_question_set_follows_new_questions(
     expect(panel.get_by_role("combobox", name="Question set")).to_have_count(0)
 
 
+@pytest.mark.parametrize("profile", ["normal", "eink"])
+@pytest.mark.parametrize("question_count", [3, 6])
+def test_compact_header_step_hit_targets(
+    page: Page,
+    make_server: Callable[..., E2EServer],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    profile: str,
+    question_count: int,
+) -> None:
+    page.set_viewport_size({"width": 390, "height": 800})
+    questions = "\n\n".join(
+        f"❓ **Q{i}** - **Choice {i}**: Choose.\na) Yes\nb) No"
+        for i in range(1, question_count + 1)
+    )
+    open_questions(page, make_server, tmp_path, monkeypatch, profile=profile, latest=questions)
+    panel = page.get_by_role("complementary", name="Answer questions")
+    panel.get_by_role("button", name="Expand answers").click()
+    steps = panel.get_by_role("navigation", name="Answer steps").get_by_role("button")
+    assert steps.count() == question_count + 1
+    boxes = [steps.nth(i).bounding_box() for i in range(question_count + 1)]
+    assert all(box is not None and box["width"] >= 44 and box["height"] >= 44 for box in boxes)
+    title = panel.locator(".question-title")
+    assert title.bounding_box()["width"] > 0
+    expect(panel.get_by_role("button", name="Hide", exact=True)).to_be_in_viewport()
+    assert title.evaluate("el => getComputedStyle(el).whiteSpace") == "nowrap"
+    assert title.evaluate("el => parseFloat(getComputedStyle(el).fontSize)") == panel.evaluate(
+        "el => parseFloat(getComputedStyle(el).fontSize)"
+    )
+    assert panel.locator("header").evaluate("el => el.scrollWidth <= el.clientWidth")
+
+
 @pytest.mark.parametrize("width", [390, 1280])
 @pytest.mark.parametrize(
     "profile,controls",

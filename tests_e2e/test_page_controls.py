@@ -97,10 +97,10 @@ def test_page_controls_preserve_readable_height_keys_taps_and_jump_clearance(
         wait_for_scroll_settled(page)
         assert abs(before - page.evaluate("window.scrollY") - int(readable)) <= 1
     before = page.evaluate("window.scrollY")
-    page.locator(".tap-zone.forward").click(position={"x": 5, "y": 100})
+    page.locator(".tap-zone.forward").click(position={"x": 5, "y": 160})
     wait_for_scroll_settled(page)
     assert abs(page.evaluate("window.scrollY") - before - int(readable)) <= 1
-    page.locator(".tap-zone.back").click(position={"x": 5, "y": 100})
+    page.locator(".tap-zone.back").click(position={"x": 5, "y": 160})
     wait_for_scroll_settled(page)
     assert abs(page.evaluate("window.scrollY") - before) <= 1
     if mode != "indicator":

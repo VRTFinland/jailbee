@@ -144,9 +144,10 @@ onBeforeUnmount(() => { resize?.disconnect(); mutation?.disconnect(); profileObs
 .panel-header, footer, .steps { display: flex; align-items: center; gap: var(--md-space-8); }
 .panel-header { flex: none; padding: var(--md-space-8); }
 .panel-header > strong { margin-right: auto; }
-.question-title { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.steps { flex: none; gap: 0; }
-.steps button { min-width: var(--md-space-16); min-height: var(--md-target-min); padding: var(--md-space-4); }
+.question-title { flex: 1; min-width: var(--md-space-32); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.steps { flex: 0 1 auto; min-width: var(--md-target-min); max-width: calc(var(--md-target-min) * 3); overflow-x: auto; gap: 0; }
+.steps button { flex: none; }
+.steps button { min-width: var(--md-target-min); min-height: var(--md-target-min); padding: var(--md-space-4); }
 .option input { accent-color: var(--md-primary); }
 .option strong { display: inline-block; padding: 0 var(--md-space-8); border: 1px solid var(--md-outline-variant); border-radius: var(--md-shape-small); font-size: var(--md-type-label-small-size); }
 .option span { overflow-wrap: anywhere; }

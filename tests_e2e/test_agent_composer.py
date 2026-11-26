@@ -97,6 +97,11 @@ def test_composer_delivery_and_refusal(
     expect(page.get_by_role("status")).to_have_text("Delivered")
     expect(field).to_have_value("")
 
+    # Collapsed controls retain the same reserved geometry for every status.
+    page.get_by_role("button", name="Hide composer").click()
+    collapsed_box = page.locator(".agent-composer").bounding_box()
+    assert collapsed_box is not None
+    page.get_by_role("button", name="Message agent", exact=True).click()
     # An open terminal dialog receives the send, but cannot echo a user turn.
     (live / "session.json").write_text(
         json.dumps(
@@ -116,6 +121,9 @@ def test_composer_delivery_and_refusal(
     )
     expect(field).to_have_value("")
     expect(field).to_be_enabled()
+    page.get_by_role("button", name="Hide composer").click()
+    assert page.locator(".agent-composer").bounding_box() == collapsed_box
+    page.get_by_role("button", name="Message agent", exact=True).click()
     (live / "session.json").write_text(
         json.dumps(
             {

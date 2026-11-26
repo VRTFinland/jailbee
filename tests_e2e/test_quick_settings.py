@@ -211,6 +211,8 @@ def test_small_viewport_pages_show_every_context_row_in_order(
     panel = page.get_by_role("dialog", name="Quick settings")
     assert panel.evaluate("el => el.getBoundingClientRect().bottom <= innerHeight - 32")
 
+    if page_context == "session":
+        expect(panel.get_by_label("Session", exact=True)).to_be_visible()
     expected_rows = ["Body: 16px", "Code: 14px", "Theme: Auto", "View"]
     expected_rows += (
         ["All", "Running", "Active"]
@@ -376,8 +378,7 @@ def test_menu_follow_opt_out_keeps_live_entries_from_scrolling(
     page: Page, make_server: Callable[..., E2EServer], tmp_path: Path
 ) -> None:
     server, transcript = open_transcript(page, make_server, tmp_path)
-    page.get_by_role("button", name="Latest answer").click()
-    page.get_by_role("button", name="Scroll to bottom").click()
+    # Readers now open at the end; no initial jump is needed.
     wait_for_scroll_settled(page)
     reveal_setting(page, "switch", "Follow new messages")
     page.get_by_role("switch", name="Follow new messages", exact=True).uncheck()

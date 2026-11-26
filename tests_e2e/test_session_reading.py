@@ -134,6 +134,8 @@ def test_latest_answer_and_sticky_title_follow_the_readable_area(
         )
         page.reload()
         expect(page.get_by_role("heading", name=TITLE, exact=True)).to_be_visible()
+    page.evaluate("window.scrollTo(0, 0)")
+    wait_for_scroll_settled(page)
     latest = page.get_by_role("button", name="Latest answer")
     title = page.get_by_role("heading", name=TITLE, exact=True)
     expect(title).to_have_attribute("title", re.compile(r"Agent:.*Models:.*Session ID:", re.S))

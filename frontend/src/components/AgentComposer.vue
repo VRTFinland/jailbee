@@ -47,8 +47,6 @@ function keydown(event: KeyboardEvent) {
 
 <style scoped>
 .composer-input { width: 100%; min-width: 0; }
-.collapsed .composer-input { width: auto; }
-.collapsed { width: fit-content; margin-left: 0; }
 .composer-controls { display: flex; align-items: end; gap: var(--md-space-8); }
 .composer-controls > :first-child { flex: 1; min-width: 0; }
 .composer-status { margin: 0; height: var(--md-type-body-small-line-height); line-height: var(--md-type-body-small-line-height); font-size: var(--md-type-body-small-size); color: var(--md-on-surface-variant); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
