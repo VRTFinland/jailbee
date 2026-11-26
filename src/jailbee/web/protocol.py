@@ -275,6 +275,12 @@ class EntryContent(BaseModel):
     html: str
 
 
+class ChatAvailability(BaseModel):
+    available: bool
+    code: str
+    message: str
+
+
 class TranscriptView(BaseModel):
     """`GET /api/repos/{prefix}/sessions/{agent}/{session_id}`: a whole session."""
 
@@ -285,6 +291,7 @@ class TranscriptView(BaseModel):
     last_activity: datetime | None
     models: list[str]
     entries: list[RenderedEntry]
+    chat: ChatAvailability = ChatAvailability(available=False, code="permission_denied", message="Agent chat is disabled")
     offset: int = 0
     """Byte offset the entries were read to: where a live `Subscribe` resumes."""
 
@@ -336,6 +343,7 @@ class TranscriptAppend(_Message):
     key: FollowKey
     entries: list[RenderedEntry]
     offset: int
+    chat: ChatAvailability | None = None
 
 
 class SubscribeError(_Message):
