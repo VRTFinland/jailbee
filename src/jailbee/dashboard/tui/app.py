@@ -257,6 +257,8 @@ class DashboardApp(App[int], inherit_bindings=False):
         """Run ``fn`` on the real terminal with the dashboard suspended."""
         client = self.session.client
         attention_before = self.session.queue.attention_items()
+        # A hand-off moves attention away even if a question reaches us later.
+        self.session.user_interacted()
         self._handoff_epoch += 1
         self.session.begin_hand_off()
         # Nothing of this dashboard is on screen while `fn` runs: let the
@@ -272,6 +274,7 @@ class DashboardApp(App[int], inherit_bindings=False):
             # The snapshot is as old as the command was long.
             client.set_active(True)
             client.refresh()
+            self.session.tick()
             self._sync_questions()
             self.session.end_hand_off(attention_before)
             self._handoff_epoch += 1
@@ -279,6 +282,7 @@ class DashboardApp(App[int], inherit_bindings=False):
             self._last_title = None
             self._painted = None
             self.refresh_frame()
+            self._painted = None
 
     # --- action runner -----------------------------------------------------
 

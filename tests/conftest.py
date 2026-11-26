@@ -519,7 +519,7 @@ def typed_confirmations(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
-def _block_real_incus(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[None]:
+def _block_real_incus(monkeypatch: pytest.MonkeyPatch, _test_isolation_dir: Path) -> Iterator[None]:
     """Fail any test that runs the real ``incus`` binary.
 
     The unit suite is fully mocked, but nothing enforced it: a test whose
@@ -542,9 +542,9 @@ def _block_real_incus(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterat
     failure the suite gets in CI; explicit fake binaries remain untouched.
     """
     attempts: list[list[str]] = []
-    shim_dir = tmp_path / "incus-guard"
+    shim_dir = _test_isolation_dir / "incus-guard"
     shim_dir.mkdir()
-    marker = tmp_path / "incus-attempts"
+    marker = _test_isolation_dir / "incus-attempts"
     monkeypatch.setenv("JAILBEE_TEST_INCUS_ATTEMPTS", str(marker))
     shim = shim_dir / "incus"
     shim.write_text(
@@ -557,8 +557,11 @@ def _block_real_incus(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterat
     shim.chmod(0o755)
     monkeypatch.setenv("PATH", f"{shim_dir}{os.pathsep}{os.environ['PATH']}")
     yield
-    if marker.exists():
-        attempts.extend([line.split() for line in marker.read_text().splitlines()])
+    try:
+        marker_text = marker.read_text()
+    except FileNotFoundError:
+        marker_text = ""
+    attempts.extend(line.split() for line in marker_text.splitlines())
     if attempts:
         ran = "\n".join(f"  {shlex.join(a)}" for a in attempts)
         pytest.fail(

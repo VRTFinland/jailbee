@@ -105,8 +105,8 @@ def load(engine: Engine) -> list[ActionEntry]:
             entries.append(entry)
         pruned, evicted = prune_finished(entries, now=datetime.now(UTC))
         for entry_id in evicted:
-            row = session.get(ActionEntryRow, entry_id)
-            if row is not None:
-                session.delete(row)
+            evicted_row = session.get(ActionEntryRow, entry_id)
+            if evicted_row is not None:
+                session.delete(evicted_row)
         session.commit()
     return pruned
