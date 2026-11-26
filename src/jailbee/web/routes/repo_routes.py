@@ -9,6 +9,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field, field_validator
 from starlette.concurrency import run_in_threadpool
 
+from jailbee.agent_input import sanitize_text
 from jailbee.web import auth_admin, chat
 from jailbee.web.container_sessions import live_session_containers, session_containers
 from jailbee.web.deps import Context, RequireSession
@@ -141,6 +142,7 @@ class MessageRequest(BaseModel):
     @field_validator("text")
     @classmethod
     def nonblank(cls, value: str) -> str:
+        value = sanitize_text(value)
         if not value.strip():
             raise ValueError("Message must not be blank")
         return value

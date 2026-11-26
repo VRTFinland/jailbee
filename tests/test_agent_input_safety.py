@@ -146,6 +146,53 @@ def test_concurrent_sends_do_not_interleave(setup_session):
     assert operations == ["paste", "enter", "paste", "enter"]
 
 
+def test_send_retries_when_pane_changes_under_lock(setup_session):
+    directory, incus = setup_session
+    record(directory, "one.json")
+    tree = "42 10 123 S 42 42 34816\n10 1 22 S 10 42 34816"
+    screen = "────\n> \n────"
+    incus.exec.side_effect = [
+        tree,
+        "%1 10 1",
+        screen,
+        tree,
+        "%2 10 1",
+        screen,
+        tree,
+        "%2 10 1",
+        screen,
+        "",
+        "",
+        "",
+    ]
+    assert agent_input.send(Mock(), incus, "box", "old", "hello").code == "delivered"
+    commands = [call.args[1][-1] for call in incus.exec.call_args_list]
+    assert any("paste-buffer" in command and command.endswith("-t %2") for command in commands)
+    assert not any("paste-buffer" in command and command.endswith("-t %1") for command in commands)
+
+
+def test_lock_storage_is_bounded_across_many_panes(setup_session, monkeypatch, tmp_path):
+    directory, incus = setup_session
+    record(directory, "one.json")
+    monkeypatch.setattr("jailbee.state_service.paths.ensure_runtime_dir", lambda: tmp_path)
+    pane = [0]
+
+    def execute(_container, command):
+        cmd = command[-1]
+        if cmd.startswith("import os"):
+            return "42 10 123 S 42 42 34816\n10 1 22 S 10 42 34816"
+        if "list-panes" in cmd:
+            return f"%{pane[0]} 10 1"
+        if "capture-pane" in cmd:
+            return "────\n> \n────"
+        return ""
+
+    incus.exec.side_effect = execute
+    for pane[0] in range(300):
+        assert agent_input.send(Mock(), incus, "box", "old", "text").code == "delivered"
+    assert len(list(tmp_path.rglob("*.lock"))) <= 256
+
+
 def test_dialog_refusal_precedes_pane_capture(setup_session):
     directory, incus = setup_session
     record(directory, "dialog.json", status="waiting", waitingFor="permission")

@@ -177,17 +177,27 @@ def availability(cfg: Config, incus: Incus, container: str, session_id: str) -> 
     return _resolve(cfg, incus, container, session_id)[0]
 
 
+def sanitize_text(text: str) -> str:
+    """Strip terminal control characters while preserving multiline input."""
+    return "".join(c for c in text if c in "\n\t" or (ord(c) >= 32 and not 127 <= ord(c) <= 159))
+
+
 def send(cfg: Config, incus: Incus, container: str, session_id: str, text: str) -> Outcome:
     """Deliver a user turn. Capture and paste cannot exclude concurrent human typing."""
     from jailbee.state_service.paths import ensure_runtime_dir
 
-    text = "".join(c for c in text if c in "\n\t" or (ord(c) >= 32 and not 127 <= ord(c) <= 159))
+    text = sanitize_text(text)
+    if not text.strip():
+        return Outcome("invalid_message", "Message must not be blank")
     outcome, pane = _resolve(cfg, incus, container, session_id)
     for _ in range(4):
         if pane is None:
             return outcome
-        digest = hashlib.sha256(f"{container}\0{pane}".encode()).hexdigest()
-        with (ensure_runtime_dir() / f"agent-input-{digest}.lock").open("a") as lock:
+        # Fixed lock stripes bound storage without unlinking held or awaited inodes.
+        digest = hashlib.sha256(f"{container}\0{pane}".encode()).hexdigest()[:2]
+        directory = ensure_runtime_dir() / "agent-input-locks"
+        directory.mkdir(mode=0o700, exist_ok=True)
+        with (directory / f"{digest}.lock").open("a") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
             outcome, current = _resolve(cfg, incus, container, session_id)
             if current == pane:
