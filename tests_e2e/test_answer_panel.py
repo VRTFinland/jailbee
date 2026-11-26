@@ -160,6 +160,7 @@ def test_untouched_question_set_follows_new_questions(
         stream.write(record(3, "assistant", "❓ **Q20** - **New owner**: Name a team."))
     server.watches.open[-1].fire()
     panel = page.get_by_role("complementary", name="Answer questions")
+    expect(panel.locator(".panel-header > strong")).to_have_text("1 question")
     panel.get_by_role("button", name="Expand answers", exact=True).click()
     expect(panel.get_by_role("heading", name="Q20: New owner")).to_be_visible()
     expect(panel.get_by_text("A newer message arrived", exact=False)).to_have_count(0)
