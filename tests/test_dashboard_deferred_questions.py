@@ -231,7 +231,9 @@ def test_dead_child_clears_pending_question(mocker, tmp_path, caplog, while_moun
     app.threaded_actions = True
     from functools import partial
 
-    app.session.client.action_runner = partial(drunner.run_action) if wrapped else drunner.run_action
+    app.session.client.action_runner = (
+        partial(drunner.run_action) if wrapped else drunner.run_action
+    )
     app.session.client.action_spawn = spawn
 
     async def scenario():

@@ -39,7 +39,13 @@ from jailbee.dashboard.tui.frame import DashboardView
 from jailbee.dashboard.tui.overlay import NativeState
 from jailbee.db.view_prefs import ViewState
 from jailbee.global_config import DashboardConfig, GlobalConfig
-from jailbee.state_service.protocol import ActionEntry, ActionFinish, ActionOutput, RunAction, Snapshot
+from jailbee.state_service.protocol import (
+    ActionEntry,
+    ActionFinish,
+    ActionOutput,
+    RunAction,
+    Snapshot,
+)
 from tests.conftest import memory_engine
 
 _MAX_PADDING = 5  # trailing Ctrl-Cs before a run that will not quit fails
@@ -115,8 +121,15 @@ class FakeStateClient:
         """Simulate the action-host boundary, including the temporary requester prompt seam."""
         self.action_requests.append(request)
         entry = ActionEntry(
-            request.entry_id, request.argv, request.cwd, request.target,
-            request.critical, request.origin, request.transport, request.repo_root, request.prefix,
+            request.entry_id,
+            request.argv,
+            request.cwd,
+            request.target,
+            request.critical,
+            request.origin,
+            request.transport,
+            request.repo_root,
+            request.prefix,
         )
         self._action_entries[entry.entry_id] = entry
         self._action_events.append(entry)
@@ -143,10 +156,13 @@ class FakeStateClient:
             extra = {} if self.action_spawn is None else {"spawn": self.action_spawn}
             try:
                 result = self.action_runner(
-                    request.argv, cwd=Path(request.cwd), transport=request.transport,
+                    request.argv,
+                    cwd=Path(request.cwd),
+                    transport=request.transport,
                     policy=app.session.ssh_policy if app else None,
                     client=app.remote_client if app else None,
-                    on_prompt=prompt, on_output=output,
+                    on_prompt=prompt,
+                    on_output=output,
                     on_disconnect=(lambda: app._disconnect_entry(entry.entry_id)) if app else None,
                     **extra,
                 )
@@ -156,13 +172,24 @@ class FakeStateClient:
                 output(f"\n{result.error}\n")
             current = self._action_entries[entry.entry_id]
             self._action_entries[entry.entry_id] = replace(
-                current, finished=True, status=result.status, refused=result.refused,
-                error=result.error, cancelled=result.cancelled, declined=result.declined,
+                current,
+                finished=True,
+                status=result.status,
+                refused=result.refused,
+                error=result.error,
+                cancelled=result.cancelled,
+                declined=result.declined,
             )
-            self._action_events.append(ActionFinish(
-                entry.entry_id, result.status, result.refused, result.error,
-                result.cancelled, result.declined,
-            ))
+            self._action_events.append(
+                ActionFinish(
+                    entry.entry_id,
+                    result.status,
+                    result.refused,
+                    result.error,
+                    result.cancelled,
+                    result.declined,
+                )
+            )
 
         if app is not None and app.threaded_actions:
             threading.Thread(target=run, daemon=True).start()

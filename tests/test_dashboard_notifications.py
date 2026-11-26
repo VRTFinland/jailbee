@@ -1134,9 +1134,7 @@ def test_a_question_drains_the_output_before_it():
 
 
 def test_a_crashed_action_worker_still_settles_its_entries(mocker, tmp_path):
-    from tests.dashboard_pilot import drive
-
-    from tests.dashboard_pilot import FakeStateClient
+    from tests.dashboard_pilot import FakeStateClient, drive
 
     mocker.patch.object(FakeStateClient, "run_action", side_effect=RuntimeError("boom"))
     seen: list[list[str]] = []
