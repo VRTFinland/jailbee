@@ -498,10 +498,13 @@ def test_the_queue_badge_is_at_the_right_end_of_the_title(tmp_path):
     from jailbee.dashboard.notifications import QueueCounts
 
     view = view_of(
-        [_long(tmp_path, 3)], system=_system(), show_system=True, queue=QueueCounts(2, 1)
+        [_long(tmp_path, 3)],
+        system=_system(),
+        show_system=True,
+        queue=QueueCounts(running=2, failed=1),
     )
     lines = paint(view, size=(100, 25))
-    assert lines[0].endswith(" ⟳ 2 · ⚠ 1 ─╮")
+    assert lines[0].endswith(" ⟳ 2 · ✗ 1 ─╮")
     assert "Mem" in lines[1] and "⚠" not in lines[1]
     assert "NAME" in lines[2]
 
@@ -513,7 +516,7 @@ def test_the_queue_badge_takes_no_body_row_while_the_status_is_hidden(tmp_path):
         [_long(tmp_path, 3)], system=_system(), show_system=False, queue=QueueCounts(0, 0)
     )
     lines = paint(view, size=(100, 25))
-    assert lines[0].endswith(" ⟳ 0 · ⚠ 0 ─╮")
+    assert lines[0].endswith(" ⟳ 0 · ✗ 0 ─╮")
     assert "NAME" in lines[1] and "Mem" not in lines[1]
 
 
@@ -521,17 +524,19 @@ def test_the_queue_badge_takes_no_body_row_while_the_status_is_hidden(tmp_path):
 def test_a_narrow_title_ellipsises_before_the_queue_badge(tmp_path, width):
     from jailbee.dashboard.notifications import QueueCounts
 
-    lines = paint(view_of([_long(tmp_path)], queue=QueueCounts(12, 34)), size=(width, 12))
-    assert lines[0].endswith("…  ⟳ 12 · ⚠ 34 ─╮")
+    lines = paint(
+        view_of([_long(tmp_path)], queue=QueueCounts(running=12, failed=34)), size=(width, 12)
+    )
+    assert lines[0].endswith("…  ⟳ 12 · ✗ 34 ─╮")
     assert all(cell_len(line) == width for line in lines)
 
 
 @pytest.mark.parametrize(
     ("width", "label"),
     [
-        (18, " ⟳ 12 · ⚠ 34"),
-        (17, "⟳ 12 · ⚠ 34"),
-        (16, "⟳ 12 · ⚠ …"),
+        (18, " ⟳ 12 · ✗ 34"),
+        (17, "⟳ 12 · ✗ 34"),
+        (16, "⟳ 12 · ✗ …"),
         (10, "⟳ 1…"),
         (7, "…"),
         (6, ""),
@@ -540,7 +545,9 @@ def test_a_narrow_title_ellipsises_before_the_queue_badge(tmp_path, width):
 def test_a_tiny_title_keeps_the_badge_instead_of_the_dashboard_name(tmp_path, width, label):
     from jailbee.dashboard.notifications import QueueCounts
 
-    lines = paint(view_of([_long(tmp_path)], queue=QueueCounts(12, 34)), size=(width, 12))
+    lines = paint(
+        view_of([_long(tmp_path)], queue=QueueCounts(running=12, failed=34)), size=(width, 12)
+    )
     assert lines[0] == (f"╭─ {label} ─╮" if label else "╭" + "─" * (width - 2) + "╮")
     assert all(cell_len(line) == width for line in lines)
 
@@ -597,6 +604,92 @@ def test_the_badge_has_accent_and_non_colour_emphasis(
     asyncio.run(script())
 
 
+@pytest.mark.parametrize("theme", ["nord", "gruvbox", "textual-light"])
+@pytest.mark.parametrize("count_offset", [0, 6])
+def test_pending_and_failed_badge_counts_have_distinct_colours_and_open_the_queue(
+    mocker, tmp_path, monkeypatch, theme, count_offset
+):
+    from textual.color import Color
+
+    from jailbee.dashboard.hit import Hit
+    from jailbee.dashboard.overlays import Picker
+    from tests.dashboard_pilot import hit_offset, make_app, screen_text
+
+    monkeypatch.delenv("NO_COLOR")
+    app = make_app(mocker, [_long(tmp_path, 3)])
+    asking = app.session.queue.start("jailbee start alpha-a", "alpha-a")
+    app.session.queue.set_awaiting(asking, True)
+
+    async def script():
+        async with app.run_test(size=(100, 25)) as pilot:
+            app.theme = theme
+            await pilot.pause()
+            assert "? 1" in screen_text(app).splitlines()[0]
+            assert "✗ 0" in screen_text(app).splitlines()[0]
+            failed = app.session.queue.start("jailbee stop alpha-a", "alpha-a")
+            app.session.queue.finish(failed, 1, "failed")
+            app.refresh_frame()
+            await pilot.pause()
+            x, y = hit_offset(app, Hit("queue"))
+            pending = app.screen.get_style_at(x + 6, y)
+            failure = app.screen.get_style_at(x + 12, y)
+            assert pending.bold and failure.bold
+            assert pending.color == Color.parse(app.get_css_variables()["accent"]).rich_color
+            assert failure.color.number == 1  # ANSI red
+            await pilot.click(offset=(x + 6 + count_offset, y))
+            assert isinstance(app.session.overlay, Picker)
+            assert app.session.overlay.purpose == "queue"
+
+    asyncio.run(script())
+
+
+@pytest.mark.parametrize("monochrome", [False, True])
+def test_queue_rows_distinguish_questions_from_failures_across_themes(
+    mocker, tmp_path, monkeypatch, monochrome
+):
+    from textual.color import Color
+
+    from tests.dashboard_pilot import make_app, screen_text
+
+    if monochrome:
+        monkeypatch.setenv("NO_COLOR", "1")
+    else:
+        monkeypatch.delenv("NO_COLOR")
+    app = make_app(mocker, [_long(tmp_path, 3)])
+    failed = app.session.queue.start("jailbee stop alpha-a", "alpha-a")
+    app.session.queue.finish(failed, 1, "failed")
+    asking = app.session.queue.start("jailbee start alpha-a", "alpha-a")
+    app.session.queue.set_awaiting(asking, True)
+
+    async def script():
+        async with app.run_test(size=(100, 25)) as pilot:
+            await pilot.press("Q")
+            for theme in ("nord", "textual-light", "gruvbox"):
+                app.theme = theme
+                await pilot.pause()
+                lines = screen_text(app).splitlines()
+                for label, colour in (
+                    ("? alpha-a: jailbee start alpha-a · awaiting answer", "accent"),
+                    ("✗ alpha-a: jailbee stop alpha-a · failed (exit 1)", "red"),
+                ):
+                    y = next(i for i, line in enumerate(lines) if label in line)
+                    x = lines[y].index(label)
+                    for offset in (0, label.index(" · ") + 3):
+                        style = app.screen.get_style_at(x + offset, y)
+                        assert style.bold
+                        if monochrome:
+                            assert style.color is None or style.color.is_default
+                        elif colour == "accent":
+                            assert (
+                                style.color
+                                == Color.parse(app.get_css_variables()["accent"]).rich_color
+                            )
+                        else:
+                            assert style.color.number == 1
+
+    asyncio.run(script())
+
+
 def test_spinner_only_refreshes_do_not_redraw_the_body(mocker, tmp_path):
     from tests.dashboard_pilot import FROZEN_NOW, make_app, screen_text
 
@@ -649,7 +742,7 @@ def test_the_queue_spinner_uses_timer_ticks_and_stops_when_idle(mocker, tmp_path
             app.refresh_frame()
             await pilot.pause()
             idle = screen_text(app).splitlines()[0]
-            assert idle.endswith(" ⟳ 0 · ⚠ 1 ─╮")
+            assert idle.endswith(" ⟳ 0 · ✗ 1 ─╮")
             shown = mocker.spy(app.frame, "show")
             for _ in range(3):
                 now[0] += timedelta(milliseconds=250)

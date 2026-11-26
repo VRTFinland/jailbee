@@ -17,7 +17,9 @@ before editing `## Unreleased`.
 - Background commands in the terminal dashboard leave questions in Notifications
   (`Q`) instead of interrupting another task. Select an awaiting entry to answer
   it; several commands can wait independently. A critical action whose modal
-  is in the foreground still asks immediately
+  is in the foreground still asks immediately. The queue counts pending questions
+  separately from failures: `?` and "awaiting answer" use the theme accent, while
+  red `✗` stays reserved for failures
   ([#168](https://github.com/VRTFinland/jailbee/issues/168)).
 - The web dashboard has a design system: Material 3 colours from one blue seed in
   both the light and dark themes (status colours readable at WCAG AA), the bundled

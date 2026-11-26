@@ -17,7 +17,10 @@ reaches boxes through Textual's events; those outcomes are posted.
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from typing import ClassVar
+from typing import TYPE_CHECKING, ClassVar
+
+if TYPE_CHECKING:
+    from textual.theme import Theme
 
 from rich.cells import cell_len
 from rich.console import Console
@@ -546,7 +549,7 @@ class _PrefixSuggester(Suggester):
         return next((s for s in self.suggestions if s != value and s.startswith(value)), None)
 
 
-def _one_line(label: str, style: str = "") -> Text:
+def _one_line(label: str, style: str | Style = "") -> Text:
     return Text(label, style=style, no_wrap=True, overflow="ellipsis")
 
 
@@ -787,6 +790,21 @@ class PickerBox(OverlayBox):
         self.border_title = _one_line(spec.title, "bold")
         self._budget: int | None = None
 
+    def _option(self, entry: PickerEntry) -> Option:
+        style = Style()
+        if entry.tone is not None:
+            color = self.app.get_css_variables()["accent"] if entry.tone == "accent" else "red"
+            style = Style(color=color, bold=True)
+        return Option(_one_line(_keyed_label(entry), style))
+
+    def on_mount(self) -> None:
+        self.app.theme_changed_signal.subscribe(self, self._refresh_theme)
+
+    def _refresh_theme(self, _theme: Theme) -> None:
+        lst = self.query_one(OverlayList)
+        for i, entry in enumerate(self.picker.entries):
+            lst.replace_option_prompt_at_index(i, self._option(entry).prompt)
+
     def shown_detail(self) -> tuple[str, ...]:
         """The detail lines that fit ``fit_detail``'s budget; the entries always come first.
 
@@ -827,7 +845,7 @@ class PickerBox(OverlayBox):
             )
             widget.display = i < len(shown)
             yield widget
-        options = [Option(_one_line(_keyed_label(entry))) for entry in self.picker.entries] or [
+        options = [self._option(entry) for entry in self.picker.entries] or [
             Option(_one_line("(nothing to choose)", "dim"), disabled=True)
         ]
         yield OverlayList(*options, mouse_enabled=self.mouse_enabled)
@@ -848,7 +866,7 @@ class PickerBox(OverlayBox):
         )
         lst.clear_options()
         lst.add_options(
-            [Option(_one_line(_keyed_label(entry))) for entry in spec.entries]
+            [self._option(entry) for entry in spec.entries]
             or [Option(_one_line("(nothing to choose)", "dim"), disabled=True)]
         )
         lst.highlighted = cursor
