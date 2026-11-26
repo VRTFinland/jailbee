@@ -540,6 +540,27 @@ def _block_real_incus(monkeypatch: pytest.MonkeyPatch, _test_isolation_dir: Path
     records attempted Incus invocations and fails; explicit fake binaries
     remain untouched.
     """
+    import subprocess
+
+    real_run = subprocess.run
+    real_popen = subprocess.Popen
+
+    def check_command(args: Any) -> None:
+        if isinstance(args, (list, tuple)) and args and os.fspath(args[0]) == "incus":
+            raise AssertionError("unmocked incus subprocess invocation")
+
+    @functools.wraps(real_run)
+    def guarded_run(args: Any, *a: Any, **kw: Any) -> Any:
+        check_command(args)
+        return real_run(args, *a, **kw)
+
+    @functools.wraps(real_popen)
+    def guarded_popen(args: Any, *a: Any, **kw: Any) -> Any:
+        check_command(args)
+        return real_popen(args, *a, **kw)
+
+    monkeypatch.setattr(subprocess, "run", guarded_run)
+    monkeypatch.setattr(subprocess, "Popen", guarded_popen)
     attempts: list[list[str]] = []
     shim_dir = _test_isolation_dir / "incus-guard"
     shim_dir.mkdir()

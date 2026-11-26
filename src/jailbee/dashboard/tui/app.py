@@ -727,7 +727,7 @@ class DashboardApp(App[int], inherit_bindings=False):
 
     def refresh_frame(self, *, spin: bool = False) -> None:
         """Refresh the session and repaint if anything visible changed."""
-        if self._prompts_closed:
+        if self._prompts_closed or not self.is_running:
             return
         self.session.tick(spin=spin)
         self._sync_questions()
