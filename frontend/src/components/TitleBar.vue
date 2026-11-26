@@ -53,11 +53,16 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .title-bar { position: sticky; top: var(--app-banner-height, 0); z-index: var(--md-layer-sticky); display: flex; align-items: center; box-sizing: border-box; height: var(--title-bar-height); padding-inline: var(--md-space-12) var(--md-space-4); background: var(--md-surface-container); border-bottom: 1px solid var(--md-outline-variant); min-width: 0; }
-.breadcrumbs { display: flex; align-items: center; flex: 1; min-width: 0; overflow: hidden; }
+.breadcrumbs { container-type: inline-size; display: flex; align-items: center; flex: 1; min-width: 0; overflow: hidden; }
 .breadcrumbs a { display: flex; flex: 0 1 auto; max-width: 16ch; align-items: center; height: var(--title-bar-height); min-width: 3ch; overflow: hidden; white-space: nowrap; color: var(--md-on-surface-variant); font-size: var(--md-type-body-medium-size); text-decoration: none; }
 .breadcrumbs a:focus-visible { outline: var(--md-focus-ring-width) solid var(--md-primary); outline-offset: calc(-1 * var(--md-focus-ring-offset)); }
 .breadcrumbs a span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .breadcrumbs a:first-child { flex-shrink: 0; max-width: none; }
 .separator { display: inline-flex; align-items: center; flex: none; padding: 0 var(--md-space-4); color: var(--md-on-surface-variant); }
 h1 { flex: 0 1 auto; max-width: 24ch; font-size: var(--md-type-body-medium-size); line-height: var(--md-type-body-medium-line-height); font-weight: var(--md-type-emphasis-weight); margin: 0; min-width: 3ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* At enlarged reader type sizes, separators must not consume the label budgets. */
+@container (max-width: 22rem) {
+    .separator { padding-inline: 0; }
+    .breadcrumbs a, h1 { min-width: 2ch; }
+}
 </style>

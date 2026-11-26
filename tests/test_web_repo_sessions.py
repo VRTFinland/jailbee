@@ -130,6 +130,29 @@ def test_session_summary_hides_unknown_and_excluded_sessions(
     assert "secret" not in homes.calls
 
 
+def test_session_summary_includes_the_same_container_attribution_as_the_list(homes: Homes) -> None:
+    from jailbee.agent_status import AgentSummary
+    from jailbee.state_service.session_log import SessionRecorder
+    from tests.web_fakes import container, repo_group, snapshot_of
+
+    group = repo_group("alpha", container("alpha-1", repo="alpha", uuid="instance-1", agent_status=(AgentSummary("claude", "busy", None, None, 1, session_ids=(SESSION_A,)),)))
+    snapshots = FakeSourceFactory(initial=snapshot_of(group))
+    SessionRecorder(get_engine()).record([group])
+    for client in open_client(homes, snapshots=snapshots):
+        from jailbee.web.protocol import PROTOCOL_VERSION
+
+        token = client.headers["Authorization"].removeprefix("Bearer ")
+        with client.websocket_connect("/api/ws") as socket:
+            socket.send_json({"type": "auth", "v": PROTOCOL_VERSION, "token": token})
+            socket.receive_json()
+            snapshots.only.push(snapshot_of(group))
+            socket.receive_json()
+            listed = client.get("/api/repos/alpha/sessions").json()["sessions"][0]
+            assert listed["container"] == "alpha-1"
+            summary = client.get(f"/api/repos/alpha/sessions/claude/{SESSION_A}/summary").json()
+            assert summary["container"] == listed["container"]
+
+
 def test_session_summary_requires_login(client: TestClient) -> None:
     client.headers.pop("Authorization")
     assert client.get(f"/api/repos/alpha/sessions/claude/{SESSION_A}/summary").status_code == 401

@@ -129,7 +129,8 @@ alone use the shared level-2 elevation in light/dark. Under
   never the body or header.
 - Keep every breadcrumb level: root, repo, known container, session, subagent.
   Use the session summary's optional `container`, not a guessed route/name.
-  Labels ellipsize with a three-character minimum; the root stays visible.
+  Labels ellipsize with a three-character minimum (two in a narrow bar, where
+  separator padding also contracts); the root stays visible.
   The current title is a short, body-sized final crumb; tooltip and accessible
   name retain the complete prompt (the tooltip also retains session metadata).
 - Menu, Select and preferences use extra-small corners, level-2 elevation and

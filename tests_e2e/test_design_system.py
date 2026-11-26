@@ -237,10 +237,10 @@ def test_transitions_stay_brief_and_stop_under_reduced_motion_and_eink(logged_in
     expect(page.get_by_role("button", name="Log out")).to_be_visible()
     assert page.evaluate(_MAX_TRANSITION_MS) == 0
     _open_gallery(page)
-    eink_panels = page.locator('section[data-profile="eink"] .shape')  # 3 panels x 5 shapes
+    eink_panels = page.locator('section[data-profile="eink"] .shape')  # 3 panels x 6 shapes
     assert (
         eink_panels.evaluate_all("(els) => els.map((e) => getComputedStyle(e).transitionDuration)")
-        == ["0s"] * 15
+        == ["0s"] * 18
     )
 
 
