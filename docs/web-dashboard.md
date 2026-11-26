@@ -173,7 +173,8 @@ When the latest assistant reply contains well-formed numbered ❓ questions, an
 **Answer** bar offers them as a non-modal panel. On a phone, expand it to half or
 full height; on a wide screen it sits beside the transcript. Collapse it to read
 on without losing answers. The conversation remains scrollable, and e-ink uses
-hairlines without animation.
+hairlines without animation. Long question bodies and summaries use the panel's
+Previous/Next page controls in the e-ink profile rather than swipe scrolling.
 
 The panel shows one question at a time. Recommended choices are preselected and
 badged; choose another full-width option or add a note. A question without options
