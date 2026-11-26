@@ -144,6 +144,35 @@ class PromptModal(ModalScreen[Any]):
         yield from ()
 
 
+class ReadOnlyQuestion(ModalScreen[None]):
+    """A shared question that this dashboard cannot answer or abort."""
+
+    DEFAULT_CSS = _CSS + "\nReadOnlyQuestion { align: center middle; }\nReadOnlyQuestion > .dialog { width: 72; max-width: 95%; height: auto; border: round ansi_blue; background: ansi_default; padding: 1; }"
+    BINDINGS: ClassVar[list[BindingType]] = [Binding("escape", "close", "Close", priority=True)]
+
+    def __init__(self, prompt: Prompt, entry: QueueEntry, reason: str) -> None:
+        super().__init__()
+        self.prompt, self.entry, self.reason = prompt, entry, reason
+
+    def compose(self) -> ComposeResult:
+        with Vertical(classes="dialog"):
+            yield Static(Text(f"{self.entry.command}  |  {self.entry.target}"))
+            if self.entry.output:
+                yield Static(Text.from_ansi("\n".join(self.entry.output.splitlines()[-3:])))
+            yield Static(Text(self.prompt.question))
+            if self.prompt.detail:
+                yield Static(Text(self.prompt.detail))
+            yield Static(Text(self.reason), id="readonly-hint")
+            yield Button("Close", id="close")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.dismiss(None)
+
+    def action_close(self) -> None:
+        self.dismiss(None)
+
+
 class ConfirmModal(PromptModal):
     """No / Yes rows. Destructive questions start with "No" highlighted."""
 

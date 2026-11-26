@@ -80,6 +80,35 @@ def test_origin_receives_service_question_and_answers_child(mocker, tmp_path, ve
     asyncio.run(scenario())
 
 
+def test_remote_question_is_read_only_without_abort(mocker, tmp_path):
+    from textual.widgets import Button, Input
+
+    app = make_app(mocker, [RepoGroup("alpha", str(tmp_path), None, [])])
+    client = app.session.client
+    client._action_entries[42] = ActionEntry(
+        42, ["destroy", "alpha"], str(tmp_path), "alpha", False, "other", "none", str(tmp_path), "alpha"
+    )
+    client._action_questions[42] = ActionQuestion(
+        42, 7, Prompt(1, "text", "Destroy?"), can_answer=False, reason="answer in a local dashboard"
+    )
+
+    async def scenario():
+        async with app.run_test() as pilot:
+            app.refresh_frame()
+            await pilot.press("Q", "enter")
+            assert "answer in a local dashboard" in str(app.screen.query_one("#readonly-hint").render())
+            assert not app.screen.query(Input)
+            assert not app.screen.query("#abort-command")
+            assert not any("Abort" in str(button.label) for button in app.screen.query(Button))
+            client._action_questions.clear()
+            client._question_resolutions.append(ActionQuestionResolved(42, 7, "other"))
+            app.refresh_frame()
+            await pilot.pause()
+            assert not isinstance(app.screen, pm.ReadOnlyQuestion)
+
+    asyncio.run(scenario())
+
+
 def test_observer_critical_action_has_no_foreground_modal(mocker, tmp_path):
     app = make_app(mocker, [RepoGroup("alpha", str(tmp_path), None, [])])
     client = app.session.client
