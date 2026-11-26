@@ -92,6 +92,25 @@ def test_done_from_linked_submodule_worktree_is_refused(
     transmit.assert_not_called()
 
 
+def test_done_from_unrelated_repository_worktree_is_sent(
+    checkout: Path, tmp_path: Path, monkeypatch, mocker
+) -> None:
+    gitdir = tmp_path / "other" / ".git" / "worktrees" / "helper"
+    gitdir.mkdir(parents=True)
+    worktree = tmp_path / "helper"
+    worktree.mkdir()
+    (worktree / ".git").write_text(f"gitdir: {gitdir}\n")
+    monkeypatch.chdir(worktree)
+    transmit = mocker.patch.object(socket_cli, "call_send", return_value={"state": "done"})
+
+    result = CliRunner().invoke(
+        inbox_app, ["send", "message", "--kind", "done", "--text", "finished"]
+    )
+
+    assert result.exit_code == 0, result.output
+    transmit.assert_called_once()
+
+
 @pytest.mark.parametrize("layout", ["main", "empty-registry", "submodule"])
 def test_done_without_linked_worktrees_is_sent(
     checkout: Path, monkeypatch, mocker, layout: str

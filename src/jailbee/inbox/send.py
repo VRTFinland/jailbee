@@ -16,9 +16,8 @@ from jailbee.inbox.errors import InboxBadUsage, InboxRefused, InboxUsage
 CONTAINER_INFO_FILE = Path("/etc/jailbee/container.json")
 
 
-def _refuse_linked_worktree_done() -> None:
-    linked = False
-    cwd = Path.cwd()
+def _linked_worktree_common(cwd: Path) -> Path | None:
+    """Resolve the nearest checkout's linked-worktree common directory, without git."""
     for directory in (cwd, *cwd.parents):
         marker = directory / ".git"
         if marker.is_file():
@@ -35,16 +34,27 @@ def _refuse_linked_worktree_done() -> None:
                 if gitdir.parent.name == "worktrees" and (
                     gitdir.parent.parent.name == ".git" or common == gitdir.parent.parent
                 ):
-                    linked = True
+                    return gitdir.parent.parent
         if marker.exists():
             break
+    return None
+
+
+def _refuse_linked_worktree_done() -> None:
+    common = _linked_worktree_common(Path.cwd())
+    linked = common is not None
     try:
         info = json.loads(CONTAINER_INFO_FILE.read_text())
     except (FileNotFoundError, ValueError):
         info = None
     repo_dir = info.get("repo_dir") if isinstance(info, dict) else None
     if isinstance(repo_dir, str) and repo_dir:
-        worktrees = Path(repo_dir) / ".git" / "worktrees"
+        repo_git = (Path(repo_dir) / ".git").resolve()
+        # A submodule's common directory lives under this repo's .git/modules/.
+        linked = common is not None and (
+            common == repo_git or common.is_relative_to(repo_git / "modules")
+        )
+        worktrees = repo_git / "worktrees"
         linked = linked or (worktrees.is_dir() and next(worktrees.iterdir(), None) is not None)
     if linked:
         raise InboxRefused(
