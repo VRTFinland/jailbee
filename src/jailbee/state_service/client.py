@@ -17,6 +17,7 @@ import subprocess
 import sys
 import threading
 import time
+from collections import deque
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import replace
 from typing import IO, TYPE_CHECKING, Any

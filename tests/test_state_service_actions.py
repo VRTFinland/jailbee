@@ -263,7 +263,16 @@ def test_question_is_answered_by_first_dashboard_over_real_channel(runtime_dir, 
         )
         _until(lambda: 17 in client.action_questions() and 17 in second.action_questions())
         question = second.action_questions()[17]
+        assert client.action_entries()[17].state == "awaiting"
         assert question.prompt.question == "Proceed?"
+        late = StateClient(None, dashboard_id="late", version="v1", spawn=lambda: None, backoff=(0.05,))
+        late.start()
+        try:
+            late.wait_first_snapshot(3)
+            _until(lambda: 17 in late.action_questions())
+            assert late.action_questions()[17] == question
+        finally:
+            late.close()
         assert 17 not in outsider.action_questions()
         outsider.answer_action_question(17, question.question_id, False)
         second.answer_action_question(17, question.question_id + 1, False)
@@ -279,6 +288,63 @@ def test_question_is_answered_by_first_dashboard_over_real_channel(runtime_dir, 
         client.close()
         second.close()
         outsider.close()
+
+
+def test_prompt_channel_eof_clears_question(runtime_dir, tmp_path):
+    from jailbee.prompt_channel import CommandEnd, Prompt
+    from jailbee.state_service import paths
+
+    release = threading.Event()
+
+    class Child:
+        stdout = None
+
+        def __init__(self, sock):
+            self.sock = sock
+
+            def ask():
+                command = CommandEnd(sock)
+                try:
+                    command.ask(lambda n: Prompt(n, "text", "Name?"))
+                except (OSError, EOFError, ValueError):
+                    pass
+
+            self.thread = threading.Thread(target=ask, daemon=True)
+            self.thread.start()
+
+            def close_channel():
+                release.wait(5)
+                sock.shutdown(2)
+                sock.close()
+
+            threading.Thread(target=close_channel, daemon=True).start()
+
+        def wait(self):
+            self.thread.join(timeout=3)
+            return 0
+
+        def kill(self):
+            pass
+
+    paths.ensure_runtime_dir()
+    server = StateServer(FakeGatherer(), version="v1", action_spawn=lambda *a, **kw: Child(kw["prompt_sock"]))
+    thread = threading.Thread(target=lambda: asyncio.run(server.serve(paths.socket_path())), daemon=True)
+    thread.start()
+    track_server(server, thread)
+    _until(paths.socket_path().exists)
+    client = StateClient(None, dashboard_id="origin", version="v1", spawn=lambda: None, backoff=(0.05,))
+    client.start()
+    try:
+        client.wait_first_snapshot(3)
+        client.run_action(RunAction(19, ["ls"], str(tmp_path), "target", False, "origin", "none", str(tmp_path), "repo"))
+        _until(lambda: 19 in client.action_questions())
+        release.set()
+        _until(lambda: 19 not in client.action_questions())
+        _until(lambda: client.action_entries()[19].finished)
+        assert client.action_entries()[19].cancelled
+    finally:
+        release.set()
+        client.close()
 
 
 def test_reconnect_replays_entries_in_repository_scope_and_rejects_duplicate(runtime_dir, tmp_path):

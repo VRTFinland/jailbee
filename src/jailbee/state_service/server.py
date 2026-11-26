@@ -365,6 +365,10 @@ class StateServer:
         question = ActionQuestion(entry_id, self._question_serial, prompt)
         future: asyncio.Future[Any] = asyncio.get_running_loop().create_future()
         self._questions[entry_id] = (question, future)
+        entry = replace(self._actions[entry_id], state="awaiting")
+        self._actions[entry_id] = entry
+        self._broadcast_action(entry)
+        self._action_changed(entry)
         self._broadcast_action(question)
         try:
             return await future
@@ -385,6 +389,10 @@ class StateServer:
         if pending is None:
             return
         question, future = pending
+        entry = replace(self._actions[entry_id], state="running")
+        self._actions[entry_id] = entry
+        self._broadcast_action(entry)
+        self._action_changed(entry)
         if not future.done():
             future.set_result(value)
         self._broadcast_action(ActionQuestionResolved(entry_id, question.question_id, answered_by))
