@@ -1,7 +1,7 @@
 // Mirror of src/jailbee/web/protocol.py. Bump PROTOCOL_VERSION in both files
 // on any change either side could misread.
 
-export const PROTOCOL_VERSION = 8
+export const PROTOCOL_VERSION = 9
 
 export const CLOSE_UNAUTHORIZED = 4001
 export const CLOSE_PROTOCOL_MISMATCH = 4002
@@ -186,6 +186,8 @@ export interface ContainerSessionHistory extends ContainerSessionList {
 interface RenderedBase {
     id: string
     timestamp: string | null
+    /** Original assistant record id, shared across its rendered content blocks. */
+    message_id?: string | null
 }
 
 export interface RenderedUser extends RenderedBase {

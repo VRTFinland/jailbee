@@ -16,6 +16,7 @@ import JumpPanel from "../components/JumpPanel.vue"
 import ToolCall from "../components/ToolCall.vue"
 import {readableBottom} from "../composables/readableBottom"
 import {questionBlocks} from "../composables/questionBlocks"
+import {answerMessages} from "../composables/answerSources"
 import {usePager} from "../composables/usePager"
 import {useAgentChat} from "../composables/useAgentChat"
 import {useDashboard} from "../dashboard"
@@ -155,8 +156,7 @@ const latestAnswer = computed(() => {
 })
 
 const answerSources = computed(() => agentId.value !== null || loadedAnswerSession.value !== answerSessionKey.value ? [] :
-    [...transcript.value?.entries ?? [], ...pending.value].flatMap(entry =>
-        entry.kind === "assistant" ? [{id: entry.id, text: entry.text ?? ""}] : []))
+    answerMessages([...transcript.value?.entries ?? [], ...pending.value]))
 const answerSets = useAnswerSets(
     () => ({prefix: prefix.value, agent: agent.value, session: sessionId.value}),
     () => answerSources.value,
@@ -170,7 +170,7 @@ const answerSetOptions = computed(() => answerSets.sets.value.map(item => ({
 async function selectAnswerSet(id: string) {
     // Choosing a set is an explicit request to reveal its source, even when
     // e-ink has deferred the new transcript entries.
-    if (pending.value.some(entry => entry.id === id)) await applyPending()
+    if (pending.value.some(entry => (entry.message_id ?? entry.id) === id)) await applyPending()
     answerSets.select(id)
 }
 async function sendAnswers(text: string) {
@@ -186,14 +186,17 @@ function clearQuestionHighlight() {
 }
 async function showQuestion(index: number) {
     const source = answerSource.value
-    if (source && pending.value.some(entry => entry.id === source.id)) await applyPending()
+    if (source && pending.value.some(entry => (entry.message_id ?? entry.id) === source.id)) await applyPending()
     const set = answerSet.value
     const question = set?.questions[index]
     if (!source || !question || !set) return
-    const prose = document.getElementById(entryDomId(source.id))?.querySelector(".prose")
-    if (!prose) return
+    const message = answerSources.value.find(message => message.id === source.id)
     clearQuestionHighlight()
-    highlighted = questionBlocks(prose, set, index)
+    const documents = (message?.entries ?? []).flatMap(id => {
+        const prose = document.getElementById(entryDomId(id))?.querySelector(".prose")
+        return prose ? [prose] : []
+    })
+    highlighted = questionBlocks(documents, set, index)
     const target = highlighted[0]
     if (!target) return
     highlighted.forEach(el => el.classList.add("question-highlight"))

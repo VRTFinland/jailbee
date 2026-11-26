@@ -46,6 +46,7 @@ def open_questions(
     profile: str = "normal",
     controls: str = "bar",
     latest: str = QUESTIONS,
+    blocks: list[dict[str, object]] | None = None,
 ) -> tuple[E2EServer, Path, Mock]:
     home = tmp_path / "home"
     project = home / "projects" / "-work-repo"
@@ -56,6 +57,10 @@ def open_questions(
         + record(1, "assistant", QUESTIONS)
         + record(2, "assistant", "Earlier reasoning.\n\n" * 40 + latest)
     )
+    if blocks is not None:
+        message = json.loads(record(2, "assistant", ""))
+        message["message"]["content"] = blocks
+        transcript.write_text(record(0, "user", TITLE) + json.dumps(message) + "\n")
     live = tmp_path / "live" / "sessions"
     live.mkdir(parents=True)
     (live / "session.json").write_text(
@@ -323,13 +328,13 @@ def test_drafts_restore_switch_newer_sets_and_send_old_source(
     server.watches.open[-1].fire()
     expect(panel.get_by_role("status")).to_contain_text("A newer message arrived")
     expect(panel.get_by_role("heading", name="Q12: Deployment")).to_be_visible()
-    panel.get_by_role("combobox", name="Question set").select_option("entry-3:0")
+    panel.get_by_role("combobox", name="Question set").select_option("entry-3")
     panel.get_by_role("button", name="Expand answers", exact=True).click()
     expect(panel.get_by_role("heading", name="Q20: New owner")).to_be_visible()
     panel.get_by_role("textbox", name="Answer", exact=True).fill("New owner")
     panel.get_by_role("button", name="Show in conversation").click()
     expect(page.locator(".question-highlight")).to_contain_text("Name a team.")
-    panel.get_by_role("combobox", name="Question set").select_option("entry-2:0")
+    panel.get_by_role("combobox", name="Question set").select_option("entry-2")
     panel.get_by_role("button", name="Expand answers", exact=True).click()
     panel.get_by_role("button", name="Summary", exact=True).click()
     expect(panel.locator("pre")).to_contain_text("Q1: Old owner")

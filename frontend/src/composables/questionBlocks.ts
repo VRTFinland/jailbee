@@ -1,13 +1,14 @@
 import type {QuestionSet} from "../questions"
 
 /** Locate source question blocks without re-rendering or trusting raw Markdown as HTML. */
-export function questionBlocks(prose: Element, set: QuestionSet, index: number): HTMLElement[] {
+export function questionBlocks(prose: Element | Element[], set: QuestionSet, index: number): HTMLElement[] {
+    const documents = Array.isArray(prose) ? prose : [prose]
     const number = set.questions[index]?.number
     if (number === undefined) return []
     // Markdown soft breaks can put prose and several questions in one paragraph.
     // Split only at a real line-leading question marker, preserving all inline
     // nodes from the server's sanitised rendering (and leaving code samples alone).
-    for (const strong of prose.querySelectorAll<HTMLElement>(":scope > p > strong")) {
+    for (const strong of documents.flatMap(document => Array.from(document.querySelectorAll<HTMLElement>(":scope > p > strong")))) {
         if (!set.questions.some(q => strong.textContent === `Q${q.number}`)) continue
         const before = strong.previousSibling
         const after = strong.nextSibling
@@ -24,7 +25,7 @@ export function questionBlocks(prose: Element, set: QuestionSet, index: number):
         question.append(range.extractContents())
         paragraph.after(question)
     }
-    const blocks = Array.from(prose.children) as HTMLElement[]
+    const blocks = documents.flatMap(document => Array.from(document.children)) as HTMLElement[]
     const isHeader = (el: HTMLElement, n: number) => el.tagName === "P" &&
         el.textContent?.trimStart().startsWith(`❓ Q${n} - `) &&
         el.firstElementChild?.tagName === "STRONG" && el.firstElementChild.textContent === `Q${n}`

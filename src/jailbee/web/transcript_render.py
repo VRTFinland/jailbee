@@ -173,11 +173,16 @@ def render_entry(
                 html=body,
                 model=entry.model,
                 text=entry.text,
+                message_id=entry.message_id,
             )
         case Thinking():
             body = cache.get(entry.id, entry.text, render_markdown) if entry.text else ""
             return RenderedThinking(
-                id=entry.id, timestamp=entry.timestamp, html=body, model=entry.model
+                id=entry.id,
+                timestamp=entry.timestamp,
+                html=body,
+                model=entry.model,
+                message_id=entry.message_id,
             )
         case ToolCall():
             arguments = _input_json(entry.input)
@@ -189,6 +194,7 @@ def render_entry(
                 summary=entry.summary,
                 input_html=cache.get(entry.id, arguments, highlight_json),
                 model=entry.model,
+                message_id=entry.message_id,
             )
         case ToolResult():
             text = entry.text
