@@ -655,7 +655,11 @@ branch list shows as `other branches not checked`.
 - `jailbee git retarget [<name>] [<new-base>] [--merge]` — re-point a container at a
   different base branch (rewrites `user.jailbee.base_branch`; `pull`/`push`/`ls`
   follow it). Without `<new-base>` it asks on a TTY — type the name, Tab completes from the host's
-  other local branches (error off one); the dashboards' "Change base branch" entry asks for the branch itself, with the same suggestions, and passes it to the CLI. The stacked-PR tool: when a parent PR merges to `main`, retarget
+  other local and already-fetched upstream branches (error off one), just like
+  the new-container base picker. Local branches take precedence; a remote-only
+  base uses `refs/remotes/<upstream>/<new-base>` without creating a local branch.
+  The dashboards' "Change base branch" entry uses the same suggestions.
+  The stacked-PR tool: when a parent PR merges to `main`, retarget
   its dependent container from the parent branch onto `main`. `--merge` does
   **not** honour `push.tags` or `push.ff` — the merge it runs always behaves
   as `none` for tags and always writes a merge commit for `ff`, and there is
@@ -926,6 +930,8 @@ container, `claude-jb` runs Claude Code through the proxy while plain `claude`
 remains native. `claude-jb -C 1m` (or `--context 272k|1m|max|<tokens>`) picks the
 session's context window up to the profile's ceiling — the built-in ChatGPT routes default to 1,050,000, `-C 272k` opts down, and
 lowercase `-c` is still Claude's `--continue`; `claude-jb --help` lists the options.
+Inside the container, `jailbee litellm quota [-P NAME] [--json]` shows the ChatGPT
+subscription's usage limits (one 1-token request through the proxy).
 Choose a gateway profile with `claude-jb -P NAME` (or `--profile NAME`), then
 `JAILBEE_LITELLM_PROFILE`, then `litellm.default_profile` (`codex`), which a
 repo's host-local override may change for its own containers. The host also

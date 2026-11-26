@@ -172,7 +172,7 @@ def test_each_parallel_bulk_action_is_a_queue_entry(mocker, tmp_path):
     done, failed = list(session.queue)
     assert (done.state, done.status) == ("done", 0)
     assert (failed.state, failed.status, failed.output) == ("failed", 1, "boom")
-    assert session.queue.counts().attention == 1
+    assert session.queue.counts().failed == 1
     assert not any(e.critical for e in session.queue)
 
 

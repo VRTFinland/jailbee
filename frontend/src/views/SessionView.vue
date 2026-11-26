@@ -75,9 +75,11 @@ const transcript = ref<TranscriptView | null>(null)
 const error = ref<string | null>(null)
 const thinking = computed(() => settings.showThinking)
 const parentTitle = ref("Parent session")
+const sessionContainer = ref<string | null>(null)
 const crumbs = computed(() => [
     {label: "JailBee", to: {name: "front"}},
     {label: prefix.value, to: {name: "repo", params: {prefix: prefix.value}}},
+    ...(sessionContainer.value ? [{label: sessionContainer.value, to: {name: "container", params: {name: sessionContainer.value}}}] : []),
     ...(agentId.value === null ? [] : [{label: parentTitle.value, to: {name: "session", params: sessionRef.value}}]),
 ])
 const title = computed(() => transcript.value?.title || (agentId.value === null ? "Untitled session" : "Subagent"))
@@ -463,12 +465,11 @@ async function load() {
 
 onMounted(() => {
     void load()
-    if (agentId.value !== null) {
-        const path = [prefix.value, "sessions", agent.value, sessionId.value].map(encodeURIComponent).join("/")
-        void apiFetch<SessionSummary>(`/api/repos/${path}/summary`).then(parent => {
-            parentTitle.value = parent.title || "Untitled session"
-        }).catch(() => {})
-    }
+    const path = [prefix.value, "sessions", agent.value, sessionId.value].map(encodeURIComponent).join("/")
+    void apiFetch<SessionSummary>(`/api/repos/${path}/summary`).then(parent => {
+        parentTitle.value = parent.title || "Untitled session"
+        sessionContainer.value = parent.container ?? null
+    }).catch(() => {})
 })
 // Changing Agent context re-reads the transcript and resubscribes with the new mode.
 watch(
@@ -483,101 +484,103 @@ watch(
 </script>
 
 <template>
-    <div class="page" :style="{'--session-readable-top': `${readableTop}px`}">
+    <div :style="{'--session-readable-top': `${readableTop}px`}">
         <TitleBar @readable-top="readableTop = $event" :title="title" :crumbs="crumbs" context="session" :session="transcript ? {agent: transcript.agent, models: transcript.models, id: transcript.session_id} : null" />
-        <p v-if="dashboard && !dashboard.state.connected" class="notice ui-notice">Connecting…</p>
-        <p v-if="error" class="notice ui-notice">{{ error }}</p>
-        <p v-else-if="transcript === null" class="muted">Loading…</p>
-        <template v-else>
-            <p v-if="transcript.entries.length === 0" class="muted">This session is empty.</p>
-            <article ref="transcriptEl" class="transcript">
-                <template v-for="e in shown" :key="e.id">
-                    <TranscriptEntry
-                        v-if="e.kind === 'user'"
-                        :id="entryDomId(e.id)"
-                        kind="user"
-                        :meta="e.meta"
-                    >
-                        <details
-                            v-if="e.meta && e.expandable"
-                            class="meta-record"
-                            @toggle="expandMeta(e.id, $event)"
+        <div class="page">
+            <p v-if="dashboard && !dashboard.state.connected" class="notice ui-notice">Connecting…</p>
+            <p v-if="error" class="notice ui-notice">{{ error }}</p>
+            <p v-else-if="transcript === null" class="muted">Loading…</p>
+            <template v-else>
+                <p v-if="transcript.entries.length === 0" class="muted">This session is empty.</p>
+                <article ref="transcriptEl" class="transcript">
+                    <template v-for="e in shown" :key="e.id">
+                        <TranscriptEntry
+                            v-if="e.kind === 'user'"
+                            :id="entryDomId(e.id)"
+                            kind="user"
+                            :meta="e.meta"
                         >
-                            <summary>{{ e.label || 'Agent context' }}</summary>
-                            <div
-                                v-if="e.id in loadedContent"
-                                class="prose"
-                                v-html="loadedContent[e.id]"
-                            />
-                            <p v-else-if="contentFailed[e.id]" class="muted">
-                                The content could not be loaded.
-                            </p>
-                            <p v-else class="muted">Loading…</p>
-                        </details>
-                        <p v-else-if="e.meta && !e.html" class="meta-label">{{ e.label || 'Agent context' }}</p>
-                        <template v-else>
-                            <p v-if="e.meta && e.label" class="meta-label">{{ e.label }}</p>
+                            <details
+                                v-if="e.meta && e.expandable"
+                                class="meta-record"
+                                @toggle="expandMeta(e.id, $event)"
+                            >
+                                <summary>{{ e.label || 'Agent context' }}</summary>
+                                <div
+                                    v-if="e.id in loadedContent"
+                                    class="prose"
+                                    v-html="loadedContent[e.id]"
+                                />
+                                <p v-else-if="contentFailed[e.id]" class="muted">
+                                    The content could not be loaded.
+                                </p>
+                                <p v-else class="muted">Loading…</p>
+                            </details>
+                            <p v-else-if="e.meta && !e.html" class="meta-label">{{ e.label || 'Agent context' }}</p>
+                            <template v-else>
+                                <p v-if="e.meta && e.label" class="meta-label">{{ e.label }}</p>
+                                <div class="prose" v-html="e.html" />
+                            </template>
+                        </TranscriptEntry>
+                        <TranscriptEntry
+                            v-else-if="e.kind === 'assistant'"
+                            :id="entryDomId(e.id)"
+                            kind="assistant"
+                        >
+                            <div v-if="e.model" class="model">{{ e.model }}</div>
                             <div class="prose" v-html="e.html" />
-                        </template>
-                    </TranscriptEntry>
-                    <TranscriptEntry
-                        v-else-if="e.kind === 'assistant'"
-                        :id="entryDomId(e.id)"
-                        kind="assistant"
-                    >
-                        <div v-if="e.model" class="model">{{ e.model }}</div>
-                        <div class="prose" v-html="e.html" />
-                    </TranscriptEntry>
-                    <TranscriptEntry
-                        v-else-if="e.kind === 'thinking'"
-                        :id="entryDomId(e.id)"
-                        kind="thinking"
-                    >
-                        <div class="label">Thinking</div>
-                        <div v-if="e.html" class="prose" v-html="e.html" />
-                        <p v-else class="muted">(redacted)</p>
-                    </TranscriptEntry>
-                    <ToolCall
-                        v-else-if="e.kind === 'tool_call'"
-                        :id="entryDomId(e.id)"
-                        :call="e"
-                        :result="byCall.results.get(e.call_id) ?? null"
-                        :subagents="byCall.subagents.get(e.call_id) ?? []"
-                        :session-ref="sessionRef"
-                    />
-                    <TranscriptEntry
-                        v-else-if="e.kind === 'tool_result'"
-                        :id="entryDomId(e.id)"
-                        kind="orphan"
-                    >
-                        <div class="prose" v-html="e.html" />
-                    </TranscriptEntry>
-                    <TranscriptEntry
-                        v-else-if="e.kind === 'subagent'"
-                        :id="entryDomId(e.id)"
-                        kind="orphan"
-                    >
-                        <router-link
-                            :to="{name: 'subagent', params: {...sessionRef, agentId: e.agent_id}}"
+                        </TranscriptEntry>
+                        <TranscriptEntry
+                            v-else-if="e.kind === 'thinking'"
+                            :id="entryDomId(e.id)"
+                            kind="thinking"
                         >
-                            Subagent: {{ e.description || e.agent_id }}
-                        </router-link>
-                    </TranscriptEntry>
-                </template>
-            </article>
-            <Button
-                v-if="jumpLabel"
-                :variant="pending.length > 0 || unseen !== null ? 'tonal' : 'primary'"
-                icon="page-down"
-                class="jump-latest"
-                :class="{'new-messages': pending.length > 0 || unseen !== null}"
-                @click="jump()"
-            >
-                {{ jumpLabel }}
-            </Button>
-        </template>
-        <PageNav :pager="pager" jump-enabled @jump="openJump()" />
-        <JumpPanel v-if="jumpPanelOpen" :entries="shown" :origin="jumpOrigin" @close="jumpPanelOpen = false" @select="selectJump" />
+                            <div class="label">Thinking</div>
+                            <div v-if="e.html" class="prose" v-html="e.html" />
+                            <p v-else class="muted">(redacted)</p>
+                        </TranscriptEntry>
+                        <ToolCall
+                            v-else-if="e.kind === 'tool_call'"
+                            :id="entryDomId(e.id)"
+                            :call="e"
+                            :result="byCall.results.get(e.call_id) ?? null"
+                            :subagents="byCall.subagents.get(e.call_id) ?? []"
+                            :session-ref="sessionRef"
+                        />
+                        <TranscriptEntry
+                            v-else-if="e.kind === 'tool_result'"
+                            :id="entryDomId(e.id)"
+                            kind="orphan"
+                        >
+                            <div class="prose" v-html="e.html" />
+                        </TranscriptEntry>
+                        <TranscriptEntry
+                            v-else-if="e.kind === 'subagent'"
+                            :id="entryDomId(e.id)"
+                            kind="orphan"
+                        >
+                            <router-link
+                                :to="{name: 'subagent', params: {...sessionRef, agentId: e.agent_id}}"
+                            >
+                                Subagent: {{ e.description || e.agent_id }}
+                            </router-link>
+                        </TranscriptEntry>
+                    </template>
+                </article>
+                <Button
+                    v-if="jumpLabel"
+                    :variant="pending.length > 0 || unseen !== null ? 'tonal' : 'primary'"
+                    icon="page-down"
+                    class="jump-latest"
+                    :class="{'new-messages': pending.length > 0 || unseen !== null}"
+                    @click="jump()"
+                >
+                    {{ jumpLabel }}
+                </Button>
+            </template>
+            <PageNav :pager="pager" jump-enabled @jump="openJump()" />
+            <JumpPanel v-if="jumpPanelOpen" :entries="shown" :origin="jumpOrigin" @close="jumpPanelOpen = false" @select="selectJump" />
+        </div>
     </div>
 </template>
 

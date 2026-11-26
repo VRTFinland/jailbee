@@ -54,7 +54,7 @@ def test_parent_title_needs_neither_the_parent_document_nor_the_repository_list(
     ).to_be_visible()
 
 
-def test_narrow_parent_collapses_and_navigates_without_a_viewport_breakpoint(
+def test_narrow_parent_keeps_every_level_and_navigates_without_a_viewport_breakpoint(
     breadcrumb_page: Page,
 ) -> None:
     page = breadcrumb_page
@@ -63,8 +63,8 @@ def test_narrow_parent_collapses_and_navigates_without_a_viewport_breakpoint(
     page.locator(".title-bar").evaluate("bar => bar.style.width = '280px'")
     breadcrumb = page.get_by_role("navigation", name="Breadcrumb")
     parent = breadcrumb.get_by_role("link", name=SESSION_TITLE, exact=True)
-    expect(parent.locator('svg[aria-hidden="true"]')).to_be_visible()
-    expect(breadcrumb.get_by_role("link")).to_have_count(1)
+    expect(breadcrumb.get_by_role("link")).to_have_text(["JailBee", "work", SESSION_TITLE])
+    expect(breadcrumb.get_by_role("link", name="JailBee", exact=True)).to_be_visible()
     expect(parent).to_have_attribute("aria-label", SESSION_TITLE)
     box = parent.bounding_box()
     assert box is not None and box["height"] == 44
@@ -82,7 +82,7 @@ def test_short_parent_keeps_its_name_when_the_current_title_is_long(breadcrumb_p
     breadcrumb.get_by_role("link", name=SESSION_TITLE, exact=True).click()
     expect(page.get_by_role("heading", name=SESSION_TITLE, exact=True)).to_be_visible()
     page.set_viewport_size({"width": 280, "height": 844})
-    expect(breadcrumb.get_by_role("link")).to_have_count(1)
+    expect(breadcrumb.get_by_role("link", name="JailBee", exact=True)).to_be_visible()
     page.evaluate(
         "() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))"
     )
@@ -98,24 +98,64 @@ def test_wide_phone_and_resize_restore_the_subagent_path(breadcrumb_page: Page) 
     page.set_viewport_size({"width": 1280, "height": 800})
     expect(breadcrumb.get_by_role("link")).to_have_text(["JailBee", "work", SESSION_TITLE])
     page.set_viewport_size({"width": 560, "height": 800})
-    expect(breadcrumb.get_by_role("link")).to_have_text(["work", SESSION_TITLE])
+    expect(breadcrumb.get_by_role("link")).to_have_text(["JailBee", "work", SESSION_TITLE])
     page.set_viewport_size({"width": 390, "height": 844})
-    expect(breadcrumb.get_by_role("link")).to_have_count(1)
+    expect(breadcrumb.get_by_role("link", name="JailBee", exact=True)).to_be_visible()
     parent = breadcrumb.get_by_role("link", name=SESSION_TITLE, exact=True)
     expect(parent).to_have_text(SESSION_TITLE)
     assert parent.evaluate("link => link.firstElementChild.scrollWidth > link.clientWidth")
     assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
     assert page.get_by_role("heading", name=SUBAGENT_TITLE).evaluate(
-        "title => title.scrollWidth === title.clientWidth"
+        "title => title.clientWidth >= 24"
     )
     page.set_viewport_size({"width": 280, "height": 844})
-    expect(parent.locator('svg[aria-hidden="true"]')).to_be_visible()
+    expect(breadcrumb.get_by_role("link")).to_have_text(["JailBee", "work", SESSION_TITLE])
     assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
     page.set_viewport_size({"width": 1280, "height": 800})
     expect(breadcrumb.get_by_role("link")).to_have_text(["JailBee", "work", SESSION_TITLE])
     for link in breadcrumb.get_by_role("link").all():
-        assert link.evaluate("link => link.scrollWidth === link.clientWidth")
+        assert link.evaluate("link => link.clientWidth >= 24")
     breadcrumb.get_by_role("link", name="work", exact=True).click()
     expect(page.get_by_role("heading", name="work", exact=True)).to_be_visible()
     breadcrumb.get_by_role("link", name="JailBee", exact=True).click()
     expect(page.get_by_role("heading", name="JailBee", exact=True)).to_be_visible()
+
+
+@pytest.mark.parametrize("width", [360, 1280])
+@pytest.mark.parametrize("font_size", [16, 28])
+@pytest.mark.parametrize("subagent", [False, True])
+def test_long_session_title_keeps_root_repo_and_container(
+    breadcrumb_page: Page, width: int, font_size: int, subagent: bool
+) -> None:
+    page = breadcrumb_page
+    page.route(
+        "**/summary",
+        lambda route: route.fulfill(json={"title": SESSION_TITLE, "container": "work-main"}),
+    )
+    if subagent:
+        page.reload()
+    else:
+        page.get_by_role("navigation", name="Breadcrumb").get_by_role(
+            "link", name=SESSION_TITLE, exact=True
+        ).click()
+    page.set_viewport_size({"width": width, "height": 844})
+    page.evaluate(
+        "size => document.documentElement.style.setProperty('--font-size-body', `${size}px`)",
+        font_size,
+    )
+    breadcrumb = page.get_by_role("navigation", name="Breadcrumb")
+    expect(breadcrumb.get_by_role("link")).to_have_text(
+        ["JailBee", "work", "work-main"] + ([SESSION_TITLE] if subagent else [])
+    )
+    current = SUBAGENT_TITLE if subagent else SESSION_TITLE
+    title = breadcrumb.get_by_role("heading", name=current, exact=True)
+    tooltip = title.get_attribute("title")
+    assert tooltip is not None and tooltip.startswith(current)
+    expect(title).to_have_attribute("aria-label", current)
+    assert title.evaluate("el => getComputedStyle(el).fontSize") == breadcrumb.get_by_role(
+        "link"
+    ).first.evaluate("el => getComputedStyle(el).fontSize")
+    for item in breadcrumb.locator("a, h1").all():
+        assert item.evaluate("el => el.clientWidth >= 16")
+    assert breadcrumb.evaluate("el => el.scrollWidth <= el.clientWidth")
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")

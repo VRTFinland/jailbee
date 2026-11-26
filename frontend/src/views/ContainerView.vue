@@ -5,6 +5,7 @@ import {useRoute, useRouter} from "vue-router"
 import {apiFetch, Unauthorized} from "../api"
 import PageNav from "../components/PageNav.vue"
 import Button from "../components/ui/Button.vue"
+import IconButton from "../components/ui/IconButton.vue"
 import Field from "../components/ui/Field.vue"
 import ListRow from "../components/ui/ListRow.vue"
 import StatusChip from "../components/ui/StatusChip.vue"
@@ -27,6 +28,11 @@ const info = computed(() => rows.value.find(row => row.name === name.value))
 const children = computed(() => rows.value.filter(row => row.child?.orchestrator === name.value))
 const live = ref<ContainerSessionList | null>(null)
 const history = ref<ContainerSessionHistory | null>(null)
+const repoPrefix = computed(() => live.value?.repo ?? history.value?.repo ?? dashboard?.state.view?.repos.find(repo => repo.containers.some(row => row.name === name.value))?.prefix)
+const crumbs = computed(() => [
+    {label: "JailBee", to: {name: "front"}},
+    ...(repoPrefix.value ? [{label: repoPrefix.value, to: {name: "repo", params: {prefix: repoPrefix.value}}}] : []),
+])
 const historyPage = ref(0)
 const search = ref("")
 const historyQuery = ref("")
@@ -138,68 +144,70 @@ watch([name, historyPage, historyQuery, liveOnly], async ([selected, page, query
 </script>
 
 <template>
-    <div class="page">
-        <TitleBar @readable-top="readableTop = $event" :title="name" :crumbs="[{label: 'JailBee', to: {name: 'front'}}]" />
-        <p v-if="info?.child" class="parent">
-            Child of <router-link v-if="info.child.orchestrator" :to="{name: 'container', params: {name: info.child.orchestrator}}">{{ info.child.orchestrator_short_name }}</router-link><span v-else>{{ info.child.orchestrator_short_name }}</span>
-            · {{ info.child.state }}<template v-if="info.child.runner"> · {{ info.child.runner }}</template>
-            <template v-if="!rows.some(row => row.name === info?.child?.orchestrator)"> · orchestrator not listed</template>
-        </p>
-        <section v-if="info?.orchestrator || children.length" class="children" aria-label="Children">
-            <h2>Children ({{ children.length }})</h2>
-            <p v-if="!children.length" class="muted">No children.</p>
-            <ul v-else>
-                <ListRow v-for="child in children" :key="child.name" wrap
-                    :to="{name: 'container', params: {name: child.name}}"
-                    :link-label="[child.cells[0] || child.name, child.child?.state ? `State: ${child.child.state}` : null,
-                        child.child?.runner ? `Runner: ${child.child.runner}` : null].filter(Boolean).join(' ')">
-                    <template #title>{{ child.cells[0] || child.name }}</template>
+    <div>
+        <TitleBar @readable-top="readableTop = $event" :title="name" :crumbs="crumbs" />
+        <div class="page">
+            <p v-if="info?.child" class="parent">
+                Child of <router-link v-if="info.child.orchestrator" :to="{name: 'container', params: {name: info.child.orchestrator}}">{{ info.child.orchestrator_short_name }}</router-link><span v-else>{{ info.child.orchestrator_short_name }}</span>
+                · {{ info.child.state }}<template v-if="info.child.runner"> · {{ info.child.runner }}</template>
+                <template v-if="!rows.some(row => row.name === info?.child?.orchestrator)"> · orchestrator not listed</template>
+            </p>
+            <section v-if="info?.orchestrator || children.length" class="children" aria-label="Children">
+                <h2>Children ({{ children.length }})</h2>
+                <p v-if="!children.length" class="muted">No children.</p>
+                <ul v-else>
+                    <ListRow v-for="child in children" :key="child.name" wrap
+                        :to="{name: 'container', params: {name: child.name}}"
+                        :link-label="[child.cells[0] || child.name, child.child?.state ? `State: ${child.child.state}` : null,
+                            child.child?.runner ? `Runner: ${child.child.runner}` : null].filter(Boolean).join(' ')">
+                        <template #title>{{ child.cells[0] || child.name }}</template>
+                        <template #secondary>
+                            State: {{ child.child?.state }}<template v-if="child.child?.runner"> · Runner: {{ child.child.runner }}</template>
+                        </template>
+                    </ListRow>
+                </ul>
+            </section>
+            <h2>Sessions</h2>
+            <label class="session-filter">
+                <Switch v-model="liveOnly" label="Live only" />
+                <span>Live only</span>
+            </label>
+            <p v-if="error" class="notice ui-notice">{{ error }}</p>
+            <p v-else-if="live === null" class="muted">Loading…</p>
+            <div v-else-if="liveOnly && sessions.length === 0">
+                <p class="muted">No live sessions.</p>
+                <Button variant="tonal" @click="liveOnly = false">Show all sessions</Button>
+            </div>
+            <p v-else-if="sessions.length === 0 && !historyPending && !historyFailed && !historyQuery" class="muted">No sessions.</p>
+            <Field v-if="live !== null && !liveOnly" v-model="search" class="history-search"
+                label="Search earlier sessions" type="search" placeholder="Title or session ID" />
+            <p v-if="live !== null && !liveOnly && history?.total === 0 && historyQuery" class="muted" role="status">No matches.</p>
+            <ul v-if="live !== null && sessions.length" class="sessions">
+                <ListRow v-for="s in sessions" :key="`${s.agent}/${s.session_id}`"
+                    class="session" :data-live="s.live" :link-label="sessionLinkLabel(s)" wrap
+                    :to="{name: 'session', params: {prefix: live.repo, agent: s.agent, sessionId: s.session_id}}">
+                    <template #title><span class="title">{{ s.title || "Untitled session" }}</span></template>
+                    <template #trailing v-if="sessionStatus(s)">
+                        <StatusChip v-bind="sessionStatus(s)!" />
+                    </template>
                     <template #secondary>
-                        State: {{ child.child?.state }}<template v-if="child.child?.runner"> · Runner: {{ child.child.runner }}</template>
+                        <span class="meta">
+                            <span class="agent">{{ s.agent }}</span>
+                            <time v-if="s.last_activity" :datetime="s.last_activity">{{ when(s.last_activity) }}</time>
+                            <span v-if="s.models.length" class="models">{{ s.models.join(", ") }}</span>
+                        </span>
                     </template>
                 </ListRow>
             </ul>
-        </section>
-        <h2>Sessions</h2>
-        <label class="session-filter">
-            <Switch v-model="liveOnly" label="Live only" />
-            <span>Live only</span>
-        </label>
-        <p v-if="error" class="notice ui-notice">{{ error }}</p>
-        <p v-else-if="live === null" class="muted">Loading…</p>
-        <div v-else-if="liveOnly && sessions.length === 0">
-            <p class="muted">No live sessions.</p>
-            <Button variant="tonal" @click="liveOnly = false">Show all sessions</Button>
+            <p v-if="live !== null && !liveOnly && historyPending" class="muted">Loading earlier sessions…</p>
+            <p v-else-if="live !== null && !liveOnly && historyFailed" class="muted">Earlier sessions could not be loaded.</p>
+            <nav v-if="live !== null && !liveOnly" class="history-nav" aria-label="Earlier sessions">
+                <IconButton variant="tonal" icon="back" label="Previous earlier sessions" :disabled="historyPending || historyPage === 0" @click="historyPage--" />
+                <span aria-live="polite">Page {{ historyPage + 1 }} of {{ historyPages }}</span>
+                <IconButton variant="tonal" icon="forward" label="Next earlier sessions" :disabled="historyPending || historyFailed || historyPage + 1 >= historyPages" @click="historyPage++" />
+            </nav>
+            <PageNav :pager="pager" />
         </div>
-        <p v-else-if="sessions.length === 0 && !historyPending && !historyFailed && !historyQuery" class="muted">No sessions.</p>
-        <Field v-if="live !== null && !liveOnly" v-model="search" class="history-search"
-            label="Search earlier sessions" type="search" placeholder="Title or session ID" />
-        <p v-if="live !== null && !liveOnly && history?.total === 0 && historyQuery" class="muted" role="status">No matches.</p>
-        <ul v-if="live !== null && sessions.length" class="sessions">
-            <ListRow v-for="s in sessions" :key="`${s.agent}/${s.session_id}`"
-                class="session" :data-live="s.live" :link-label="sessionLinkLabel(s)" wrap
-                :to="{name: 'session', params: {prefix: live.repo, agent: s.agent, sessionId: s.session_id}}">
-                <template #title><span class="title">{{ s.title || "Untitled session" }}</span></template>
-                <template #trailing v-if="sessionStatus(s)">
-                    <StatusChip v-bind="sessionStatus(s)!" />
-                </template>
-                <template #secondary>
-                    <span class="meta">
-                        <span class="agent">{{ s.agent }}</span>
-                        <time v-if="s.last_activity" :datetime="s.last_activity">{{ when(s.last_activity) }}</time>
-                        <span v-if="s.models.length" class="models">{{ s.models.join(", ") }}</span>
-                    </span>
-                </template>
-            </ListRow>
-        </ul>
-        <p v-if="live !== null && !liveOnly && historyPending" class="muted">Loading earlier sessions…</p>
-        <p v-else-if="live !== null && !liveOnly && historyFailed" class="muted">Earlier sessions could not be loaded.</p>
-        <nav v-if="live !== null && !liveOnly" class="history-nav" aria-label="Earlier sessions">
-            <Button variant="tonal" aria-label="Previous earlier sessions" :disabled="historyPending || historyPage === 0" @click="historyPage--">Previous</Button>
-            <span aria-live="polite">Page {{ historyPage + 1 }} of {{ historyPages }}</span>
-            <Button variant="tonal" aria-label="Next earlier sessions" :disabled="historyPending || historyFailed || historyPage + 1 >= historyPages" @click="historyPage++">Next</Button>
-        </nav>
-        <PageNav :pager="pager" />
     </div>
 </template>
 
@@ -229,6 +237,7 @@ watch([name, historyPage, historyQuery, liveOnly], async ([selected, page, query
 }
 .history-nav {
     display: flex;
+    justify-content: center;
     flex-wrap: wrap;
     align-items: center;
     gap: var(--md-space-16);

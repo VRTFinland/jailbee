@@ -184,7 +184,7 @@ def test_branch_arguments_complete_branches():
     for cmd_path, param_name, completer in [
         ("jailbee new", "container_branch", complete_branch),
         ("jailbee new", "base", complete_base_branch),
-        ("jailbee retarget", "new_base", complete_branch),
+        ("jailbee retarget", "new_base", complete_base_branch),
     ]:
         param = _param(cmd_path, param_name)
         assert _underlying_completer(param) is completer, f"{cmd_path}:{param_name}"

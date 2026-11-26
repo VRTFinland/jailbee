@@ -44,7 +44,7 @@ def test_pre_worker_failure_is_retained_until_dismissed(tmp_path, spawn_error):
     reason = "missing-jailbee" if spawn_error else "cannot resolve base"
     assert reason in entry.output
     assert reason in notices[0]
-    assert changes[-1] == QueueCounts(0, 1)
+    assert changes[-1] == QueueCounts(running=0, failed=1)
     queue.set_jobs(())  # No worker ever recorded a job; refreshing cannot lose the error.
     assert queue.get(entry.id) == entry
     assert queue.dismiss(entry.id)
@@ -119,7 +119,7 @@ def test_missing_answer_retries_once_with_live_queue_state(tmp_path, result, out
     assert len(seen) == 1
     assert seen[0].cwd == tmp_path
     assert seen[0].argv[0] == "-c"
-    assert QueueCounts(0, 1) in changes  # awaiting a modal answer
+    assert QueueCounts(running=0, pending=1) in changes  # awaiting a modal answer
     assert notices[0] is None if hint is None else hint in notices[0]
     if state is None:
         assert queue.empty

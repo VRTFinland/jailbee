@@ -126,7 +126,7 @@ describe("subagent transcripts", () => {
     it("gets the parent breadcrumb from summaries without downloading its transcript", async () => {
         const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
             if (input === "/api/repos/alpha/sessions/claude/s-1/summary") return jsonResponse(200,
-                {session_id: "s-1", agent: "claude", title: "Parent title"},
+                {session_id: "s-1", agent: "claude", title: "Parent title", container: "alpha-1"},
             )
             return jsonResponse(200, child)
         })
@@ -136,6 +136,7 @@ describe("subagent transcripts", () => {
             "/api/repos/alpha/sessions/claude/s-1/summary",
         ])
         expect(wrapper.get('a[href="/repos/alpha/sessions/claude/s-1"]').text()).toBe("Parent title")
+        expect(wrapper.findAll('nav[aria-label="Breadcrumb"] a').map(link => link.text())).toEqual(["JailBee", "alpha", "alpha-1", "Parent title"])
         wrapper.unmount()
     })
 

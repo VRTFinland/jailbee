@@ -10,6 +10,7 @@ import Button from "../components/ui/Button.vue"
 import Dialog from "../components/ui/Dialog.vue"
 import Field from "../components/ui/Field.vue"
 import Menu from "../components/ui/Menu.vue"
+import MenuRow from "../components/ui/MenuRow.vue"
 import Select from "../components/ui/Select.vue"
 import Icon from "../components/ui/Icon.vue"
 import IconButton from "../components/ui/IconButton.vue"
@@ -71,7 +72,7 @@ const selectedTheme = reactive<Record<string, string>>(Object.fromEntries(
 const ORCHESTRATOR_CHIPS = rowStatuses({state: "Running", phase: null, agent: "busy"})
 const CHILD_CHIPS = rowStatuses({state: "Running", phase: "job", agent: "waiting"})
 
-const SHAPES = ["small", "medium", "large", "extra-large", "full"]
+const SHAPES = ["extra-small", "small", "medium", "large", "extra-large", "full"]
 
 function typeStyle(token: string): Record<string, string> {
     return {
@@ -256,8 +257,10 @@ function typeStyle(token: string): Record<string, string> {
                             </Dialog>
                             <Dialog title="Quick preferences" placement="popover" preserve-scroll hide-header close-label="Close preferences">
                                 <template #trigger><Button>Open preferences</Button></template>
-                                <Field label="Device name" model-value="Reading tablet" />
-                                <Button>Save preferences</Button>
+                                <MenuRow><Field label="Device name" model-value="Reading tablet" /></MenuRow>
+                                <MenuRow action selected>Light theme</MenuRow>
+                                <MenuRow as="label"><span>Follow new messages</span><Switch label="Follow new messages" :model-value="true" /></MenuRow>
+                                <MenuRow action section-start>Save preferences</MenuRow>
                             </Dialog>
                             <Menu label="Container actions" :items="[
                                 {value: 'shell', label: 'Shell', icon: 'forward'}, {value: 'logs', label: 'Logs', icon: 'page-down'},
@@ -286,6 +289,15 @@ function typeStyle(token: string): Record<string, string> {
                             <IconButton compact icon="forward" label="Next page (compact)" />
                             <IconButton compact icon="back" label="Previous page (compact, disabled)" disabled />
                         </div>
+                    </div>
+
+                    <div class="group">
+                        <h3 class="group-title">Pagination</h3>
+                        <nav class="pagination-sample" aria-label="Earlier sessions example">
+                            <IconButton icon="back" variant="tonal" label="Previous earlier sessions" disabled />
+                            <span aria-live="polite">Page 1 of 3</span>
+                            <IconButton icon="forward" variant="tonal" label="Next earlier sessions" />
+                        </nav>
                     </div>
 
                     <div class="group">
@@ -440,6 +452,7 @@ function typeStyle(token: string): Record<string, string> {
     font-weight: var(--md-type-label-medium-weight);
     transition: background-color var(--md-motion-duration) var(--md-motion-easing);
 }
+.pagination-sample { display: flex; align-items: center; justify-content: center; gap: var(--md-space-16); }
 .shape:hover {
     background: var(--md-surface-container-highest);
 }

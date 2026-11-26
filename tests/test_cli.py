@@ -4811,7 +4811,7 @@ def test_git_retarget_merge_failure_keeps_retarget_and_hints_retry(mocker, tmp_p
 
 def _retarget_tty(mocker):
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
-    mocker.patch("jailbee.git.list_branches", return_value=["main", "feat/a", "develop"])
+    mocker.patch("jailbee.git.list_base_candidates", return_value=["main", "feat/a", "develop"])
     mocker.patch("jailbee.cli._container_base_branch", return_value="feat/a")
 
 
@@ -4825,6 +4825,22 @@ def test_git_retarget_without_base_asks_with_the_other_branches(mocker, tmp_path
     assert result.exit_code == 0, result.output
     ask.assert_called_once_with("base branch", None, ["main", "develop"])
     assert mock_rt.call_args.args[3] == "develop"
+
+
+def test_git_retarget_without_base_offers_and_accepts_fetched_upstream(mocker, tmp_path):
+    mock_rt = _retarget_cli_mocks(mocker, tmp_path)
+    _retarget_tty(mocker)
+    mocker.patch(
+        "jailbee.git.list_base_candidates",
+        return_value=["main", "feat/a", "release/2.1"],
+    )
+    ask = mocker.patch("jailbee.prompting._ask", side_effect=["release/2.1", "main"])
+
+    result = CliRunner().invoke(app, ["git", "retarget", "feat-b"])
+
+    assert result.exit_code == 0, result.output
+    ask.assert_called_once_with("base branch", None, ["main", "release/2.1"])
+    assert mock_rt.call_args.args[3] == "release/2.1"
 
 
 def test_git_retarget_re_asks_on_a_name_that_is_not_a_host_branch(mocker, tmp_path):
@@ -4843,7 +4859,7 @@ def test_git_retarget_re_asks_on_a_name_that_is_not_a_host_branch(mocker, tmp_pa
 def test_git_retarget_with_no_other_branch_still_asks_for_free_text(mocker, tmp_path):
     mock_rt = _retarget_cli_mocks(mocker, tmp_path)
     _retarget_tty(mocker)
-    mocker.patch("jailbee.git.list_branches", return_value=["feat/a"])
+    mocker.patch("jailbee.git.list_base_candidates", return_value=["feat/a"])
     ask = mocker.patch("jailbee.prompting._ask", return_value="release")
 
     result = CliRunner().invoke(app, ["git", "retarget", "feat-b"])

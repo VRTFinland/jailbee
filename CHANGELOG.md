@@ -10,6 +10,10 @@ before editing `## Unreleased`.
 
 ### Added
 
+- `jailbee litellm quota [-P PROFILE] [--json]` inside a container shows the
+  ChatGPT subscription's usage limits (plan, used percent and reset time per
+  window) for a `claude-jb` profile routed through the LiteLLM proxy. Profiles
+  without a ChatGPT-subscription route (xAI, API keys) report none and exit 1.
 - Background commands in the terminal dashboard leave questions in Notifications
   (`Q`) instead of interrupting another task. Select an awaiting entry to answer
   it; several commands can wait independently, without a timeout. Questions
@@ -18,7 +22,10 @@ before editing `## Unreleased`.
   Each question shows the command, target and output tail, with `Later` (Esc)
   to keep it waiting and `Abort command` (Ctrl-C) to cancel explicitly.
   Returning from tmux opens the queue for new questions, not a question modal;
-  quitting with pending questions confirms how many commands will be aborted
+  quitting with pending questions confirms how many commands will be aborted.
+  A critical action whose modal is in the foreground still asks immediately.
+  The queue counts pending questions separately from failures: `?` and "awaiting
+  answer" use the theme accent, while red `✗` stays reserved for failures
   ([#168](https://github.com/VRTFinland/jailbee/issues/168)).
 - The web dashboard has a design system: Material 3 colours from one blue seed in
   both the light and dark themes (status colours readable at WCAG AA), the bundled
@@ -52,7 +59,10 @@ before editing `## Unreleased`.
   dialogs and buttons, vector page controls with full-size upward hit areas behind
   compact chrome, and preserves page steps, guide lines and reading positions. Settings, quick preferences and prompt
   navigation share the same dialog and control primitives, with history,
-  reading position and measured menu paging preserved
+  reading position and measured menu paging preserved, edge-to-edge title bars
+  with complete, ellipsized navigation paths, padded menu surfaces with e-ink-safe
+  elevation, 16px drawer corners and reduced-motion-aware sheet entry, and centred
+  arrow controls for list pagination
   ([#167](https://github.com/VRTFinland/jailbee/issues/167)).
 - Web dashboard reader improvements: compact breadcrumb title bars and session details,
   an in-context settings overlay, configurable e-ink page controls and page step,
@@ -459,6 +469,10 @@ before editing `## Unreleased`.
 
 ### Changed
 
+- `jailbee git retarget` accepts already-fetched upstream branches as bases,
+  without creating a local host branch. Its CLI, dashboard and shell-completion
+  candidates now match the new-container base picker (local branches first,
+  then upstream-only branches); the current base is omitted from the picker.
 - Successful broker destruction of a child marks read only the unread,
   broker-generated `idle` notices snapshotted for that child before destruction.
   Other messages, children and orchestrators are unaffected
@@ -541,6 +555,11 @@ before editing `## Unreleased`.
 
 ### Fixed
 
+- Pulling a container into a fetched-only base no longer creates the host's
+  local base branch at the container tip without checking the upstream history.
+  It fast-forwards only when the fetched base is included; diverged histories
+  require the existing `--checkout` merge flow. Base-anchor refresh on start
+  also falls back to the fetched upstream ref when no local base exists.
 - Container restarts stop successfully before detaching runtime sockets, so a
   failed or still-running shutdown no longer strands a running container's GUI
   or fails immediately on Incus's "busy running a stop operation" error.
