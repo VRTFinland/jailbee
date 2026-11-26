@@ -6,13 +6,14 @@ import json
 from collections.abc import Callable
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 from starlette.concurrency import run_in_threadpool
 
 from jailbee.web import auth_admin, chat
 from jailbee.web.container_sessions import live_session_containers, session_containers
 from jailbee.web.deps import Context, RequireSession
 from jailbee.web.protocol import (
+    ChatAvailability,
     EntryContent,
     MetaMode,
     SessionListView,
@@ -82,6 +83,8 @@ async def _transcript_view(
     prefix: str,
     load: Callable[[], SessionTranscript | None],
     meta: MetaMode = "hidden",
+    *,
+    subagent: bool = False,
 ) -> TranscriptView:
     # Unknown and excluded repositories, agents, sessions and subagents all
     # answer the same 404, so the answer reveals nothing about what exists.
@@ -103,7 +106,13 @@ async def _transcript_view(
             models=list(found.info.models),
             entries=render_entries(found.entries, ctx.render_cache, meta),
             offset=found.offset,
-            chat=chat.availability(ctx, prefix, found.agent, found.info.session_id),
+            chat=(
+                ChatAvailability(
+                    available=False, code="unsupported_agent", message="Subagent chat unavailable"
+                )
+                if subagent
+                else chat.availability(ctx, prefix, found.agent, found.info.session_id)
+            ),
         )
 
     view = await run_in_threadpool(build)
@@ -127,7 +136,14 @@ async def session_transcript(
 
 
 class MessageRequest(BaseModel):
-    text: str
+    text: str = Field(max_length=65536)
+
+    @field_validator("text")
+    @classmethod
+    def nonblank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("Message must not be blank")
+        return value
 
 
 class MessageResponse(BaseModel):
@@ -206,6 +222,7 @@ async def subagent_transcript(
         prefix,
         lambda: ctx.repo_sessions.subagent_transcript(prefix, agent, session_id, agent_id),
         meta,
+        subagent=True,
     )
 
 

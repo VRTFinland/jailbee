@@ -295,13 +295,25 @@ def test_a_session_two_containers_saw_belongs_to_the_one_that_saw_it_last(
         assert {r["session_id"]: r["container"] for r in rows}[SESSION_B] == newer
 
 
-def test_web_chat_delivers_and_audits_exact_message(home, tmp_path, monkeypatch):
+@pytest.mark.parametrize(
+    "refusal",
+    [
+        None,
+        "container_not_running",
+        "no_live_session",
+        "waiting_at_dialog",
+        "no_pane",
+        "unsent_terminal_input",
+    ],
+)
+def test_web_chat_delivers_and_audits_exact_message(home, tmp_path, monkeypatch, refusal):
     from unittest.mock import Mock
 
     from sqlalchemy import select
 
     from jailbee.accounts.adapters.base import get_adapter
     from jailbee.db.models import WebAuthEvent
+    from tests.conftest import make_config
 
     live_home = tmp_path / "live"
     (live_home / "sessions").mkdir(parents=True)
@@ -310,7 +322,10 @@ def test_web_chat_delivers_and_audits_exact_message(home, tmp_path, monkeypatch)
     )
     adapter = get_adapter("claude")
     monkeypatch.setattr(type(adapter), "session_home", lambda self, cfg, name: live_home)
-    monkeypatch.setattr("jailbee.web.chat.load_repo_config", lambda path: Mock())
+    monkeypatch.setattr(
+        "jailbee.web.chat.load_repo_config",
+        lambda path: make_config(tmp_path, agents={"claude": {}}),
+    )
     incus = Mock()
     incus.list_containers.return_value = [{"name": "alpha-1", "status": "Running"}]
     incus.exec.side_effect = [
@@ -321,6 +336,30 @@ def test_web_chat_delivers_and_audits_exact_message(home, tmp_path, monkeypatch)
         "",
         "",
     ]
+    if refusal == "container_not_running":
+        incus.list_containers.return_value = []
+    elif refusal == "no_live_session":
+        (live_home / "sessions" / "session.json").unlink()
+    elif refusal == "waiting_at_dialog":
+        (live_home / "sessions" / "session.json").write_text(
+            json.dumps(
+                {
+                    "pid": 42,
+                    "procStart": 123,
+                    "status": "waiting",
+                    "waitingFor": "permission",
+                    "sessionId": SESSION_A,
+                }
+            )
+        )
+    elif refusal == "no_pane":
+        incus.exec.side_effect = ["42 10 123\n10 1 22\n", "%1 99\n"]
+    elif refusal == "unsent_terminal_input":
+        incus.exec.side_effect = [
+            "42 10 123\n10 1 22\n",
+            "%1 10\n",
+            "────────\n> draft\n────────\n",
+        ]
     snap = snapshot_of(repo_group("alpha", container("alpha-1", agent_status=live(SESSION_A))))
     engine = get_engine()
     pin = PinHolder(generate=pin_sequence())
@@ -345,11 +384,44 @@ def test_web_chat_delivers_and_audits_exact_message(home, tmp_path, monkeypatch)
             response = client.post(
                 f"/api/repos/alpha/sessions/claude/{SESSION_A}/messages", json={"text": text}
             )
-            assert response.json()["code"] == "delivered"
-            assert incus.exec_with_input.call_args.args[2] == text
+            assert response.json()["code"] == (refusal or "delivered")
+            if refusal:
+                incus.exec_with_input.assert_not_called()
+            else:
+                assert incus.exec_with_input.call_args.args[2] == text
     with Session(engine) as db:
         event = db.exec(select(WebAuthEvent).where(WebAuthEvent.event == "agent_message")).first()[
             0
         ]
         assert event.device_name == "reader"
         assert json.loads(event.source)["text"] == text
+
+
+def test_bad_repo_config_disables_chat_without_breaking_transcript(home, monkeypatch):
+    def broken(_path):
+        raise ValueError("private config details")
+
+    monkeypatch.setattr("jailbee.web.chat.load_repo_config", broken)
+    snap = snapshot_of(repo_group("alpha", container("alpha-1", agent_status=live(SESSION_A))))
+    pin = PinHolder(generate=pin_sequence())
+    deps = WebDeps(
+        snapshot_source=FakeSourceFactory(initial=snap),
+        engine=get_engine(),
+        pin=pin,
+        agent_chat=True,
+        agent_homes={"alpha": [("claude", home)]}.get,
+    )
+    with TestClient(create_app(deps)) as client:
+        token = client.post(
+            "/api/auth", json={"method": "pin", "pin": pin.current, "device_name": "reader"}
+        ).json()["token"]
+        client.headers["Authorization"] = f"Bearer {token}"
+        response = client.get(f"/api/repos/alpha/sessions/claude/{SESSION_A}")
+        assert response.status_code == 200
+        assert response.json()["chat"]["code"] == "configuration_error"
+        assert "private" not in response.text
+
+
+def test_blank_chat_message_is_rejected(client):
+    url = f"/api/repos/alpha/sessions/claude/{SESSION_A}/messages"
+    assert client.post(url, json={"text": "  \n"}).status_code == 422
