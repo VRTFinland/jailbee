@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import secrets
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Protocol
 
@@ -54,7 +54,6 @@ def run_actions(
     groups: Sequence[RepoGroup],
     transport: Transport,
     queue: NotificationQueue | None = None,
-    on_output: Callable[[int, str], None] | None = None,
 ) -> ActionOutcome:
     """Submit sequential actions and wait for their shared snapshots to finish.
 
@@ -136,8 +135,6 @@ def run_actions(
                     replace_output(index, text)
                 else:
                     progress.output(index, chunk)
-                if on_output is not None:
-                    on_output(index, chunk)
             last_output = text
             if snapshot.finished:
                 results.append(

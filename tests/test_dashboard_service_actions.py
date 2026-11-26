@@ -147,3 +147,4 @@ def test_capped_service_tail_replaces_local_output_instead_of_appending_old_text
     )
     assert progress.text == final
     assert outcome.outputs == [final]
+    assert outcome.output == final
