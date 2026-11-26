@@ -352,6 +352,24 @@ the image for future containers, not existing ones. An updated wrapper reading
 an older config without a ceiling accepts only windows at or below the default
 and suggests `jailbee apply` when a larger value is requested.
 
+### Subscription quota
+
+Inside a container, `jailbee litellm quota` prints the ChatGPT subscription's
+usage limits for a `claude-jb` profile: plan, each limit window's used
+percentage and the time until it resets. `-P NAME` picks the profile (default
+`JAILBEE_LITELLM_PROFILE`, then the default profile) and `--json` prints one
+JSON object for scripts such as a status line.
+
+The command sends one 1-token chat completion per distinct tier model of the
+profile, cheapest first, and reads the `x-codex-*` headers the ChatGPT backend
+attaches to its reply; LiteLLM forwards them as `llm_provider-x-codex-*` on
+`/v1/chat/completions`, not on the Anthropic-format `/v1/messages` that
+`claude-jb` uses. Each call spends that request from the quota, so cache the
+result rather than running it on every status line refresh. These headers are
+an internal interface of the ChatGPT backend and may change without notice.
+xAI and API-key routes report no quota: a profile without a ChatGPT-subscription
+route exits 1. On the host, `jailbee litellm quota` is not available.
+
 ### Model map
 
 By default, `claude-jb` prepends a generated model map to the profile's

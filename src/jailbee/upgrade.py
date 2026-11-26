@@ -650,6 +650,14 @@ UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
             "the container skill carrying service, network, GitHub and live host/model guidance"
         ),
     ),
+    UpgradeNote(
+        version=(1, 8, 10),
+        actions=frozenset({"apply"}),
+        reason=(
+            "`jailbee apply` syncs the container and usage skills describing "
+            "`jailbee litellm quota`"
+        ),
+    ),
 )
 """What each release requires, ascending by version. Maintained by hand.
 
