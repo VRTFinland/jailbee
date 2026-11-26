@@ -270,11 +270,13 @@ class DashboardApp(App[int], inherit_bindings=False):
             # The snapshot is as old as the command was long.
             client.set_active(True)
             client.refresh()
+            self._sync_questions()
             self.session.end_hand_off(attention_before)
             self._handoff_epoch += 1
             # `fn` may have set its own OSC 2 title: rewrite ours on the next frame.
             self._last_title = None
             self._painted = None
+            self.refresh_frame()
 
     # --- action runner -----------------------------------------------------
 
@@ -321,7 +323,7 @@ class DashboardApp(App[int], inherit_bindings=False):
             self._on_app_thread(settle)
 
         if self.threaded_actions:
-            self.run_worker(work, thread=True, exit_on_error=False)
+            threading.Thread(target=work, daemon=True).start()
         else:
             work()
 
@@ -354,6 +356,8 @@ class DashboardApp(App[int], inherit_bindings=False):
     def _on_app_thread(self, fn: Callable[[], None]) -> None:
         if threading.get_ident() == self._ui_thread:
             fn()
+            return
+        if self._prompts_closed or not self.is_running:
             return
         try:
             self.call_from_thread(fn)

@@ -240,22 +240,16 @@ def test_dead_child_clears_pending_question(mocker, tmp_path, caplog, while_moun
     async def scenario():
         mounting = asyncio.Event()
         release_mount = asyncio.Event()
-        disconnected = Event()
+        disconnected = app.session.client.question_disconnected
         mount = pm.TextModal.on_mount
-        disconnect = app._disconnect_entry
 
         async def held_mount(modal):
             mounting.set()
             await release_mount.wait()
             mount(modal)
 
-        def child_disconnected(entry_id):
-            disconnected.set()
-            disconnect(entry_id)
-
         if while_mounting:
             mocker.patch.object(pm.TextModal, "on_mount", held_mount)
-            mocker.patch.object(app, "_disconnect_entry", side_effect=child_disconnected)
         async with app.run_test() as pilot:
             try:
                 app.session.run_dashboard_command("alpha-a", "container", ["start", "alpha-a"])
@@ -316,7 +310,7 @@ def test_critical_question_waits_when_another_screen_is_on_top(mocker, tmp_path)
     asyncio.run(scenario())
 
 
-def test_exit_cancels_all_deferred_commands(mocker, tmp_path):
+def test_exit_detaches_without_cancelling_deferred_commands(mocker, tmp_path):
     answers = []
     finished = Event()
 
@@ -344,6 +338,8 @@ def test_exit_cancels_all_deferred_commands(mocker, tmp_path):
             await frame.query_one("#bottom").remove()
             app.refresh_frame()
             await frame.settle_native()
+        assert answers == []
+        app.session.client.release_test_questions()
         assert await asyncio.to_thread(finished.wait, 5)
         assert answers == [None, None]
 

@@ -116,6 +116,7 @@ class FakeStateClient:
         self._question_resolutions: list[ActionQuestionResolved] = []
         self._question_waiters: dict[int, tuple[threading.Event, list[Any]]] = {}
         self._question_serial = 0
+        self.question_disconnected = threading.Event()
         self.action_runner = subprocess_runner
         self.action_spawn = None
         self.app: tapp.DashboardApp | None = None
@@ -155,6 +156,7 @@ class FakeStateClient:
             return answer[0] if answer else None
 
         def disconnect():  # type: ignore[no-untyped-def]
+            self.question_disconnected.set()
             question = self._action_questions.pop(entry.entry_id, None)
             if question is not None:
                 waiter = self._question_waiters.pop(entry.entry_id, None)
