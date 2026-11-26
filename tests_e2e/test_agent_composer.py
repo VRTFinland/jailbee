@@ -14,15 +14,18 @@ from jailbee.accounts.adapters.base import get_adapter
 from jailbee.agent_status import AgentSummary
 from tests.conftest import make_cfg
 from tests.web_fakes import container, repo_group, snapshot_of, wait_until
-from tests_e2e.server import E2EServer
 from tests_e2e.flows import log_in_with_pin
+from tests_e2e.server import E2EServer
 from tests_e2e.test_session_reading import SESSION, TITLE, open_transcript, record
 
 
 @pytest.mark.parametrize("profile", ["normal", "eink"])
 def test_composer_delivery_and_refusal(
-    page: Page, make_server: Callable[..., E2EServer], tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch, profile: str,
+    page: Page,
+    make_server: Callable[..., E2EServer],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    profile: str,
 ) -> None:
     home = tmp_path / "home"
     project = home / "projects" / "-work-repo"
@@ -106,8 +109,11 @@ def test_composer_delivery_and_refusal(
 @pytest.mark.parametrize("width", [390, 1280])
 @pytest.mark.parametrize("profile", ["normal", "eink"])
 def test_reader_end_remains_above_composer(
-    page: Page, make_server: Callable[..., E2EServer], tmp_path: Path,
-    width: int, profile: str,
+    page: Page,
+    make_server: Callable[..., E2EServer],
+    tmp_path: Path,
+    width: int,
+    profile: str,
 ) -> None:
     page.set_viewport_size({"width": width, "height": 800})
     open_transcript(page, make_server, tmp_path)
@@ -123,7 +129,9 @@ def test_reader_end_remains_above_composer(
 
 
 def test_composer_explains_disabled_permission(
-    page: Page, make_server: Callable[..., E2EServer], tmp_path: Path,
+    page: Page,
+    make_server: Callable[..., E2EServer],
+    tmp_path: Path,
 ) -> None:
     home = tmp_path / "home"
     project = home / "projects" / "-work-repo"
