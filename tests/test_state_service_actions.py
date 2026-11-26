@@ -802,6 +802,7 @@ def test_running_action_is_interrupted_after_restart(runtime_dir, tmp_path):
         action_spawn=lambda *a, **kw: Child(kw["prompt_sock"]),
     )
     stopped = threading.Event()
+    leaked_tasks = []
 
     def run_server():
         loop = asyncio.new_event_loop()
@@ -811,6 +812,7 @@ def test_running_action_is_interrupted_after_restart(runtime_dir, tmp_path):
             stopped.set()
             release.wait(5)
             loop.run_until_complete(asyncio.gather(*server._action_tasks))
+            leaked_tasks.extend(task for task in asyncio.all_tasks(loop) if not task.done())
         finally:
             loop.close()
 
@@ -861,3 +863,6 @@ def test_running_action_is_interrupted_after_restart(runtime_dir, tmp_path):
     finally:
         release.set()
         client.close()
+        thread.join(5)
+        assert not thread.is_alive()
+        assert not leaked_tasks
