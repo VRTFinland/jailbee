@@ -204,8 +204,13 @@ def test_handler_exception_survives_child_already_gone(tmp_path: Path) -> None:
 
     with pytest.raises(KeyboardInterrupt, match="original"):
         runner.run_action(
-            ["ls"], transport="none", policy=None, cwd=tmp_path,
-            on_prompt=boom, on_output=lambda _: None, spawn=spawn,
+            ["ls"],
+            transport="none",
+            policy=None,
+            cwd=tmp_path,
+            on_prompt=boom,
+            on_output=lambda _: None,
+            spawn=spawn,
         )
 
 
@@ -323,12 +328,12 @@ def test_interrupt_gives_child_a_chance_to_exit(tmp_path, ignore):
         "while True: time.sleep(1)\n"
     )
     child = runner.popen_spawn(
-        [sys.executable, '-c', code], cwd=tmp_path, env=os.environ, prompt_sock=child_sock
+        [sys.executable, "-c", code], cwd=tmp_path, env=os.environ, prompt_sock=child_sock
     )
     try:
         assert child.stdout is not None
         assert select.select([child.stdout], [], [], 10)[0]
-        assert child.stdout.readline() == b'ready\n'
+        assert child.stdout.readline() == b"ready\n"
         child.kill()
         assert child.wait() == (-signal.SIGKILL if ignore else 0)
     finally:
