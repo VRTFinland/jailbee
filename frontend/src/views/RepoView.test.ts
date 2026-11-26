@@ -102,11 +102,13 @@ describe("RepoView", () => {
         expect(rows[1].get(".container").text()).toBe("unattributed")
     })
 
-    it("links a row to the session route", async () => {
+    it("names session links by their titles and keeps metadata as supporting text", async () => {
         const {wrapper} = await mountRepo(vi.fn().mockResolvedValue(jsonResponse(200, {sessions})))
-        expect(wrapper.findAll("li.session a")[0].attributes("href")).toBe(
-            "/repos/alpha/sessions/claude/s-new",
-        )
+        const links = wrapper.findAll("li.session a")
+        expect(links[0].attributes("href")).toBe("/repos/alpha/sessions/claude/s-new")
+        expect(links[0].text()).toBe("Fix the login bug")
+        expect(links[1].text()).toBe("Untitled session")
+        expect(wrapper.findAll("li.session")[0].text()).toContain("alpha-1")
     })
 
     it("says so when there are no sessions", async () => {
