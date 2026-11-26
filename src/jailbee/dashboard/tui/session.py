@@ -1095,7 +1095,11 @@ class DashboardSession:
             PickerEntry(
                 _queue_label(entry),
                 str(entry.id),
-                tone="accent" if entry.state == "awaiting" else "error" if entry.state == "failed" else None,
+                tone="accent"
+                if entry.state == "awaiting"
+                else "error"
+                if entry.state == "failed"
+                else None,
             )
             for entry in reversed(list(self.queue))
         ]

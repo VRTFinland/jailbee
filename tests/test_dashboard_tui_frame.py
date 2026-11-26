@@ -498,7 +498,10 @@ def test_the_queue_badge_is_at_the_right_end_of_the_title(tmp_path):
     from jailbee.dashboard.notifications import QueueCounts
 
     view = view_of(
-        [_long(tmp_path, 3)], system=_system(), show_system=True, queue=QueueCounts(running=2, failed=1)
+        [_long(tmp_path, 3)],
+        system=_system(),
+        show_system=True,
+        queue=QueueCounts(running=2, failed=1),
     )
     lines = paint(view, size=(100, 25))
     assert lines[0].endswith(" ⟳ 2 · ✗ 1 ─╮")
@@ -521,7 +524,9 @@ def test_the_queue_badge_takes_no_body_row_while_the_status_is_hidden(tmp_path):
 def test_a_narrow_title_ellipsises_before_the_queue_badge(tmp_path, width):
     from jailbee.dashboard.notifications import QueueCounts
 
-    lines = paint(view_of([_long(tmp_path)], queue=QueueCounts(running=12, failed=34)), size=(width, 12))
+    lines = paint(
+        view_of([_long(tmp_path)], queue=QueueCounts(running=12, failed=34)), size=(width, 12)
+    )
     assert lines[0].endswith("…  ⟳ 12 · ✗ 34 ─╮")
     assert all(cell_len(line) == width for line in lines)
 
@@ -540,7 +545,9 @@ def test_a_narrow_title_ellipsises_before_the_queue_badge(tmp_path, width):
 def test_a_tiny_title_keeps_the_badge_instead_of_the_dashboard_name(tmp_path, width, label):
     from jailbee.dashboard.notifications import QueueCounts
 
-    lines = paint(view_of([_long(tmp_path)], queue=QueueCounts(running=12, failed=34)), size=(width, 12))
+    lines = paint(
+        view_of([_long(tmp_path)], queue=QueueCounts(running=12, failed=34)), size=(width, 12)
+    )
     assert lines[0] == (f"╭─ {label} ─╮" if label else "╭" + "─" * (width - 2) + "╮")
     assert all(cell_len(line) == width for line in lines)
 
@@ -673,9 +680,10 @@ def test_queue_rows_distinguish_questions_from_failures_across_themes(
                         if monochrome:
                             assert style.color is None or style.color.is_default
                         elif colour == "accent":
-                            assert style.color == Color.parse(
-                                app.get_css_variables()["accent"]
-                            ).rich_color
+                            assert (
+                                style.color
+                                == Color.parse(app.get_css_variables()["accent"]).rich_color
+                            )
                         else:
                             assert style.color.number == 1
 
