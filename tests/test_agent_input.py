@@ -10,11 +10,14 @@ from jailbee.agent_input import send
 @pytest.mark.parametrize(
     ("frame", "expected"),
     [
-        ("────────\n❯ \n────────\nstatus", "delivered"),
-        ("────────\n❯ draft\n────────\nstatus", "unsent_terminal_input"),
-        ("────────\n❯ first\nsecond\n────────\nstatus", "unsent_terminal_input"),
-        ("────────\n❯ \nwrapped draft\n────────\nstatus", "unsent_terminal_input"),
-        ("────────\n❯ \n────────\nother\n────────\nunknown\n────────", "unsent_terminal_input"),
+        ("────────\n\u276f \n────────\nstatus", "delivered"),
+        ("────────\n\u276f draft\n────────\nstatus", "unsent_terminal_input"),
+        ("────────\n\u276f first\nsecond\n────────\nstatus", "unsent_terminal_input"),
+        ("────────\n\u276f \nwrapped draft\n────────\nstatus", "unsent_terminal_input"),
+        (
+            "────────\n\u276f \n────────\nother\n────────\nunknown\n────────",
+            "unsent_terminal_input",
+        ),
         ("unknown screen", "unsent_terminal_input"),
     ],
 )

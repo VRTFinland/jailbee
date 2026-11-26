@@ -40,9 +40,9 @@ def _empty_prompt(screen: str) -> bool:
     if len(borders) < 2:
         return False
     region = lines[borders[-2] + 1 : borders[-1]]
-    if not region or not re.match(r"^\s*[❯>]", region[0]):
+    if not region or not re.match(r"^\s*[\u276f>]", region[0]):
         return False
-    first = re.sub(r"^\s*[❯>]", "", region[0], count=1)
+    first = re.sub(r"^\s*[\u276f>]", "", region[0], count=1)
     return not first.strip() and all(not line.strip() for line in region[1:])
 
 
@@ -51,8 +51,10 @@ def send(cfg: Config, incus: Incus, container: str, session_id: str, text: str) 
 
     Capture and paste cannot be atomic with a human typing in the same pane.
     """
-    if not any(c.get("name") == container and c.get("status", "").lower() == "running"
-               for c in incus.list_containers()):
+    if not any(
+        c.get("name") == container and c.get("status", "").lower() == "running"
+        for c in incus.list_containers()
+    ):
         return Outcome("container_not_running", "Container not running")
     adapter = get_adapter("claude")
     sessions = adapter.read_sessions(adapter.session_home(cfg, container))
