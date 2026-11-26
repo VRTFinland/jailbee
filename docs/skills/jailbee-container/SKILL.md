@@ -76,8 +76,8 @@ for this metadata.
 `agents.claude.unattended` defaults to `true` for `claude` and `claude-jb`, including
 children: bypass permissions without the acceptance dialog, no AskUserQuestion or
 EnterPlanMode, and automatic rejection of remaining permission prompts by
-`jailbee inbox hook permission-request`. ExitPlanMode stays for user-entered plan
-mode. After rejection, find a safer command shape (avoid `cd` with relative `rm`
+`jailbee inbox hook permission-request`. ExitPlanMode keeps Claude Code's normal
+approval dialog for user-entered plan mode; the hook leaves it undecided. After rejection, find a safer command shape (avoid `cd` with relative `rm`
 paths); if unavoidable, ask the user in the conversation, never a dialog:
 
 ```text

@@ -606,8 +606,9 @@ for first-time apply, refresh commands and the host-wide opt-out.
 including orchestrated children. The container is the sandbox: sessions start in
 `bypassPermissions` mode without its acceptance dialog. Bare-name deny rules remove
 AskUserQuestion and EnterPlanMode from the tool list; ExitPlanMode stays available
-so plan mode entered by the user can still exit. The JailBee plugin's
-`PermissionRequest` hook rejects remaining permission prompts rather than waiting
+so plan mode entered by the user can still exit through Claude Code's normal
+plan-approval dialog. The JailBee plugin's `PermissionRequest` hook leaves
+ExitPlanMode undecided and rejects other permission prompts rather than waiting
 for someone to attach. Its message asks the agent to find a safer command form
 (for example avoiding `cd` with relative `rm` paths), or ask the user if unavoidable.
 

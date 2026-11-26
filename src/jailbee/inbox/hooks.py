@@ -45,8 +45,8 @@ def stop(data: dict[str, Any], role: str) -> dict[str, Any] | None:
 
 
 def permission_request(data: dict[str, Any], *, unattended: bool) -> dict[str, Any] | None:
-    """Reject prompts that would otherwise stall an unattended Claude session."""
-    if not unattended:
+    """Reject unattended prompts, keeping user-entered plan approval interactive."""
+    if not unattended or data.get("tool_name") == "ExitPlanMode":
         return None
     return {
         "hookSpecificOutput": {

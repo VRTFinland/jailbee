@@ -32,6 +32,7 @@ def staged(data_home: Path) -> Path:
         / "claude"
         / "by-file"
         / "CLAUDE.md"
+        / "interactive"
         / "CLAUDE.md"
     )
 
@@ -58,6 +59,11 @@ def test_unattended_question_contract_and_opt_out(homes, claude_cfg):
     _, data_home = homes
     assert "❓" not in staged(data_home).read_text()
     assert policy.read_text() == text
+    interactive_device = ai.profile_devices(claude_cfg)["agent-instructions-claude"]
+    interactive_dir = Path(interactive_device["source"])
+    assert {entry.name for entry in interactive_dir.iterdir()} == {
+        "CLAUDE.md", "managed-settings.d"
+    }
 
 
 def test_paths_follow_xdg(homes):

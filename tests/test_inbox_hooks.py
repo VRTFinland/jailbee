@@ -49,7 +49,8 @@ def test_permission_request_denied_only_in_unattended_mode(monkeypatch, unattend
         ),
     )
     assert result.exit_code == 0
-    if unattended is None:
+    if unattended is None or tool_name == "ExitPlanMode":
+        # User-entered plan mode keeps Claude Code's normal approval dialog.
         assert result.stdout == ""
     else:
         output = json.loads(result.stdout)["hookSpecificOutput"]
