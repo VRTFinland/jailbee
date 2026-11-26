@@ -30,6 +30,13 @@ import {readItem, writeItem} from "../storage"
 // The sticky header's bottom edge: below an app banner, not just its height.
 const readableTop = ref(0)
 const transcriptEl = ref<HTMLElement | null>(null)
+const composerEl = ref<InstanceType<typeof AgentComposer> | null>(null)
+const composerHeight = ref(0)
+const navHeight = ref(0)
+function measureComposer() {
+    composerHeight.value = composerEl.value?.$el?.getBoundingClientRect().height ?? 0
+    navHeight.value = document.querySelector(".page-nav")?.getBoundingClientRect().height ?? 0
+}
 const pager = usePager(
     () => readableTop.value,
     // The bottom spacer lets a short final reply start below the header; page
@@ -261,7 +268,13 @@ function markScrollKey(event: KeyboardEvent) {
 }
 
 watch(shown, () => void nextTick(measureVisibility))
-watch(eink, () => void nextTick(measureVisibility))
+watch([eink, () => settings.pageControls], () => void nextTick(() => {
+    const nav = document.querySelector(".page-nav")
+    if (nav) layoutObserver?.observe(nav)
+    measureComposer()
+    pager.measure()
+    measureVisibility()
+}))
 watch(() => settings.showTitleBar, () => void nextTick(measureVisibility))
 
 let layoutObserver: ResizeObserver | null = null
@@ -276,7 +289,11 @@ onMounted(() => {
     window.addEventListener("keydown", jumpKey)
     window.addEventListener("resize", measureVisibility)
     if (typeof ResizeObserver !== "undefined") {
-        layoutObserver = new ResizeObserver(measureVisibility)
+        layoutObserver = new ResizeObserver(() => {
+            measureComposer()
+            pager.measure()
+            measureVisibility()
+        })
         layoutObserver.observe(document.body)
     }
 })
@@ -471,6 +488,10 @@ async function load() {
         transcript.value = view
         startFollowing(view)
         await nextTick()
+        if (composerEl.value?.$el) layoutObserver?.observe(composerEl.value.$el as Element)
+        measureComposer()
+        const nav = document.querySelector(".page-nav")
+        if (nav) layoutObserver?.observe(nav)
         pager.measure()
         measureVisibility()
         if (!positionReady) {
@@ -524,7 +545,7 @@ watch(
 </script>
 
 <template>
-    <div :style="{'--session-readable-top': `${readableTop}px`}">
+    <div :style="{'--session-readable-top': `${readableTop}px`, '--composer-height': `${composerHeight}px`, '--composer-nav-height': `${navHeight}px`}">
         <TitleBar @readable-top="readableTop = $event" :title="title" :crumbs="crumbs" context="session" :session="transcript ? {agent: transcript.agent, models: transcript.models, id: transcript.session_id} : null" />
         <div class="page">
             <p v-if="dashboard && !dashboard.state.connected" class="notice ui-notice">Connecting…</p>
@@ -607,7 +628,7 @@ watch(
                         </TranscriptEntry>
                     </template>
                 </article>
-                <AgentComposer v-if="agentId === null" class="agent-composer"
+                <AgentComposer v-if="agentId === null" ref="composerEl" class="agent-composer"
                     :available="transcript.chat?.available ?? false"
                     :reason="transcript.chat?.message || 'Messaging is unavailable.'"
                     :sending="sending" :error="sendError" :status="sendStatus" @send="sendMessage" />
@@ -641,11 +662,18 @@ watch(
     height: max(calc(var(--md-target-min) + var(--md-space-32)), calc(100dvh - var(--session-readable-top)));
 }
 .agent-composer {
-    position: sticky;
-    bottom: calc(var(--guard-bottom) + var(--page-nav-height));
+    position: fixed;
+    left: var(--md-space-16);
+    right: var(--md-space-16);
+    bottom: var(--guard-bottom);
+    max-width: 48rem;
+    margin: 0 auto;
     z-index: var(--md-layer-sticky);
     background: var(--md-surface);
     padding: var(--md-space-8);
+}
+[data-profile="eink"] .agent-composer {
+    bottom: calc(var(--guard-bottom) + var(--composer-nav-height) + var(--md-space-8));
 }
 .muted {
     color: var(--md-on-surface-variant);
@@ -763,12 +791,12 @@ watch(
 .jump-latest {
     position: fixed;
     right: var(--md-space-16);
-    bottom: calc(var(--guard-bottom) + var(--md-space-16));
+    bottom: calc(var(--guard-bottom) + var(--composer-height) + var(--md-space-16));
     z-index: var(--md-layer-raised);
 }
 /* In e-ink the bar owns the bottom edge: the buttons sit above it. */
 [data-profile="eink"] .jump-latest,
 [data-profile="eink"] .new-messages {
-    bottom: calc(var(--guard-bottom) + var(--page-nav-height) + var(--md-space-16));
+    bottom: calc(var(--guard-bottom) + var(--composer-nav-height) + var(--md-space-8) + var(--composer-height) + var(--md-space-16));
 }
 </style>
