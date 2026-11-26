@@ -255,6 +255,13 @@ def test_outbox_publish_uses_runner_modal_and_keeps_queue_result(mocker, tmp_pat
             app.refresh_frame()
             await _until(pilot, lambda: app.session.outbox.state.busy is None, "outbox listing")
             await pilot.press("p")
+            await _until(
+                pilot,
+                lambda: any(e.pending_question for e in app.session.queue),
+                "queued publication question",
+            )
+            assert not isinstance(app.screen, pm.ConfirmModal)
+            await pilot.press("escape", "Q", "enter")
             await _until(pilot, lambda: isinstance(app.screen, pm.ConfirmModal), "publish modal")
             assert app.screen.prompt.question == "Publish proposal?"
             await pilot.press("y")
@@ -287,6 +294,13 @@ def test_global_lifecycle_runs_without_a_repo_and_uses_prompt_channel(mocker, in
             await pilot.press("f10")
             await pilot.pause()
             await _apply(pilot, app, Pick(index))
+            await _until(
+                pilot,
+                lambda: any(e.pending_question for e in app.session.queue),
+                "queued host question",
+            )
+            assert not isinstance(app.screen, pm.ConfirmModal)
+            await pilot.press("Q", "enter")
             await _until(
                 pilot, lambda: isinstance(app.screen, pm.ConfirmModal), "host confirmation"
             )

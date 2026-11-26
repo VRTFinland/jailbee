@@ -38,6 +38,9 @@ class _Progress:
         self.entry = entry
         self.changed = changed
 
+    def entry_id(self, index: int) -> int:
+        return self.entry
+
     def output(self, index: int, chunk: str) -> None:
         self.queue.append(self.entry, chunk)
         self.changed()
