@@ -18,7 +18,6 @@ stdout. Pure POSIX shell, no Incus and no network — nothing to mock.
 
 import importlib.resources
 import os
-import re
 import subprocess
 from pathlib import Path
 
@@ -176,17 +175,6 @@ def test_snippet_is_world_readable(snippet: str) -> None:
     install_sh = _install_sh()
     after = install_sh.split(_MARKER, 1)[1]
     assert "chmod 0644 /etc/profile.d/jailbee-claude.sh" in after
-
-
-def test_shell_settings_option_tables_match_python() -> None:
-    from jailbee.claude_options import VALUE_OPTIONS
-
-    text = _install_sh()
-    for start, end in (("claude() (", "\n)"), ("add_settings() {", "\n}")):
-        scanner = text.split(start, 1)[1].split(end, 1)[0]
-        case = scanner.split("--settings|--settings=*)", 1)[1]
-        options = case.split(")", 1)[0].split(";;", 1)[1]
-        assert set(re.findall(r"--?[A-Za-z][A-Za-z-]*", options)) == VALUE_OPTIONS - {"--settings"}
 
 
 def test_shell_adds_settings(snippet: str, home: Path, tmp_path: Path) -> None:

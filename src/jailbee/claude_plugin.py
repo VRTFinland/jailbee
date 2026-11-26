@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import shlex
 import tempfile
 from io import StringIO
@@ -21,6 +20,63 @@ if TYPE_CHECKING:
 SETTINGS_PATH = "/etc/claude-code/managed-settings.d/50-jailbee.json"
 
 
+def _first_command(command: str) -> tuple[str, str]:
+    """Return original command text and words with expansions masked for scanning.
+
+    Expansion output is only known in the container. Keep each expansion opaque
+    so its operators and option-looking text cannot affect the outer command.
+    """
+    masked: list[str] = []
+    quote = ""
+    expansions: list[tuple[str, str]] = []
+    index = 0
+    while index < len(command):
+        char = command[index]
+        if char == "\\" and quote != "'":
+            if not expansions:
+                masked.append(command[index : index + 2])
+            index += 2
+            continue
+        if quote and char == quote:
+            quote = ""
+        elif char in "'\"" and not quote:
+            quote = char
+        elif quote != "'" and command.startswith("$(", index):
+            if not expansions:
+                masked.append("JAILBEE_EXPANSION")
+            expansions.append((")", quote))
+            quote = ""
+            index += 2
+            continue
+        elif quote != "'" and char == "`":
+            if expansions and expansions[-1][0] == "`" and not quote:
+                _, quote = expansions.pop()
+            else:
+                if not expansions:
+                    masked.append("JAILBEE_EXPANSION")
+                expansions.append(("`", quote))
+                quote = ""
+            index += 1
+            continue
+        elif expansions and not quote:
+            if char == "(":
+                expansions.append((")", quote))
+            elif char == expansions[-1][0]:
+                _, quote = expansions.pop()
+                index += 1
+                continue
+        elif not quote and (
+            char in ";&|\n" or (char == "#" and (index == 0 or command[index - 1].isspace()))
+        ):
+            break
+        if not expansions:
+            masked.append(char)
+        index += 1
+    if expansions or quote:
+        raise ValueError("unclosed shell quote or expansion")
+    return command[:index], "".join(masked)
+
+
 def with_settings(command: str) -> str:
     """Add settings once to a Claude shell command, checking the mount at launch.
 
@@ -28,17 +84,15 @@ def with_settings(command: str) -> str:
     exactly two fixed words when present, and no arguments on older containers.
     Keep the rest of the command intact: headless presets contain expansions.
     """
-    # Keep quoted punctuation and command substitutions inside the first command.
-    first = re.match(
-        r"""(?:\\.|'[^']*'|"(?:\\.|[^"\\])*"|\$\([^)]*\)|\$(?!\()|[^;&|'"\\$])+""", command
-    )
-    if first is None or (first.end() < len(command) and command[first.end()] not in ";&|"):
-        return command
+    flag = f"$(test ! -f {SETTINGS_PATH} || printf '%s\\n' --settings {SETTINGS_PATH})"
     try:
-        words = shlex.split(first[0])
+        first, masked = _first_command(command)
+        words = shlex.split(masked)
     except ValueError:
         return command
     if not words or Path(words[0]).name not in {"claude", "claude-jb"}:
+        return command
+    if flag in first:
         return command
     skip_value = False
     for word in words[1:]:
@@ -51,13 +105,12 @@ def with_settings(command: str) -> str:
             return command
         if word in VALUE_OPTIONS:
             skip_value = True
-    stream = StringIO(first[0])
+    stream = StringIO(first)
     lexer = shlex.shlex(stream, posix=True)
     lexer.whitespace_split = True
     lexer.get_token()
     offset = stream.tell()
     binary, rest = command[:offset].rstrip(), command[offset:]
-    flag = f"$(test ! -f {SETTINGS_PATH} || printf '%s\\n' --settings {SETTINGS_PATH})"
     return f"{binary} {flag} {rest}".rstrip()
 
 
