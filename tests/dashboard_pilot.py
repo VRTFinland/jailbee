@@ -219,6 +219,11 @@ class FakeStateClient:
     def action_rejection(self, entry_id):  # type: ignore[no-untyped-def]
         return None
 
+    def dismiss_action(self, entry_id):  # type: ignore[no-untyped-def]
+        entry = self._action_entries.get(entry_id)
+        if entry is not None and entry.finished:
+            del self._action_entries[entry_id]
+
     def action_entries(self):  # type: ignore[no-untyped-def]
         return self._action_entries.copy()
 

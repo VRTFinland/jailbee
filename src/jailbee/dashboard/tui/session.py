@@ -1655,6 +1655,7 @@ class DashboardSession:
                 run_questions=self.terminal.run_actions,
                 changed=self.queue_changed,
                 done=finished,
+                dismiss_shared=getattr(self.client, "dismiss_action", None),
             )
         except ValueError:
             self.set_notice("That container is already being created")

@@ -62,6 +62,7 @@ def start_create(
     run_questions: QuestionRunner,
     changed: Callable[[], None],
     done: Callable[[str | None], None],
+    dismiss_shared: Callable[[int], None] | None = None,
 ) -> None:
     """Run detached, retry a missing answer through the prompt channel, retain errors.
 
@@ -85,12 +86,17 @@ def start_create(
         entry = queue.start(command, target)
         changed()
 
+        def drop_parent() -> None:
+            if dismiss_shared is not None:
+                dismiss_shared(entry)
+            queue.drop(entry)
+
         def settled(outcome: ActionOutcome) -> None:
             jobs.release(key)
             result = outcome.results[-1] if outcome.results else None
             output = outcome.output
             if result is None or result.refused is not None:
-                queue.drop(entry)
+                drop_parent()
                 changed()
                 done(result.refused if result else "nothing ran")
                 return
@@ -124,12 +130,12 @@ def start_create(
                 and cancellation
                 and not has_error
             ):
-                queue.drop(entry)
+                drop_parent()
                 changed()
                 done(f"'{command}' cancelled")
                 return
             if status == 0 and result.error is None:
-                queue.drop(entry)
+                drop_parent()
                 changed()
                 text = " ".join(output.split())
                 at = text.find("Aborted. Pick a different name")
