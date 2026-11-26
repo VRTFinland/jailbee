@@ -148,7 +148,9 @@ class FakeStateClient:
 
     def run_action(self, request, *, registered=False, synchronous=False):  # type: ignore[no-untyped-def]
         """Simulate the action-host boundary, including the requester prompt seam."""
-        entry = self._action_entries[request.entry_id] if registered else self._register_action(request)
+        entry = (
+            self._action_entries[request.entry_id] if registered else self._register_action(request)
+        )
         app = self.app
 
         def output(chunk):  # type: ignore[no-untyped-def]
@@ -250,7 +252,10 @@ class FakeStateClient:
                         )
                     break
 
-        threading.Thread(target=run, daemon=True).start()
+        if self.app is None or self.app.threaded_actions:
+            threading.Thread(target=run, daemon=True).start()
+        else:
+            run()
 
     def release_test_questions(self):  # type: ignore[no-untyped-def]
         for event, answer in list(self._question_waiters.values()):
