@@ -3,7 +3,6 @@
 import asyncio
 import threading
 from concurrent.futures import ThreadPoolExecutor
-
 from dataclasses import replace
 
 from jailbee.dashboard.model import RepoGroup
@@ -107,7 +106,18 @@ def test_capped_service_tail_replaces_local_output_instead_of_appending_old_text
             if not self.sent:
                 return {}
             self.reads += 1
-            entry = ActionEntry(91, ["ls"], str(tmp_path), "repo", False, "origin", "none", str(tmp_path), "repo", output=first)
+            entry = ActionEntry(
+                91,
+                ["ls"],
+                str(tmp_path),
+                "repo",
+                False,
+                "origin",
+                "none",
+                str(tmp_path),
+                "repo",
+                output=first,
+            )
             if self.reads >= 2:
                 entry = replace(entry, output=final, finished=True, status=0)
             return {91: entry}
@@ -128,6 +138,12 @@ def test_capped_service_tail_replaces_local_output_instead_of_appending_old_text
             pass
 
     progress = Progress()
-    outcome = run_actions(Client(), [ActionRun(["ls"], tmp_path)], progress, groups=[RepoGroup("repo", str(tmp_path), None, [])], transport="none")
+    outcome = run_actions(
+        Client(),
+        [ActionRun(["ls"], tmp_path)],
+        progress,
+        groups=[RepoGroup("repo", str(tmp_path), None, [])],
+        transport="none",
+    )
     assert progress.text == final
     assert outcome.outputs == [final]

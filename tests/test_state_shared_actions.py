@@ -47,14 +47,18 @@ def test_live_stream_is_scoped_and_mid_run_client_gets_output_so_far(runtime_dir
 
     paths.ensure_runtime_dir()
     server = StateServer(FakeGatherer(), version="v1", action_spawn=spawn)
-    thread = threading.Thread(target=lambda: asyncio.run(server.serve(paths.socket_path())), daemon=True)
+    thread = threading.Thread(
+        target=lambda: asyncio.run(server.serve(paths.socket_path())), daemon=True
+    )
     thread.start()
     track_server(server, thread)
     _until(paths.socket_path().exists)
     clients = []
 
     def connect(identity, root=None, **kwargs):
-        client = StateClient(root, dashboard_id=identity, version="v1", spawn=lambda: None, **kwargs)
+        client = StateClient(
+            root, dashboard_id=identity, version="v1", spawn=lambda: None, **kwargs
+        )
         client.start()
         clients.append(client)
         client.wait_first_snapshot(3)
@@ -69,9 +73,16 @@ def test_live_stream_is_scoped_and_mid_run_client_gets_output_so_far(runtime_dir
     unrelated = connect("other", other_repo)
     excluded = connect("excluded", excluded_prefixes=["repo"])
     try:
-        first.run_action(RunAction(71, ["ls"], str(repo), "repo-a", True, "origin", "none", str(repo), "repo"))
+        first.run_action(
+            RunAction(71, ["ls"], str(repo), "repo-a", True, "origin", "none", str(repo), "repo")
+        )
         assert ready.wait(3)
-        _until(lambda: second.action_entries().get(71) is not None and "first live" in second.action_entries()[71].output)
+        _until(
+            lambda: (
+                second.action_entries().get(71) is not None
+                and "first live" in second.action_entries()[71].output
+            )
+        )
         assert not second.action_entries()[71].finished
         late = connect("late", repo)
         _until(lambda: 71 in late.action_entries())
@@ -80,7 +91,12 @@ def test_live_stream_is_scoped_and_mid_run_client_gets_output_so_far(runtime_dir
         assert 71 not in unrelated.action_entries()
         assert 71 not in excluded.action_entries()
         release.set()
-        _until(lambda: all(c.action_entries().get(71) and c.action_entries()[71].finished for c in [first, second, late]))
+        _until(
+            lambda: all(
+                c.action_entries().get(71) and c.action_entries()[71].finished
+                for c in [first, second, late]
+            )
+        )
         for client in [first, second, late]:
             assert client.action_entries()[71].output == "first live line\nlast live line\n"
         second.dismiss_action(71)
