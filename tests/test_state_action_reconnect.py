@@ -114,6 +114,7 @@ def test_action_event_history_is_bounded(runtime_dir, tmp_path):
 
 def test_replay_many_large_persisted_entries(runtime_dir, tmp_path):
     from sqlalchemy import create_engine
+
     from jailbee.db import _ensure_schema
     from jailbee.db.actions import save
     from jailbee.state_service.protocol import ActionEntry
@@ -122,19 +123,40 @@ def test_replay_many_large_persisted_entries(runtime_dir, tmp_path):
     _ensure_schema(engine)
     text = "a" * 64000
     for index in range(40):
-        save(engine, ActionEntry(index + 1, ["ls"], str(tmp_path), "target", False,
-                                 "origin", "none", str(tmp_path), "repo", output=text,
-                                 finished=True, status=0, state="done"))
+        save(
+            engine,
+            ActionEntry(
+                index + 1,
+                ["ls"],
+                str(tmp_path),
+                "target",
+                False,
+                "origin",
+                "none",
+                str(tmp_path),
+                "repo",
+                output=text,
+                finished=True,
+                status=0,
+                state="done",
+            ),
+        )
     paths.ensure_runtime_dir()
     server = StateServer(FakeGatherer(), version="v1", engine=engine)
-    thread = threading.Thread(target=lambda: asyncio.run(server.serve(paths.socket_path())), daemon=True)
+    thread = threading.Thread(
+        target=lambda: asyncio.run(server.serve(paths.socket_path())), daemon=True
+    )
     thread.start()
     track_server(server, thread)
     _until(paths.socket_path().exists)
-    client = StateClient(None, dashboard_id="late", version="v1", spawn=lambda: None, backoff=(0.05,))
+    client = StateClient(
+        None, dashboard_id="late", version="v1", spawn=lambda: None, backoff=(0.05,)
+    )
     client.start()
     try:
         _until(lambda: len(client.action_entries()) == 40, timeout=8)
-        assert all(entry.output == text and entry.finished for entry in client.action_entries().values())
+        assert all(
+            entry.output == text and entry.finished for entry in client.action_entries().values()
+        )
     finally:
         client.close()

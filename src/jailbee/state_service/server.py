@@ -188,7 +188,9 @@ class StateServer:
                 )
                 client.replaying = True
                 self._clients.add(client)
-                entries = [entry for entry in self._actions.values() if self._in_scope(entry, client)]
+                entries = [
+                    entry for entry in self._actions.values() if self._in_scope(entry, client)
+                ]
                 if not self._send_action(client, ActionSyncStart(), replay=True):
                     return
                 for entry in entries:
@@ -200,8 +202,15 @@ class StateServer:
                         return
                     if entry.finished and not self._send_action(
                         client,
-                        ActionFinish(entry.entry_id, entry.status, entry.refused, entry.error,
-                                     entry.cancelled, entry.declined), replay=True,
+                        ActionFinish(
+                            entry.entry_id,
+                            entry.status,
+                            entry.refused,
+                            entry.error,
+                            entry.cancelled,
+                            entry.declined,
+                        ),
+                        replay=True,
                     ):
                         return
                     await asyncio.wait_for(writer.drain(), DRAIN_TIMEOUT_SECONDS)
