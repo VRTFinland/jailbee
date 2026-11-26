@@ -18,7 +18,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from jailbee import __version__
 from jailbee.prompt_channel import Prompt
@@ -89,6 +89,7 @@ class _Client:
     cwd_root: Path | None
     dashboard_id: str | None = None
     excluded_prefixes: frozenset[str] = frozenset()
+    transport: Literal["none", "ssh", "web"] = "none"
     active: bool = True
     replaying: bool = False
     pending: list[bytes] = field(default_factory=list)
@@ -191,6 +192,7 @@ class StateServer:
                     Path(hello.cwd_root) if hello.cwd_root else None,
                     hello.dashboard_id,
                     frozenset(hello.excluded_prefixes),
+                    hello.transport,
                 )
                 client.replaying = True
                 self._clients.add(client)
@@ -280,6 +282,20 @@ class StateServer:
                 client, ActionRejected(request.entry_id, "invalid or duplicate action id")
             )
             return
+        from jailbee.dashboard.commands import check_dashboard_command
+        from jailbee.global_config import default_global_config_path, load_global_config
+        from jailbee.remote_ssh.router import RouteError
+
+        policy = None
+        try:
+            if client.transport != "none":
+                config, _ = load_global_config(default_global_config_path())
+                policy = getattr(config.remote, client.transport)
+            check_dashboard_command(request.argv, policy, transport=client.transport,
+                                    excluded_prefixes=client.excluded_prefixes)
+        except (RouteError, ValueError, OSError) as exc:
+            self._send_action(client, ActionRejected(request.entry_id, str(exc)))
+            return
         entry = ActionEntry(
             request.entry_id,
             request.argv,
@@ -287,7 +303,7 @@ class StateServer:
             request.target,
             request.critical,
             request.origin,
-            request.transport,
+            client.transport,
             request.repo_root,
             request.prefix,
         )
@@ -321,8 +337,8 @@ class StateServer:
                 result = run_action(
                     request.argv,
                     cwd=Path(request.cwd),
-                    transport=request.transport,
-                    policy=None,
+                    transport=client.transport,
+                    policy=policy,
                     on_prompt=ask,
                     on_disconnect=disconnect,
                     spawn=self._action_spawn or popen_spawn,

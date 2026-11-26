@@ -20,7 +20,7 @@ import time
 from collections import deque
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import replace
-from typing import IO, TYPE_CHECKING, Any
+from typing import IO, TYPE_CHECKING, Any, Literal
 
 from jailbee import __version__
 from jailbee.state_service import StaleDashboard, StateServiceError, StateServiceUnavailable
@@ -115,11 +115,17 @@ class StateClient:
         on_update: Callable[[], None] | None = None,
         dashboard_id: str | None = None,
         excluded_prefixes: Sequence[str] = (),
+        transport: Literal["none", "ssh", "web"] | None = None,
         spawn: Callable[[], None] = spawn_server,
         version: str = __version__,
         connect_timeout: float = CONNECT_TIMEOUT_SECONDS,
         backoff: Sequence[float] = BACKOFF_SECONDS,
     ) -> None:
+        from jailbee.remote_ssh.session import is_remote_session, remote_transport
+
+        self._transport = transport if transport is not None else (
+            remote_transport() or ("ssh" if is_remote_session() else "none")
+        )
         self._dashboard_id = dashboard_id
         self._cwd_root = cwd_root
         self._excluded_prefixes = list(excluded_prefixes)
@@ -436,7 +442,7 @@ class StateClient:
             cwd = str(self._cwd_root) if self._cwd_root is not None else None
             sock.sendall(
                 encode(
-                    Hello(PROTOCOL, self._version, cwd, self._dashboard_id, self._excluded_prefixes)
+                    Hello(PROTOCOL, self._version, cwd, self._dashboard_id, self._excluded_prefixes, self._transport)
                 )
             )
             line = reader.readline(MAX_WIRE_LINE_BYTES + 1)

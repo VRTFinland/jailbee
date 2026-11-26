@@ -13,6 +13,57 @@ from tests.test_state_client import _until
 from tests.test_state_server import FakeGatherer, reap_servers, track_server  # noqa: F401
 
 
+def test_remote_refusal_precedes_spawn_and_local_is_unaffected(runtime_dir, tmp_path, monkeypatch):
+    from jailbee import global_config
+    from jailbee.config.models_remote import RemoteCommandPolicy
+    from jailbee.state_service import paths
+
+    config = global_config.GlobalConfig()
+    config.remote.ssh.commands = RemoteCommandPolicy(mode="disabled")
+    monkeypatch.setattr(global_config, "load_global_config", lambda path: (config, []))
+    spawned = []
+
+    class Child:
+        stdout = None
+
+        def __init__(self, sock):
+            sock.close()
+
+        def wait(self):
+            return 0
+
+        def kill(self):
+            pass
+
+    def spawn(*args, **kwargs):
+        spawned.append(True)
+        return Child(kwargs["prompt_sock"])
+
+    paths.ensure_runtime_dir()
+    server = StateServer(FakeGatherer(), version="v1", action_spawn=spawn)
+    thread = threading.Thread(target=lambda: asyncio.run(server.serve(paths.socket_path())), daemon=True)
+    thread.start()
+    track_server(server, thread)
+    _until(paths.socket_path().exists)
+    remote = StateClient(None, dashboard_id="remote", transport="ssh", version="v1", spawn=lambda: None)
+    local = StateClient(None, dashboard_id="local", transport="none", version="v1", spawn=lambda: None)
+    remote.start()
+    local.start()
+    try:
+        remote.wait_first_snapshot(3)
+        local.wait_first_snapshot(3)
+        remote.run_action(RunAction(111, ["destroy", "x"], str(tmp_path), "x", False, "remote", "none", str(tmp_path), "repo"))
+        _until(lambda: remote.action_rejection(111) is not None)
+        assert not spawned
+        assert 111 not in remote.action_entries()
+        local.run_action(RunAction(112, ["destroy", "x"], str(tmp_path), "x", False, "local", "ssh", str(tmp_path), "repo"))
+        _until(lambda: local.action_entries().get(112) is not None and local.action_entries()[112].finished)
+        assert spawned == [True]
+    finally:
+        remote.close()
+        local.close()
+
+
 def test_action_streams_output_and_result(runtime_dir, tmp_path):
     class Child:
         def __init__(self, prompt_sock):

@@ -73,7 +73,8 @@ from jailbee.update_check import UpdateNotice
 # 45 adds action hosting messages. 46 adds action scope and dismissal.
 # 47 adds an atomic action replay boundary.
 # 48 adds shared action questions and answers.
-PROTOCOL = 48
+# 49 adds connection transport identity.
+PROTOCOL = 49
 
 # Allows escaped output tails and ordinary snapshots while bounding incoming lines.
 MAX_WIRE_LINE_BYTES = 16 * 1024 * 1024
@@ -92,6 +93,7 @@ class Hello:
     cwd_root: str | None = None
     dashboard_id: str | None = None
     excluded_prefixes: list[str] = field(default_factory=list)
+    transport: Literal["none", "ssh", "web"] = "none"
 
 
 @dataclass(frozen=True)
