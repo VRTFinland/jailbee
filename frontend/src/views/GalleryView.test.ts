@@ -107,7 +107,7 @@ describe("GalleryView", () => {
             expect(panel.text()).toContain("Open drawer")
             expect(panel.text()).toContain("Container actions")
             expect(panel.findAll("label").map((label) => label.text())).toEqual([
-                "Container name", "Invalid name", "Disabled field", "Theme", "Native preferences", "Disabled select",
+                "Container name", "Invalid name", "Disabled field", "Multiline field", "Theme", "Native preferences", "Disabled select",
             ])
         }
     })

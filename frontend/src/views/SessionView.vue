@@ -93,7 +93,7 @@ function matchesMessage(entries: RenderedEntry[], text: string): boolean {
         entry.text !== undefined && normalize(entry.text) === normalize(text))
 }
 async function sendMessage(text: string) {
-    if (sending.value || !transcript.value?.chat?.available || agentId.value !== null) return
+    if (sending.value || awaitingText !== null || !transcript.value?.chat?.available || agentId.value !== null) return
     sending.value = true
     sendError.value = ""
     sendStatus.value = ""
@@ -631,7 +631,7 @@ watch(
                 <AgentComposer v-if="agentId === null" ref="composerEl" class="agent-composer"
                     :available="transcript.chat?.available ?? false"
                     :reason="transcript.chat?.message || 'Messaging is unavailable.'"
-                    :sending="sending" :error="sendError" :status="sendStatus" @send="sendMessage" />
+                    :sending="sending" :awaiting="sendStatus === 'Waiting for transcript'" :error="sendError" :status="sendStatus" @send="sendMessage" />
                 <Button
                     v-if="jumpLabel"
                     :variant="pending.length > 0 || unseen !== null ? 'tonal' : 'primary'"
@@ -651,7 +651,7 @@ watch(
 
 <style scoped>
 .page {
-    max-width: 48rem;
+    max-width: var(--md-layout-content-max);
     margin: 0 auto;
     /* Even a short final reply can start just below the sticky header. */
     padding: 0 var(--md-space-16);
@@ -666,7 +666,7 @@ watch(
     left: var(--md-space-16);
     right: var(--md-space-16);
     bottom: var(--guard-bottom);
-    max-width: 48rem;
+    max-width: var(--md-layout-content-max);
     margin: 0 auto;
     z-index: var(--md-layer-sticky);
     background: var(--md-surface);
