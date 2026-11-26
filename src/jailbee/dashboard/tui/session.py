@@ -138,7 +138,6 @@ from jailbee.dashboard.notifications import (
     QueueEntry,
     is_critical,
     job_rows,
-    should_show_question,
 )
 from jailbee.dashboard.outbox import OutboxState
 from jailbee.dashboard.outbox_flow import LOADING as OUTBOX_LOADING
@@ -151,6 +150,7 @@ from jailbee.dashboard.overlays import (
     parse_pr_number,
     validate_answer,
 )
+from jailbee.dashboard.questions import QuestionRouter
 from jailbee.dashboard.runner import (
     OUTPUT_DROPPED_MARKER,
     OUTPUT_KEEP_CHARS,
@@ -585,9 +585,7 @@ class DashboardSession:
         self.overlay: Overlay | None = None
         # Every action started through the action runner, until dismissed.
         self.queue = NotificationQueue()
-        self._interaction = 0
-        self._action_interactions: dict[int, int] = {}
-        self._answer_interactions: dict[int, int] = {}
+        self.questions = QuestionRouter(self.queue)
         self._queue_frame = 0
         self._following: int | None = None  # the entry whose output screen follows it live
         self._modal_entry: int | None = None  # the critical entry whose modal is open
@@ -957,7 +955,7 @@ class DashboardSession:
             )
             for i, run in enumerate(runs)
         ]
-        self._action_interactions.update(dict.fromkeys(ids, self._interaction))
+        self.questions.dispatched(ids)
         self.queue_changed()
         # A critical action's result is the modal's (or, once sent to the
         # background, the queue's): no output screen of its own on the end.
@@ -993,8 +991,7 @@ class DashboardSession:
     def _settle_entries(self, ids: Sequence[int], outcome: ActionOutcome) -> None:
         """Finish the entries of the runs that ran; drop those that never started."""
         for i, entry_id in enumerate(ids):
-            self._action_interactions.pop(entry_id, None)
-            self._answer_interactions.pop(entry_id, None)
+            self.questions.finished(entry_id)
             result = outcome.results[i] if i < len(outcome.results) else None
             output = outcome.outputs[i] if i < len(outcome.outputs) else ""
             if result is None or result.refused is not None:
@@ -1025,12 +1022,11 @@ class DashboardSession:
 
     def user_interacted(self) -> None:
         """Record input without treating refreshes as user activity."""
-        self._interaction += 1
+        self.questions.interacted()
 
     def question_answered(self, entry_id: int) -> None:
         """Keep the user's attention on the entry they just answered."""
-        if self.queue.get(entry_id) is not None:
-            self._answer_interactions[entry_id] = self._interaction
+        self.questions.answered(entry_id)
 
     def question_arrived(
         self, entry_id: int, prompt: Prompt, *, on_top: bool, queue_key: str
@@ -1039,22 +1035,17 @@ class DashboardSession:
         entry = self.queue.get(entry_id)
         if entry is None:
             return False
-        self.queue.set_question(entry_id, prompt)
-        self.queue_changed()
-        show = should_show_question(
-            critical=entry.critical,
-            foreground=entry.foreground,
+        show = self.questions.arrived(
+            entry_id, prompt,
             on_top=on_top,
             overlay="none"
             if self.overlay is None
             else "queue"
             if isinstance(self.overlay, Picker) and self.overlay.purpose == "queue"
             else "other",
-            dispatch_interaction=self._action_interactions.get(entry_id),
-            answer_interaction=self._answer_interactions.get(entry_id),
-            interaction=self._interaction,
             suspended=self._handed_off,
         )
+        self.queue_changed()
 
         if not show:
             self.set_notice(f"'{entry.command}' awaiting answer · {queue_key}: queue")
