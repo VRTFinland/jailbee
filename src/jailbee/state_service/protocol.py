@@ -74,7 +74,8 @@ from jailbee.update_check import UpdateNotice
 # 47 adds an atomic action replay boundary. 48 adds shared action questions,
 # answers and request-scoped action environment.
 # 49 adds the action environment's request-scoped transport fields.
-PROTOCOL = 49
+# 50 adds the stable cross-version activity and drain messages.
+PROTOCOL = 50
 
 # Allows escaped output tails and ordinary snapshots while bounding incoming lines.
 MAX_WIRE_LINE_BYTES = 16 * 1024 * 1024
@@ -116,6 +117,23 @@ class Refresh:
 @dataclass(frozen=True)
 class Shutdown:
     """Exit: sent by a client of another version before it starts its own server."""
+
+
+@dataclass(frozen=True)
+class ActivityQuery:
+    pass
+
+
+@dataclass(frozen=True)
+class Drain:
+    pass
+
+
+@dataclass(frozen=True)
+class ServiceActivity:
+    running_actions: int
+    pending_questions: int
+    draining: bool = False
 
 
 @dataclass(frozen=True)
@@ -252,6 +270,9 @@ Message = (
     | Active
     | Refresh
     | Shutdown
+    | ActivityQuery
+    | Drain
+    | ServiceActivity
     | Snapshot
     | GatherError
     | RunAction
@@ -285,6 +306,9 @@ _NAMES: dict[type[Any], str] = {
     Active: "active",
     Refresh: "refresh",
     Shutdown: "shutdown",
+    ActivityQuery: "activity_query",
+    Drain: "drain",
+    ServiceActivity: "service_activity",
     Snapshot: "snapshot",
     GatherError: "error",
 }

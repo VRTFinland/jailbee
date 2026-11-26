@@ -198,6 +198,19 @@ def sock_path(runtime_dir):
     return paths.socket_path()
 
 
+def test_mismatched_client_can_query_activity_and_drain_idle_server(sock_path):
+    from jailbee.state_service.protocol import ActivityQuery, Drain, ServiceActivity
+
+    running = Running(FakeGatherer(), sock_path)
+    conn = Conn(sock_path, version="v0")
+    conn.send(ActivityQuery())
+    assert conn.recv() == ServiceActivity(0, 0)
+    conn.send(Drain())
+    assert conn.recv() == ServiceActivity(0, 0, draining=True)
+    running.thread.join(timeout=3)
+    assert not running.thread.is_alive()
+
+
 def test_hello_is_answered_with_the_server_version(sock_path):
     Running(FakeGatherer(), sock_path)
     conn = Conn(sock_path)

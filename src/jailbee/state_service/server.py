@@ -36,12 +36,15 @@ from jailbee.state_service.protocol import (
     ActionSyncEnd,
     ActionSyncStart,
     Active,
+    ActivityQuery,
     AnswerActionQuestion,
+    Drain,
     DismissAction,
     Hello,
     ProtocolError,
     Refresh,
     RunAction,
+    ServiceActivity,
     Shutdown,
     Snapshot,
     decode,
@@ -132,6 +135,7 @@ class StateServer:
         self._refresh = False
         self._fast_until = 0.0
         self._stopping = False
+        self._draining = False
         self._idle_since = clock()
         self._wake = asyncio.Event()
 
@@ -169,6 +173,8 @@ class StateServer:
 
     async def _schedule(self) -> None:
         while not self._stopping:
+            if self._draining and not self._action_tasks and not self._questions:
+                return
             if (
                 not self._clients
                 and not self._action_tasks
@@ -262,6 +268,13 @@ class StateServer:
                 if isinstance(message, Shutdown):
                     log.info("shutdown requested by a client")
                     self._stopping = True
+                elif isinstance(message, (ActivityQuery, Drain)):
+                    if isinstance(message, Drain):
+                        self._draining = True
+                    writer.write(encode(ServiceActivity(
+                        len(self._action_tasks), len(self._questions), self._draining
+                    )))
+                    await writer.drain()
                 elif client is None:
                     continue
                 elif isinstance(message, RunAction):
@@ -290,6 +303,9 @@ class StateServer:
     def _start_action(self, client: _Client, request: RunAction) -> None:
         from jailbee.dashboard.runner import ActionCancellation, popen_spawn, run_action
 
+        if self._draining:
+            self._send_action(client, ActionRejected(request.entry_id, "state service is draining"))
+            return
         if not client.dashboard_id or request.origin != client.dashboard_id:
             self._send_action(
                 client, ActionRejected(request.entry_id, "dashboard identity mismatch")

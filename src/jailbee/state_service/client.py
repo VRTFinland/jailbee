@@ -38,7 +38,9 @@ from jailbee.state_service.protocol import (
     ActionSyncEnd,
     ActionSyncStart,
     Active,
+    ActivityQuery,
     AnswerActionQuestion,
+    Drain,
     DismissAction,
     GatherError,
     Hello,
@@ -46,6 +48,7 @@ from jailbee.state_service.protocol import (
     ProtocolError,
     Refresh,
     RunAction,
+    ServiceActivity,
     Shutdown,
     Snapshot,
     decode,
@@ -58,6 +61,8 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
+ACTIVITY_PROTOCOL = 50
+ACTION_HOST_PROTOCOL = 45
 CONNECT_TIMEOUT_SECONDS = 5.0
 BACKOFF_SECONDS: tuple[float, ...] = (1.0, 2.0, 4.0, 8.0, 10.0)
 SETTLE_SECONDS = 8.0
@@ -143,6 +148,12 @@ class StateClient:
         self._active = True
         self._closed = threading.Event()
         self._first = threading.Event()
+        self._replacement_changed = threading.Event()
+        self._replacement: ServiceActivity | None = None
+        self._replacement_pending = False
+        self._replacement_answer: bool | None = None
+        self._replacement_waiting = False
+        self._ever_connected = False
         self._thread = threading.Thread(target=self._run, name="jailbee-state-client", daemon=True)
 
     @property
@@ -163,9 +174,27 @@ class StateClient:
     def wait_first_snapshot(self, timeout: float) -> Snapshot:
         """The first snapshot, or `StateServiceUnavailable` after ``timeout``
         (at once when this dashboard turned out to be stale)."""
-        if not self._first.wait(timeout):
-            reason = self.status() or "no snapshot from the state service"
-            raise StateServiceUnavailable(f"{reason} (log: {log_path()})")
+        deadline = time.monotonic() + timeout
+        while not self._first.is_set():
+            with self._lock:
+                pending = self._replacement_pending
+                activity = self._replacement
+                waiting = self._replacement_waiting
+            if pending:
+                answer = self._ask_replacement(activity)
+                with self._lock:
+                    self._replacement_answer = answer
+                    self._replacement_pending = False
+                self._replacement_changed.set()
+                deadline = time.monotonic() + timeout
+                continue
+            if waiting:
+                deadline = time.monotonic() + timeout
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                reason = self.status() or "no snapshot from the state service"
+                raise StateServiceUnavailable(f"{reason} (log: {log_path()})")
+            self._first.wait(min(remaining, 0.05))
         snapshot = self.latest()
         if snapshot is None:  # `_first` was set by a stale stop, not a snapshot
             raise StateServiceUnavailable(self.status() or "the state client stopped")
@@ -235,6 +264,8 @@ class StateClient:
 
     def close(self) -> None:
         self._closed.set()
+        self._replacement_changed.set()
+        self._first.set()
         with self._lock:
             if self._sock is not None:
                 with contextlib.suppress(OSError):
@@ -408,6 +439,7 @@ class StateClient:
             with self._lock:
                 self._latest = message
                 self._status = None
+            self._ever_connected = True
             self._first.set()
             self._notify()
             return True
@@ -465,8 +497,34 @@ class StateClient:
                     raise StaleDashboard(
                         f"jailbee was upgraded to {reply.version}; restart this dashboard"
                     )
-                sock.sendall(encode(Shutdown()))
-                self._await_gone(path)
+                if reply.protocol < ACTION_HOST_PROTOCOL:
+                    sock.sendall(encode(Shutdown()))
+                    self._await_gone(path)
+                else:
+                    activity = None
+                    if reply.protocol >= ACTIVITY_PROTOCOL:
+                        sock.sendall(encode(ActivityQuery()))
+                        response = decode(reader.readline(MAX_WIRE_LINE_BYTES + 1))
+                        if not isinstance(response, ServiceActivity):
+                            raise ProtocolError("expected service activity")
+                        activity = response
+                    if activity is None or activity.running_actions or activity.pending_questions:
+                        replace = self._request_replacement(activity)
+                    else:
+                        replace = False
+                    if replace:
+                        sock.sendall(encode(Shutdown()))
+                        self._await_gone(path)
+                        with self._lock:
+                            self._replacement_waiting = False
+                    elif activity is None:
+                        self._wait_for_legacy_exit(sock)
+                    else:
+                        sock.sendall(encode(Drain()))
+                        response = decode(reader.readline(MAX_WIRE_LINE_BYTES + 1))
+                        if not isinstance(response, ServiceActivity) or not response.draining:
+                            raise ProtocolError("expected drain acknowledgement")
+                        self._wait_for_legacy_exit(sock)
                 raise StateServiceError(f"replaced a state service from jailbee {reply.version}")
         except BaseException:
             reader.close()
@@ -474,6 +532,65 @@ class StateClient:
             raise
         sock.settimeout(None)
         return sock, reader
+
+    def _ask_replacement(self, activity: ServiceActivity | None) -> bool:
+        from jailbee import prompting
+
+        if not prompting.is_interactive():
+            return False
+        detail = (
+            "an unknown number of actions"
+            if activity is None
+            else f"{activity.running_actions} actions and {activity.pending_questions} pending questions"
+        )
+        return prompting.choose_one(
+            "state service replacement",
+            [
+                prompting.Option(False, "Wait for the old service", "wait"),
+                prompting.Option(True, "Replace it and interrupt its actions", "replace"),
+            ],
+            question=f"An older state service has {detail}. What should happen?",
+            default=False,
+        )
+
+    def _request_replacement(self, activity: ServiceActivity | None) -> bool:
+        from jailbee import prompting
+
+        ask = not self._ever_connected and prompting.is_interactive()
+        with self._lock:
+            self._replacement_waiting = True
+            self._replacement = activity
+            self._replacement_answer = None
+            self._replacement_pending = ask
+        self._set_status("waiting for older state service")
+        if not ask:
+            return False
+        while not self._closed.is_set():
+            self._replacement_changed.wait(0.1)
+            self._replacement_changed.clear()
+            with self._lock:
+                answer = self._replacement_answer
+            if answer is not None:
+                return answer
+        raise StateServiceError("state client closed")
+
+    def _wait_for_legacy_exit(self, sock: socket.socket) -> None:
+        with self._lock:
+            self._replacement_waiting = True
+        self._set_status("waiting for older state service to finish")
+        sock.settimeout(0.2)
+        try:
+            while not self._closed.is_set():
+                try:
+                    if not sock.recv(4096):
+                        break
+                except TimeoutError:
+                    continue
+        finally:
+            with self._lock:
+                self._replacement_waiting = False
+        if self._closed.is_set():
+            raise StateServiceError("state client closed")
 
     def _await_gone(self, path: Path) -> None:
         deadline = time.monotonic() + self._connect_timeout

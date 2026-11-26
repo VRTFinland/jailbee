@@ -33,9 +33,10 @@ _LIFETIME_LOCK = threading.Lock()
 class Spawner:
     """Starts a StateServer in-process, the way `jailbee _state-service` would."""
 
-    def __init__(self, gatherer_factory=FakeGatherer, version="v1"):
+    def __init__(self, gatherer_factory=FakeGatherer, version="v1", action_spawn=None):
         self.gatherer_factory = gatherer_factory
         self.version = version
+        self.action_spawn = action_spawn
         self.servers: list[StateServer] = []
         self.threads: list[threading.Thread] = []
 
@@ -55,7 +56,9 @@ class Spawner:
 
     def __call__(self):
         paths.ensure_runtime_dir()
-        server = StateServer(self.gatherer_factory(), version=self.version)
+        server = StateServer(
+            self.gatherer_factory(), version=self.version, action_spawn=self.action_spawn
+        )
         self.servers.append(server)
 
         def run():
@@ -317,6 +320,117 @@ def test_client_survives_a_server_killed_with_a_stale_socket_left_behind(runtime
     finally:
         gate.set()
         client.close()
+
+
+def test_unknown_old_service_is_not_replaced_without_consent(runtime_dir, monkeypatch):
+    old = Spawner(version="v0")
+    old.start()
+    monkeypatch.setattr(client_module, "ACTIVITY_PROTOCOL", PROTOCOL + 1, raising=False)
+    new = Spawner(version="v1")
+    client = _client(new)
+    try:
+        _until(lambda: (client.status() or "").startswith("waiting for older state service"))
+        assert old.threads[0].is_alive()
+        assert not new.servers
+    finally:
+        client.close()
+
+
+def test_running_old_service_drains_past_startup_timeouts(runtime_dir, tmp_path, monkeypatch):
+    from jailbee.state_service.protocol import RunAction
+
+    started = threading.Event()
+    finish = threading.Event()
+
+    class Child:
+        stdout = None
+
+        def __init__(self, sock):
+            sock.close()
+            started.set()
+
+        def wait(self):
+            finish.wait(5)
+            return 0
+
+        def kill(self):
+            finish.set()
+
+    old = Spawner(version="v0", action_spawn=lambda *a, **kw: Child(kw["prompt_sock"]))
+    old.start()
+    original = _client(old, dashboard_id="one")
+    original.wait_first_snapshot(3)
+    original.run_action(RunAction(1, ["ls"], str(tmp_path), "t", False, "one", "none", str(tmp_path), "repo"))
+    assert started.wait(2)
+    new = Spawner(version="v1")
+    client = _client(new, connect_timeout=0.2)
+    result = []
+    waiter = threading.Thread(target=lambda: result.append(client.wait_first_snapshot(0.3)))
+    waiter.start()
+    try:
+        _until(lambda: old.servers[0]._draining)
+        original.run_action(RunAction(2, ["ls"], str(tmp_path), "t", False, "one", "none", str(tmp_path), "repo"))
+        _until(lambda: original.action_rejection(2) is not None)
+        time.sleep(0.6)
+        assert waiter.is_alive()
+        original.close()
+        finish.set()
+        waiter.join(4)
+        assert result
+    finally:
+        finish.set()
+        client.close()
+        original.close()
+        waiter.join(2)
+
+
+def test_replacement_prompt_runs_on_waiting_thread_and_can_interrupt(runtime_dir, tmp_path, monkeypatch):
+    from jailbee import prompting
+    from jailbee.state_service.protocol import RunAction
+
+    started = threading.Event()
+    killed = threading.Event()
+
+    class Child:
+        stdout = None
+
+        def __init__(self, sock):
+            sock.close()
+            started.set()
+
+        def wait(self):
+            killed.wait(5)
+            return 1
+
+        def kill(self):
+            killed.set()
+
+    old = Spawner(version="v0", action_spawn=lambda *a, **kw: Child(kw["prompt_sock"]))
+    old.start()
+    original = _client(old, dashboard_id="one")
+    original.wait_first_snapshot(3)
+    original.run_action(RunAction(1, ["ls"], str(tmp_path), "t", False, "one", "none", str(tmp_path), "repo"))
+    assert started.wait(2)
+    caller = threading.get_ident()
+    questions = []
+    monkeypatch.setattr(prompting, "is_interactive", lambda: True)
+
+    def choose(*args, **kwargs):
+        questions.append((threading.get_ident(), kwargs["default"]))
+        original.close()
+        return True
+
+    monkeypatch.setattr(prompting, "choose_one", choose)
+    new = Spawner(version="v1")
+    client = _client(new)
+    try:
+        client.wait_first_snapshot(5)
+        assert questions == [(caller, False)]
+        assert killed.is_set()
+    finally:
+        killed.set()
+        client.close()
+        original.close()
 
 
 def test_client_replaces_a_server_of_another_version(runtime_dir):

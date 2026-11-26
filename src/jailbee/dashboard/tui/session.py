@@ -493,8 +493,7 @@ def open_dashboard(cwd_root: Path | None, *, scope: RemoteRepoScope | None = Non
 
     client = open_state_client(cwd_root, excluded_prefixes=sorted(scope.excluded) if scope else ())
     try:
-        with console.status("⏳ Surveying containers…"):
-            client.wait_first_snapshot(STARTUP_TIMEOUT_SECONDS)
+        client.wait_first_snapshot(STARTUP_TIMEOUT_SECONDS)
     except StateServiceUnavailable as exc:
         client.close()
         error(f"dashboard refresh failed: {exc}")
