@@ -84,9 +84,9 @@ def live_sessions(cfg: Config, incus: Incus, container: str) -> list[AgentSessio
 def _resolve(
     cfg: Config, incus: Incus, container: str, session_id: str
 ) -> tuple[Outcome, str | None]:
-    if not _running(incus, container):
-        return Outcome("container_not_running", "Container not running"), None
     try:
+        if not _running(incus, container):
+            return Outcome("container_not_running", "Container not running"), None
         tree = _processes(incus, container)
         matches = [s for s in _sessions(cfg, container, tree) if s.session_id == session_id]
         if len(matches) != 1:
