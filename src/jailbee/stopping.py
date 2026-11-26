@@ -197,15 +197,21 @@ def stop_container(
         else:
             incus.stop(name, timeout=budget)
     except IncusError as exc:
-        if _STUCK_MARKER not in str(exc) and not is_busy_operation(exc):
+        busy = is_busy_operation(exc)
+        if _STUCK_MARKER not in str(exc) and not busy:
             raise
-        warn(f"{what} did not shut down cleanly within {budget}s")
+        if busy:
+            failure = f"{what} could not stop within {budget}s because Incus is busy: {exc}"
+            warn(failure)
+        else:
+            failure = f"{what} is still running after a {budget}s clean-shutdown request."
+            warn(f"{what} did not shut down cleanly within {budget}s")
         details = diagnose_stuck_shutdown(incus, name)
         if details:
             warn_plain(f"what is holding it up:\n{details}")
         if not force_fallback:
             raise IncusError(
-                f"{what} is still running after a {budget}s clean-shutdown request. "
+                f"{failure} "
                 f"Inspect it with `incus console --show-log {name}`, then stop it "
                 f"with --force once you know why — a forced stop is a power cut, "
                 f"so anything unsaved inside the container is lost. "
@@ -213,6 +219,8 @@ def stop_container(
             ) from exc
         if disposable:
             warn(f"Pulling the plug on {what} — it is disposable, so nothing is lost")
+        elif busy:
+            warn(f"Forcing {what} off after waiting {budget}s for the busy Incus operation")
         else:
             warn(f"Forcing {what} off after the {budget}s clean shutdown timed out")
         incus.stop(name, force=True)
