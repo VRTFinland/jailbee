@@ -38,7 +38,7 @@ def test_session_list_prefers_the_typed_prompt_and_transcript_marks_clear_as_met
 
     session_link = page.get_by_role("link", name=prompt)
     expect(session_link).to_be_visible()
-    expect(page.locator(".session .title")).to_have_text(prompt)
+    expect(session_link).to_have_text(prompt)
     session_link.click()
     expect(page.get_by_role("heading", name=prompt, exact=True)).to_be_visible()
     # A typed slash command is a label line in every Agent context mode.
@@ -68,7 +68,7 @@ def test_a_mixed_user_record_titles_by_the_typed_text_and_shows_the_reminder_as_
     page.goto(f"{server.url}/#/repos/work")
     page.reload()
 
-    expect(page.locator(".session .title")).to_have_text(typed)
+    expect(page.get_by_role("link", name=typed, exact=True)).to_have_text(typed)
     page.get_by_role("link", name=typed).click()
     expect(page.get_by_role("heading", name=typed, exact=True)).to_be_visible()
     expect(page.locator(".entry.user.meta pre.meta")).to_have_text(reminder)
