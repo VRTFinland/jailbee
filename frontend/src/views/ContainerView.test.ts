@@ -105,6 +105,26 @@ describe("ContainerView", () => {
         wrapper.unmount()
     })
 
+    it.each([
+        {liveSessionsOnly: false, openOnlyLiveSession: true},
+        {liveSessionsOnly: true, openOnlyLiveSession: false},
+    ])("does not jump with either preference off (%o)", async preferences => {
+        updateSettings(preferences)
+        const {wrapper, router} = await mountContainer(serve())
+        expect(router.currentRoute.value.name).toBe("container")
+        wrapper.unmount()
+    })
+
+    it("uses the saved filter again when visiting another container", async () => {
+        updateSettings({liveSessionsOnly: true})
+        const {wrapper, router} = await mountContainer(serve())
+        await wrapper.get('[role="switch"][aria-label="Live only"]').trigger("click")
+        await router.push("/containers/alpha-2")
+        await flushPromises()
+        expect(wrapper.get('[role="switch"][aria-label="Live only"]').attributes("aria-checked")).toBe("true")
+        wrapper.unmount()
+    })
+
     it("replaces the container list so Back reaches the entry page", async () => {
         updateSettings({liveSessionsOnly: true, openOnlyLiveSession: true})
         const {wrapper, router} = await mountContainer(serve())

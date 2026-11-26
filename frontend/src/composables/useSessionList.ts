@@ -1,4 +1,4 @@
-import {ref} from "vue"
+import {ref, watch} from "vue"
 import {useRoute, useRouter} from "vue-router"
 import {settings} from "../settings"
 
@@ -8,6 +8,7 @@ export function useSessionList() {
     const router = useRouter()
     const liveOnly = ref(settings.liveSessionsOnly)
     const listRoute = route.name
+    watch(() => route.path, () => { liveOnly.value = settings.liveSessionsOnly }, {flush: "sync"})
 
     async function openSingleLive(prefix: string, sessions: {agent: string; session_id: string}[]) {
         if (route.name !== listRoute || !liveOnly.value || !settings.openOnlyLiveSession || sessions.length !== 1) return
