@@ -29,7 +29,9 @@ def with_settings(command: str) -> str:
     Keep the rest of the command intact: headless presets contain expansions.
     """
     # Keep quoted punctuation and command substitutions inside the first command.
-    first = re.match(r"""(?:\\.|'[^']*'|"(?:\\.|[^"\\])*"|\$\([^)]*\)|\$(?!\()|[^;&|'"\\$])+""", command)
+    first = re.match(
+        r"""(?:\\.|'[^']*'|"(?:\\.|[^"\\])*"|\$\([^)]*\)|\$(?!\()|[^;&|'"\\$])+""", command
+    )
     if first is None or (first.end() < len(command) and command[first.end()] not in ";&|"):
         return command
     try:

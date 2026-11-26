@@ -42,7 +42,6 @@ _OPTIONAL_OPTIONS = {
 _REMOVE_FLAGS = {"-r", "--resume", "-c", "--continue", "--fork-session", "-p", "--print"}
 
 
-
 def parse_snapshot(raw: str) -> list[ResumeEntry]:
     """Parse untrusted snapshot JSON, dropping malformed session rows."""
     if len(raw) > 65536:

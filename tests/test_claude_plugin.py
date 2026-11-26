@@ -39,8 +39,12 @@ def test_launch_settings_missing_file_keeps_argv(tmp_path):
 @pytest.mark.parametrize(
     "command",
     [
-        "claude --settings custom.json", "claude --settings=custom.json", "codex", "env X=1 claude",
-        "claude --system-prompt 'unterminated", 'claude --model "unterminated',
+        "claude --settings custom.json",
+        "claude --settings=custom.json",
+        "codex",
+        "env X=1 claude",
+        "claude --system-prompt 'unterminated",
+        'claude --model "unterminated',
     ],
 )
 def test_launch_settings_preserve_explicit_settings_and_other_binaries(command):
@@ -50,7 +54,9 @@ def test_launch_settings_preserve_explicit_settings_and_other_binaries(command):
 @pytest.mark.parametrize("separator", [";", "&&", "||", "|"])
 @pytest.mark.parametrize("spacing", ["", " "])
 @pytest.mark.parametrize("options", ["", " --model opus"])
-def test_later_command_settings_do_not_suppress_claude_settings(tmp_path, separator, spacing, options):
+def test_later_command_settings_do_not_suppress_claude_settings(
+    tmp_path, separator, spacing, options
+):
     binary = tmp_path / "claude"
     binary.write_text('#!/bin/bash\nprintf "%s\\n" "$@" > "$RECORD"\n')
     binary.chmod(0o755)
@@ -79,8 +85,15 @@ def test_quoted_command_separator_does_not_hide_explicit_settings(separator):
 @pytest.mark.parametrize(
     "option",
     [
-        "--system-prompt", "--append-system-prompt", "--json-schema", "--mcp-config",
-        "--add-dir", "--allowedTools", "--tools", "--plugin-dir", "--permission-prompt-tool",
+        "--system-prompt",
+        "--append-system-prompt",
+        "--json-schema",
+        "--mcp-config",
+        "--add-dir",
+        "--allowedTools",
+        "--tools",
+        "--plugin-dir",
+        "--permission-prompt-tool",
     ],
 )
 def test_option_value_named_settings_does_not_suppress_jailbee_settings(option):
