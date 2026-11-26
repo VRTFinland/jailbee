@@ -102,7 +102,10 @@ def test_restart_preamble_says_interactive_monitor_restarts() -> None:
 def test_child_preamble_keeps_subagents_off_the_inbox() -> None:
     preamble = actions.child_preamble("orch")
     assert "you are the controller" in preamble
-    assert "never use `jailbee inbox`" in preamble
+    assert (
+        "Tell every subagent you dispatch to return its result to you; "
+        "only you use `jailbee inbox`."
+    ) in preamble
 
 
 def test_child_preamble_discourages_progress_notes() -> None:

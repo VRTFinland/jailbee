@@ -554,9 +554,13 @@ def test_orchestration_skill_pairs_none_with_quiet_after() -> None:
 def test_child_skill_keeps_subagents_off_the_inbox() -> None:
     text = _skill_text(CHILD)
     assert "## Your own subagents" in text
-    assert "If you are a subagent" in text
-    assert "do not use `jailbee inbox`" in text
+    assert text.index("If an agent dispatched you") < text.index("**First:**")
+    assert "return your result, question or blocker to it" in text
+    assert "the inbox belongs to the top-level agent" in text
+    assert "even when `JAILBEE_ROLE=child` is set" in text
+    assert text.count("If an agent dispatched you") == 1
     assert "you are the controller" in text
+    assert "top-level agent" in text.split("description:", 1)[1].split("---", 1)[0]
 
 
 def test_child_skill_covers_done_bounce() -> None:

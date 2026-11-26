@@ -62,7 +62,7 @@ def test_quit_confirmation_survives_unpaced_answer_bursts(mocker, tmp_path, keys
         return drunner.RunResult(status=0)
 
     app = make_app(mocker, [RepoGroup("alpha", str(tmp_path), None, [ci("alpha-a", "alpha")])])
-    app.action_runner = run
+    app.session.client.action_runner = run
     app.threaded_actions = True
 
     async def scenario():

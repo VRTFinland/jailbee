@@ -1,15 +1,67 @@
 """Parse and publish orchestration requests without external dependencies."""
 
 import io
+import json
 import os
 import re
 import secrets
 import sys
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import BinaryIO
 
-from jailbee.inbox.errors import InboxBadUsage, InboxUsage
+from jailbee.inbox.errors import InboxBadUsage, InboxRefusedError, InboxUsage
+
+CONTAINER_INFO_FILE = Path("/etc/jailbee/container.json")
+
+
+def _linked_worktree_common(cwd: Path) -> Path | None:
+    """Resolve the nearest checkout's linked-worktree common directory, without git."""
+    for directory in (cwd, *cwd.parents):
+        marker = directory / ".git"
+        if marker.is_file():
+            text = marker.read_text().strip()
+            if text.startswith("gitdir:"):
+                gitdir = (directory / text.removeprefix("gitdir:").strip()).resolve()
+                # Submodules can have their own worktrees below .git/modules/.
+                common_file = gitdir / "commondir"
+                common = (
+                    (gitdir / common_file.read_text().strip()).resolve()
+                    if common_file.is_file()
+                    else None
+                )
+                if gitdir.parent.name == "worktrees" and (
+                    gitdir.parent.parent.name == ".git" or common == gitdir.parent.parent
+                ):
+                    return gitdir.parent.parent
+        if marker.exists():
+            break
+    return None
+
+
+def _refuse_linked_worktree_done() -> None:
+    common = _linked_worktree_common(Path.cwd())
+    linked = common is not None
+    try:
+        info = json.loads(CONTAINER_INFO_FILE.read_text())
+    except (FileNotFoundError, ValueError):
+        info = None
+    repo_dir = info.get("repo_dir") if isinstance(info, dict) else None
+    if isinstance(repo_dir, str) and repo_dir:
+        repo_git = (Path(repo_dir) / ".git").resolve()
+        # A submodule's common directory lives under this repo's .git/modules/.
+        linked = common is not None and (
+            common == repo_git or common.is_relative_to(repo_git / "modules")
+        )
+        worktrees = repo_git / "worktrees"
+        linked = linked or (worktrees.is_dir() and next(worktrees.iterdir(), None) is not None)
+    if linked:
+        raise InboxRefusedError(
+            "done is the top-level agent's report. If an agent dispatched you, "
+            "return your result to it. Otherwise remove the linked worktrees "
+            "(git worktree remove <path>) and send done again."
+        )
 
 
 @dataclass(frozen=True)
@@ -356,6 +408,8 @@ def read_body(req: SendRequest) -> bytes:
 
 def prepare_send(req: SendRequest) -> tuple[str, dict[str, object], str | None]:
     """The manifest id, manifest dict and body text for a request (socket transport)."""
+    if req.type == "message" and req.kind == "done":
+        _refuse_linked_worktree_done()
     id_ = new_id(req.type)
     body_name = f"{id_}.md" if req.type in {"message", "spawn", "restart"} else None
     body: str | None = None

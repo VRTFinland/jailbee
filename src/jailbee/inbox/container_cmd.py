@@ -10,7 +10,7 @@ from typer._click.exceptions import UsageError
 from typer.core import TyperGroup
 
 from jailbee.inbox import cli, send, socket_cli
-from jailbee.inbox.errors import InboxBadUsage, InboxUsage
+from jailbee.inbox.errors import InboxBadUsage, InboxRefusedError, InboxUsage
 from jailbee.inbox.hook_cmd import register_hooks
 
 
@@ -42,6 +42,8 @@ send_app = typer.Typer(
         "Text (body or prompt) comes from --text T, --file PATH or - (stdin); "
         "at most 65536 bytes, not empty. "
         "A first-state refusal prints its reason to stderr and exits 1, even without --wait. "
+        "Done is refused locally (exit 1, no request id) inside a linked worktree or while "
+        "the container repository has linked worktrees; remove them before reporting done. "
         "--wait prints other status replies: exit 0 on done/queued/started, 1 on failed. "
         "Exit 3 means no reply (may or may not have run); inspect inbox ls/status before "
         "resending with a new id. Timeout defaults to 30m; none waits indefinitely. "
@@ -70,6 +72,9 @@ def _run(command: Callable[[], int]) -> None:
     except TimeoutError:
         typer.echo(transport.UNREACHABLE_MESSAGE, err=True)
         code = transport.EXIT_UNREACHABLE
+    except InboxRefusedError as exc:
+        typer.echo(f"{cli.PROG}: {exc}", err=True)
+        code = 1
     except InboxBadUsage as exc:
         raise UsageError(str(exc)) from exc
     except InboxUsage as exc:

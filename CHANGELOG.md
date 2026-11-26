@@ -477,6 +477,11 @@ before editing `## Unreleased`.
 
 ### Changed
 
+- `jailbee inbox send message --kind done` refuses locally with exit 1 when
+  called inside a linked worktree or while the container repository has linked
+  worktrees registered. The controller removes them before reporting completion;
+  other message kinds remain available. The child skill now puts subagent-to-controller
+  reporting first, and the child preamble tells the controller to pass that rule on.
 - `jailbee git retarget` accepts already-fetched upstream branches as bases,
   without creating a local host branch. Its CLI, dashboard and shell-completion
   candidates now match the new-container base picker (local branches first,
