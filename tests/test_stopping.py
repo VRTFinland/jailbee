@@ -75,6 +75,22 @@ def test_stuck_shutdown_without_fallback_raises_an_actionable_error(mocker):
     assert mocker.call("foo", force=True) not in incus.stop.call_args_list
 
 
+@pytest.mark.parametrize("failure", [
+    IncusError('Instance is busy running a "stop" operation'),
+    IncusError('Instance is still busy after waiting up to 120s: Instance is busy running a "stop" operation'),
+])
+def test_busy_shutdown_is_diagnosed_and_names_the_force_escape_hatch(mocker, failure):
+    incus = mocker.MagicMock()
+    incus.stop.side_effect = failure
+    incus.exec.return_value = ""
+    incus.console_log.return_value = "A stop job is running"
+    warn = mocker.patch("jailbee.stopping.warn_plain")
+    with pytest.raises(IncusError, match="--force"):
+        stop_container(incus, "foo")
+    assert "A stop job is running" in str(warn.call_args)
+    incus.stop.assert_called_once_with("foo", timeout=CLEAN_STOP_BUDGET)
+
+
 def test_other_stop_failures_are_never_forced(mocker):
     """A real error must not be masked by a force fallback."""
     incus = mocker.MagicMock()

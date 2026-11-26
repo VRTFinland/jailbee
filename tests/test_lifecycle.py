@@ -5947,9 +5947,9 @@ def test_list_containers_reads_mode_from_user_gie_mode(make_cfg, tmp_path):
 @pytest.mark.parametrize(
     "restart,state,operation",
     [
-        (False, "Stopped", ["start"]),
-        (True, "Stopped", ["start"]),
-        (True, "Running", ["stop", "start"]),
+        (False, "Stopped", ["allocate", "detach", "start"]),
+        (True, "Stopped", ["allocate", "detach", "start"]),
+        (True, "Running", ["stop", "allocate", "detach", "start"]),
     ],
 )
 def test_boot_container_syncs_instructions_before_allocation(
@@ -5969,7 +5969,7 @@ def test_boot_container_syncs_instructions_before_allocation(
     boot_container(cfg, incus, "feat-x", restart=restart)
 
     sync.assert_called_once_with(cfg)
-    assert events == ["sync", "allocate", "detach", *operation, "attach"]
+    assert events == ["sync", *operation, "attach"]
     from jailbee import container_bindings
 
     assert container_bindings.sync.call_args_list == [
@@ -6068,10 +6068,9 @@ def test_boot_container_survives_a_raising_anchor_refresh(tmp_path, mocker):
     boot_container(cfg, incus, "feat-x", restart=False)
 
 
-def test_boot_container_detaches_then_restarts_then_attaches(tmp_path, mocker):
-    """Detach must happen *before* the reboot so the four socket devices
-    don't race with logind on the next boot. attach must happen *after* the
-    start returns so logind has provisioned /run/user/<uid>.
+def test_boot_container_stops_then_detaches_then_starts_then_attaches(tmp_path, mocker):
+    """Stop before editing devices, detach before logind's next boot,
+    then attach once logind has provisioned /run/user/<uid>.
     """
     cfg = _cfg_for_new(tmp_path)
     incus = MagicMock()
@@ -6080,7 +6079,23 @@ def test_boot_container_detaches_then_restarts_then_attaches(tmp_path, mocker):
 
     boot_container(cfg, incus, "feat-x", restart=True)
 
-    assert events == ["detach", "stop", "start", "attach"]
+    assert events == ["stop", "detach", "start", "attach"]
+
+
+@pytest.mark.parametrize("restart", [False, True])
+def test_boot_container_waits_for_a_stopping_container_before_device_changes(tmp_path, mocker, restart):
+    cfg = _cfg_for_new(tmp_path)
+    incus = MagicMock()
+    incus.list_containers.return_value = [{"name": "feat-x", "status": "Stopping"}]
+    events = _boot_events(mocker, incus)
+    mocker.patch(
+        "jailbee.container_bindings.sync",
+        side_effect=lambda *a, **kw: events.append("bindings"),
+    )
+
+    boot_container(cfg, incus, "feat-x", restart=restart)
+
+    assert events == ["stop", "bindings", "detach", "start", "bindings", "attach"]
 
 
 def test_boot_container_restart_bounds_the_clean_shutdown(tmp_path, mocker):
@@ -6099,10 +6114,9 @@ def test_boot_container_restart_bounds_the_clean_shutdown(tmp_path, mocker):
     incus.start.assert_called_once_with("feat-x")
 
 
-def test_boot_container_restart_reattaches_when_the_shutdown_hangs(tmp_path, mocker):
-    """A container that will not shut down is still running, so the runtime
-    devices detached before the stop go back on, and it is not power-cut:
-    it holds the user's work.
+def test_boot_container_restart_leaves_devices_untouched_when_shutdown_hangs(tmp_path, mocker):
+    """A failed stop leaves the running container's devices untouched and
+    never power-cuts a container holding the user's work.
     """
     cfg = _cfg_for_new(tmp_path)
     incus = MagicMock()
@@ -6119,7 +6133,7 @@ def test_boot_container_restart_reattaches_when_the_shutdown_hangs(tmp_path, moc
 
     incus.stop.assert_called_once_with("feat-x", timeout=CLEAN_STOP_BUDGET)
     incus.start.assert_not_called()
-    assert events == ["detach", "attach"]
+    assert events == []
 
 
 def test_boot_container_starts_when_already_stopped(tmp_path, mocker):

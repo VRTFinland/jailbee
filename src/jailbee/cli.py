@@ -5735,6 +5735,13 @@ def restart(
     # `jailbee autostart cancel`, which the refusal names.
     _refuse_while_autostart_reruns(name)
     _refuse_while_autostart_runs(cfg, name)
+    from jailbee.stopping import refuse_while_stopping
+
+    try:
+        refuse_while_stopping(cfg, name)
+    except ValueError as exc:
+        error_plain(str(exc))
+        raise typer.Exit(1) from exc
     builtin = autostart_profile if autostart_profile in BUILTIN_PROFILES else None
     custom = autostart_profile if autostart_profile is not None and builtin is None else None
     selected_services = (

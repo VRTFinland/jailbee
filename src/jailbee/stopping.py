@@ -28,7 +28,7 @@ from collections.abc import Callable
 from contextlib import AbstractContextManager
 from typing import TYPE_CHECKING
 
-from jailbee.incus import Incus, IncusError
+from jailbee.incus import Incus, IncusError, is_busy_operation
 
 if TYPE_CHECKING:
     from jailbee.config import Config
@@ -141,6 +141,19 @@ def clean_stop(
         stop_container(incus, name, label=short_name(cfg, name))
 
 
+def refuse_while_stopping(cfg: Config, name: str) -> None:
+    """Reject a restart while another JailBee process still owns its stop job."""
+    from jailbee import background
+    from jailbee.lifecycle import lookup_background_job, short_name
+
+    row = lookup_background_job(cfg, name)
+    if row is not None and row.op_kind == background.JOB_STOP and not background.clearable(row.phase, row.pid):
+        raise ValueError(
+            f"Container '{short_name(cfg, name)}' stop operation is still running. "
+            "Wait for it to finish before restarting."
+        )
+
+
 def stop_container(
     incus: Incus,
     name: str,
@@ -180,7 +193,7 @@ def stop_container(
         else:
             incus.stop(name, timeout=budget)
     except IncusError as exc:
-        if _STUCK_MARKER not in str(exc):
+        if _STUCK_MARKER not in str(exc) and not is_busy_operation(exc):
             raise
         warn(f"{what} did not shut down cleanly within {budget}s")
         details = diagnose_stuck_shutdown(incus, name)
