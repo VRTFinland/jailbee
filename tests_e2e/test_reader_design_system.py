@@ -12,7 +12,10 @@ from tests_e2e.test_session_reading import TITLE, open_transcript
 
 @pytest.mark.parametrize("theme", ["light", "dark", "eink"])
 def test_reader_prompt_uses_primary_container_and_jump_uses_shared_button(
-    page: Page, make_server: Callable[..., E2EServer], tmp_path: Path, theme: str,
+    page: Page,
+    make_server: Callable[..., E2EServer],
+    tmp_path: Path,
+    theme: str,
     output_path: str,
 ) -> None:
     page.set_viewport_size({"width": 390, "height": 800})
@@ -45,7 +48,11 @@ def test_reader_prompt_uses_primary_container_and_jump_uses_shared_button(
     page.keyboard.press("Escape")
     page.goto(f"{server.url}/#/ui")
     expect(page.get_by_role("heading", name="Design system", exact=True)).to_be_visible()
-    panel = page.get_by_role("region", name=f"{'E-ink' if theme == 'eink' else theme.title()} theme, normal profile", exact=True)
-    panel.locator(".group").filter(has=page.get_by_role("heading", name="Reader", exact=True)).screenshot(
-        path=str(evidence / f"gallery-reader-{theme}.png")
+    panel = page.get_by_role(
+        "region",
+        name=f"{'E-ink' if theme == 'eink' else theme.title()} theme, normal profile",
+        exact=True,
     )
+    panel.locator(".group").filter(
+        has=page.get_by_role("heading", name="Reader", exact=True)
+    ).screenshot(path=str(evidence / f"gallery-reader-{theme}.png"))

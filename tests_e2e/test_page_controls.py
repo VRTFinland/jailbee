@@ -146,7 +146,9 @@ def test_page_control_choice_is_available_in_settings_and_survives_reload(
         expect(control).to_have_value(value)
 
 
-def test_non_reader_side_controls_keep_the_same_geometry(server: E2EServer, logged_in: Page) -> None:
+def test_non_reader_side_controls_keep_the_same_geometry(
+    server: E2EServer, logged_in: Page
+) -> None:
     page = logged_in
     page.evaluate("""() => {
         localStorage.setItem('jailbee.displayProfile', 'eink');
