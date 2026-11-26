@@ -3,8 +3,9 @@
 The web dashboard is a browser view of the same host state the terminal
 dashboard shows: the front page of repositories and containers, per-repo and
 per-container session lists, and a readable, live-following transcript of an
-agent session. It is read-only for now, runs on the host as the current user,
-and is installed as an optional extra.
+agent session. It runs on the host as the current user and comes with every
+install. Reading is available by default; messaging a live Claude session
+requires an explicit remote permission.
 
 Which container ran a session is recorded by the shared state service, which
 runs only while some dashboard (terminal, Qt or web) is connected. A session
@@ -114,6 +115,48 @@ These relationships update with the live snapshot. Indentation and the
 `Child of` label distinguish nesting without colour; phase edge styles remain
 reserved for booting, autostart, background jobs and failures, also on nested
 rows in the e-ink theme.
+
+## Message the agent
+
+Enable messaging in the host-global configuration, then restart the web server:
+
+```yaml
+remote:
+  web:
+    agent_chat: true
+```
+
+The default is `false`. This right is independent of command-running rights and
+applies to every logged-in device. With login disabled, anyone who can reach the
+server has it too. Repository visibility still applies: an excluded repository's
+sessions cannot be messaged.
+
+The transcript reader's **Message agent** field sends multi-line text to the
+session being read, using the same boundary as
+[`jailbee agent say`](commands.md#agent-runner). The message is pasted into that
+Claude session's tmux pane as an ordinary user turn, even while Claude is working.
+There is no web marker in the transcript. Only Claude is supported, including
+`claude-jb`; subagent transcripts cannot be messaged.
+
+The field is disabled with a reason when permission is off, the session is no
+longer live, the agent is unsupported, or its pane cannot be found. Open dialogs,
+unsent terminal input and unknown prompt layouts refuse the send without clearing
+anything. A refusal keeps your text and shows the reason inline. Resolve dialogs
+or terminal drafts at the terminal before retrying. Avoid typing into the same
+pane while sending: checking the input and pasting cannot lock out concurrent
+terminal typing.
+
+**Waiting for transcript** means the text was pasted; **Delivered** appears only
+when a matching ordinary user entry arrives in the live transcript. The field
+and send button stay disabled while that confirmation is pending. No separate
+acknowledgement or queue is used. The composer also works in the e-ink display
+profile, above its page controls.
+
+`jb remote web auth log` records sends and refusals with the device or token name,
+session, outcome and exact text in the local state database. Message text is not
+printed to the server's audit logger. Treat that database as private transcript
+data. `remote.ssh.agent_chat` is a separate, also default-off right for
+`jailbee agent say` over SSH.
 
 ## Install
 
