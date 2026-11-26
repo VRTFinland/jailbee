@@ -6,6 +6,7 @@ import json
 import re
 from typing import TYPE_CHECKING
 
+import pytest
 from playwright.sync_api import Locator, Page, WebSocketRoute, expect
 
 from tests.follower_fixture import CLAUDE, FOLLOWER, WRAPPER, gather
@@ -25,6 +26,72 @@ def expect_refused_reconnect(server: E2EServer, errors: BrowserErrors) -> re.Pat
     )
     errors.expect("console", refused, at_least=1)
     return refused
+
+
+@pytest.mark.parametrize("theme", ["light", "dark", "eink"])
+def test_front_page_actions_and_rows_match_gallery_primitives(
+    server: E2EServer, logged_in: Page, theme: str
+) -> None:
+    page = logged_in
+    server.push(snapshot_of(repo_group("work", container("work-main", "work"))))
+    page.evaluate("t => localStorage.setItem('jailbee.theme', t)", theme)
+    page.reload()
+    row = page.get_by_role("listitem").filter(has=page.get_by_role("link", name="main", exact=True))
+    expect(row).to_be_visible()
+    action = page.get_by_role("button", name="Log out", exact=True)
+    actual = action.evaluate(
+        "el => { const s = getComputedStyle(el); return [s.borderRadius, s.color, s.minHeight] }"
+    )
+    row_look = row.evaluate(
+        "el => { const s = getComputedStyle(el); return [s.borderRadius, "
+        "s.backgroundColor, s.borderColor] }"
+    )
+    page.goto(f"{server.url}/#/ui")
+    label = {"light": "Light", "dark": "Dark", "eink": "E-ink"}[theme]
+    panel = page.get_by_role("region", name=f"{label} theme, normal profile", exact=True)
+    reference = panel.get_by_role("button", name="text", exact=True)
+    assert actual == reference.evaluate(
+        "el => { const s = getComputedStyle(el); return [s.borderRadius, s.color, s.minHeight] }"
+    )
+    reference_row = panel.get_by_role("listitem").filter(has_text="fix-issue-165").first
+    assert row_look == reference_row.evaluate(
+        "el => { const s = getComputedStyle(el); return [s.borderRadius, "
+        "s.backgroundColor, s.borderColor] }"
+    )
+
+
+def test_row_header_stays_above_cells_and_long_names_remain_readable(
+    server: E2EServer, logged_in: Page
+) -> None:
+    name = "a-very-long-container-name-" * 6
+    server.push(snapshot_of(repo_group("work", container(f"work-{name}", "work", state="Stopped"))))
+    row = logged_in.get_by_role("listitem")
+    for width in (1280, 390):
+        logged_in.set_viewport_size({"width": width, "height": 844})
+        link = row.get_by_role("link", name=name, exact=True)
+        expect(link).to_be_visible()
+        title = row.locator(".list-row-title")
+        assert title.evaluate("el => el.scrollWidth <= el.clientWidth")
+        assert title.evaluate("el => getComputedStyle(el).whiteSpace") != "nowrap"
+        chip, cells = row.locator(".phase").bounding_box(), row.locator("dl").bounding_box()
+        assert chip and cells
+        assert chip["y"] + chip["height"] <= cells["y"]
+        assert logged_in.evaluate("document.documentElement.scrollWidth <= innerWidth")
+
+
+def test_container_opens_from_row_metadata_not_only_its_name(
+    server: E2EServer, logged_in: Page
+) -> None:
+    server.push(snapshot_of(repo_group("work", container("work-main", "work"))))
+    row = logged_in.get_by_role("listitem").filter(
+        has=logged_in.get_by_role("link", name="main", exact=True)
+    )
+    expect(row).to_be_visible()
+    cells = row.locator("dl").bounding_box()
+    box = row.bounding_box()
+    assert cells and box
+    row.click(position={"x": cells["x"] - box["x"] + 4, "y": cells["y"] - box["y"] + 4})
+    expect(logged_in).to_have_url(re.compile(r"#/containers/work-main$"))
 
 
 def test_snapshots_add_change_and_remove_containers_without_reloading(
@@ -62,7 +129,7 @@ def test_snapshots_add_change_and_remove_containers_without_reloading(
     assert navigations == [], "snapshot updates must not navigate or reload the page"
 
 
-def test_row_phases_have_distinct_edges_and_labels_in_the_eink_theme(
+def test_row_phases_have_distinct_icons_and_labels_in_the_eink_theme(
     server: E2EServer, logged_in: Page
 ) -> None:
     server.push(
@@ -89,34 +156,31 @@ def test_row_phases_have_distinct_edges_and_labels_in_the_eink_theme(
     )
     expect(running).to_be_visible()
     expect(running.locator(".phase")).to_have_count(0)
-    edge_signature = """el => {
-        const s = getComputedStyle(el);
-        return [s.borderLeftStyle, s.borderLeftWidth, s.borderTopStyle];
-    }"""
-    running_edge = running.evaluate(edge_signature)
-
-    # Check rendered edges, not CSS source or phase attributes: this catches
-    # broken scoped selectors and distinguishes states on a monochrome screen.
-    for name, label, style, width, outline in (
-        ("boot", "booting", "dashed", "4px", "solid"),
-        ("auto", "autostart", "dotted", "4px", "solid"),
-        ("build", "job", "double", "4px", "solid"),
-        ("broken", "failed", "solid", "8px", "solid"),
-        ("off", "Stopped", "solid", "4px", "none"),
+    icons: set[str] = set()
+    # The shared chip replaces phase-specific row edges. Its visible words and
+    # distinct painted vector keep every state legible without colour or fades.
+    for name, label in (
+        ("boot", "booting"),
+        ("auto", "autostart"),
+        ("build", "job"),
+        ("broken", "failed"),
+        ("off", "Stopped"),
     ):
         row = logged_in.get_by_role("listitem").filter(
             has=logged_in.get_by_role("link", name=name, exact=True)
         )
         expect(row).to_be_visible()
-        assert row.evaluate(edge_signature) != running_edge
-        expect(row.locator(".phase")).to_have_text(label)
-        expect(row.locator(".phase")).to_be_visible()
-        expect(row).to_have_css("border-left-style", style)
-        expect(row).to_have_css("border-left-width", width)
-        expect(row).to_have_css("border-left-color", "rgb(0, 0, 0)")
+        chip = row.locator(".phase")
+        expect(chip).to_have_text(label)
+        expect(chip).to_be_visible()
+        expect(chip).to_have_css("color", "rgb(0, 0, 0)")
+        expect(chip).to_have_css("background-color", "rgb(255, 255, 255)")
+        expect(chip).to_have_css("border-top-color", "rgb(0, 0, 0)")
+        path = chip.locator("svg path")
+        assert path.evaluate("el => el.getBBox().width > 0")
+        icons.add(path.get_attribute("d") or "")
         expect(row).to_have_css("opacity", "1")
-        for side in ("top", "right", "bottom"):
-            expect(row).to_have_css(f"border-{side}-style", outline)
+    assert len(icons) == 5
 
 
 def test_connection_loss_shows_connecting_while_the_last_snapshot_stays_visible(

@@ -17,11 +17,13 @@ defineProps<{
     secondary?: string
     selected?: boolean
     to?: RouteLocationRaw
+    /** Wrap long titles and trailing chips before the full-width body. */
+    wrap?: boolean
 }>()
 </script>
 
 <template>
-    <li class="list-row" :class="{selected, linked: to !== undefined, 'ui-state-layer': to !== undefined}"
+    <li class="list-row" :class="{selected, wrap, linked: to !== undefined, 'ui-state-layer': to !== undefined}"
         :aria-current="selected && to === undefined ? 'true' : undefined">
         <span class="list-row-title">
             <router-link v-if="to !== undefined" :to="to" class="list-row-link"
@@ -50,6 +52,19 @@ defineProps<{
     background: var(--md-surface-container-lowest);
     color: var(--md-on-surface);
 }
+.list-row.wrap {
+    display: flex;
+    flex-wrap: wrap;
+    row-gap: var(--md-space-8);
+}
+.list-row.wrap .list-row-title {
+    flex: 1 1 auto;
+    white-space: normal;
+    overflow-wrap: anywhere;
+}
+.list-row.wrap .list-row-trailing { order: 1; max-width: 100%; }
+.list-row.wrap .list-row-secondary { order: 2; flex-basis: 100%; }
+.list-row.wrap .list-row-body { order: 3; flex-basis: 100%; }
 .list-row.selected {
     background: var(--md-primary-container);
     color: var(--md-on-primary-container);

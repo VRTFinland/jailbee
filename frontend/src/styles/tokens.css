@@ -48,6 +48,8 @@
     --md-type-label-small-size: 0.6875rem;
     --md-type-label-small-line-height: 1rem;
     --md-type-label-small-weight: 500;
+    --md-type-emphasis-weight: 700;
+    --md-context-opacity: 0.5;
 
     /* Icon sizes: Material Symbols use a 24px optical size at the medium step. */
     --md-icon-small: 1rem;
@@ -230,6 +232,7 @@
     --md-state-pressed-opacity: 0;
     --md-disabled-content-opacity: 1;
     --md-disabled-container-opacity: 0;
+    --md-context-opacity: 1;
 }
 /* A theme scope inside an e-ink one gets its layers back. */
 [data-theme="light"],
@@ -238,6 +241,7 @@
     --md-state-pressed-opacity: 0.1;
     --md-disabled-content-opacity: 0.38;
     --md-disabled-container-opacity: 0.12;
+    --md-context-opacity: 0.5;
 }
 
 /* Old token names, kept as aliases until every view is migrated (#167

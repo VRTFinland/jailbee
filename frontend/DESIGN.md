@@ -27,7 +27,7 @@ All live in `src/components/ui/`.
 | A command shown only as an icon | `IconButton` | `label` is required and becomes the accessible name. The hit target is at least `--md-target-min`. |
 | An on/off setting | `Switch` | `v-model` boolean, `label` required. Not for a one-off action: use a `Button`. |
 | A container, phase or agent state | `StatusChip` | Never map wire values by hand: `containerStatus`, `agentStatus` and `rowStatuses` in `components/ui/status.ts` turn a row into chips. An unknown value becomes a neutral chip with its raw text. |
-| A row of a list (container, repo, setting) | `ListRow` | `title`/`secondary` props or slots, a default body slot, a `trailing` slot for controls. `to` makes the whole row a route link; controls in the body and trailing slots stay their own targets. Height follows `--md-target-row`. |
+| A row of a list (container, repo, setting) | `ListRow` | `title`/`secondary` props or slots, a default body slot, a `trailing` slot for controls. `to` makes the whole row a route link; controls in the body and trailing slots stay their own targets. Height follows `--md-target-row`. `wrap` keeps long names readable and trailing chips above the body without view overrides of primitive internals. |
 | A glyph | `Icon` | `name` from `material-symbols/paths.ts`, `size` small/medium/large. Takes `currentColor`. Without `label` it is decorative (`aria-hidden`). |
 | A modal question or form, or a side drawer | `Dialog` | `title` required, `description` optional, `placement="drawer"` for a side panel. Body in the default slot; buttons in the `#actions` slot, whose `close` slot prop closes it. A trigger in `#trigger`, or drive `v-model:open`. |
 | A list of actions behind a button | `Menu` | `label`, `items` (`MenuItem`: `value`, `label`, optional `icon`, `disabled`, `variant: "danger"`), `select` event with the value. The trigger goes in `#trigger`. |
@@ -68,6 +68,7 @@ a component. The names are Material 3 roles under the `md` prefix.
 | Hit targets | `--md-target-min`, `--md-target-row` | `min` 44px: the smallest any control may be. `row` 48px with a fine pointer, 56px with a coarse one. |
 | Layers | `--md-layer-*` (bottom to top: `raised`, `sticky`, `scrim`, `dialog`, `popover`) | Every z-index. A menu or select opened from a dialog sits above it. |
 | State layers | `--md-state-*` (`hover-opacity`, `pressed-opacity`) | Through `ui-state-layer`; zero in e-ink. |
+| Context | `--md-context-opacity` | Filtered context ancestors remain at half opacity; the e-ink theme uses a dashed hairline instead of grey. |
 | Disabled | `--md-disabled-*` (`content-opacity`, `container-opacity`) | Material 3 fading; none in e-ink (no greys). |
 | Focus ring | `--md-focus-ring-*` (`width`, `offset`) | Through `ui-focus-ring`; kept in every theme. |
 | Motion | `--md-motion-*` (`duration`, `easing`) | Every transition. `--md-motion-duration` is 150ms in the normal profile and 0ms in the e-ink profile and under reduced motion. |

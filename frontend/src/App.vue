@@ -3,6 +3,8 @@
 // reload of any view is live), and closed on public pages such as login.
 import {nextTick, onBeforeUnmount, onMounted, provide, ref, watch} from "vue"
 import SettingsPanel from "./components/SettingsPanel.vue"
+import Button from "./components/ui/Button.vue"
+import IconButton from "./components/ui/IconButton.vue"
 import {fetchServerMode, getToken} from "./api"
 import {useRoute, useRouter} from "vue-router"
 import {useDashboard} from "./dashboard"
@@ -184,38 +186,37 @@ onBeforeUnmount(() => {
 <template>
     <aside v-if="dashboard?.state.outdated" ref="banner" class="outdated">
         <p role="alert">This page is out of date; reload.</p>
-        <button type="button" @click="reload">Reload</button>
+        <Button variant="tonal" @click="reload">Reload</Button>
     </aside>
     <!-- Route-specific documents must reload and release their live follow on navigation. -->
     <div :inert="settingsOpen || undefined"><router-view :key="route.path" /></div>
     <div v-if="settingsOpen" class="settings-backdrop" @click.self="dismissSettings">
         <section ref="settingsDialog" class="settings-dialog" role="dialog" aria-label="Settings" aria-modal="true" tabindex="-1">
-            <header class="settings-header"><h2>Settings</h2><button type="button" aria-label="Close settings" @click="dismissSettings">&times;</button></header>
+            <header class="settings-header"><h2>Settings</h2><IconButton icon="close" label="Close settings" @click="dismissSettings" /></header>
             <SettingsPanel />
         </section>
     </div>
 </template>
 
 <style scoped>
-.settings-backdrop { position: fixed; inset: 0; z-index: 100; background: transparent; }
-.settings-dialog { position: absolute; right: 0; top: 0; bottom: 0; width: min(36rem, 100%); overflow-y: auto; background: var(--surface); color: var(--text); border-left: 1px solid var(--border-strong); }
-.settings-header { display: flex; align-items: center; justify-content: space-between; padding: var(--space-3); border-bottom: 1px solid var(--border); }
-.settings-header h2 { margin: 0; font-size: 1.25rem; }
-.settings-header button { min-width: 44px; min-height: 44px; font: inherit; }
-[data-profile="eink"] .settings-backdrop { background: transparent; }
-[data-profile="eink"] .settings-dialog { box-shadow: none; border: 1px solid var(--border-strong); }
-@media (max-width: 600px) { .settings-dialog { top: auto; width: 100%; height: 92%; border: 1px solid var(--border-strong); } }
+/* The settings overlay keeps its history/scroll contract; ticket 11 migrates its behaviour to Dialog. */
+.settings-backdrop { position: fixed; inset: 0; z-index: var(--md-layer-dialog); background: transparent; }
+.settings-dialog { position: absolute; right: 0; top: 0; bottom: 0; width: min(36rem, 100%); overflow-y: auto; background: var(--md-surface-container-low); color: var(--md-on-surface); border-left: 1px solid var(--md-outline); }
+.settings-header { display: flex; align-items: center; justify-content: space-between; padding: var(--md-space-16); border-bottom: 1px solid var(--md-outline-variant); }
+.settings-header h2 { margin: 0; font-size: var(--md-type-title-large-size); }
+[data-profile="eink"] .settings-dialog { border: 1px solid var(--md-outline); }
+@media (max-width: 600px) { .settings-dialog { top: auto; width: 100%; height: 92%; border: 1px solid var(--md-outline); } }
 .outdated {
     position: sticky;
     top: 0;
-    z-index: 20;
+    z-index: var(--md-layer-sticky);
     display: flex;
     align-items: center;
-    gap: var(--space-3);
-    padding: var(--space-3);
-    background: var(--notice-bg);
-    border-bottom: 2px solid var(--border-strong);
+    gap: var(--md-space-16);
+    padding: var(--md-space-16);
+    background: var(--md-primary-container);
+    color: var(--md-on-primary-container);
+    border-bottom: 2px solid var(--md-outline);
 }
 .outdated p { margin: 0; }
-.outdated button { font: inherit; min-height: 2.75rem; }
 </style>

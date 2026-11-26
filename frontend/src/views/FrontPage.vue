@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import TitleBar from "../components/TitleBar.vue"
+import Button from "../components/ui/Button.vue"
 import {computed, ref} from "vue"
 import {useRouter} from "vue-router"
 import {logout} from "../api"
@@ -39,10 +40,8 @@ async function signOut() {
         <TitleBar @readable-top="readableTop = $event" title="JailBee" context="containers" />
         <div class="bar">
             <span class="device" v-if="device">{{ device }}</span>
-            <button v-if="eink" class="refresh link" type="button" @click="refresh">
-                Refresh
-            </button>
-            <button class="link" type="button" @click="signOut">Log out</button>
+            <Button v-if="eink" class="refresh" variant="text" @click="refresh">Refresh</Button>
+            <Button variant="text" @click="signOut">Log out</Button>
         </div>
 
         <p v-if="!connected" class="notice">Connecting…</p>
@@ -60,31 +59,27 @@ async function signOut() {
 .page {
     max-width: 48rem;
     margin: 0 auto;
-    padding: var(--space-3);
+    padding: var(--md-space-16);
 }
 .bar {
     display: flex;
     flex-wrap: wrap;
     align-items: baseline;
-    gap: var(--space-3);
-    padding-bottom: var(--space-2);
-    border-bottom: 1px solid var(--border);
-}
-.bar h1 {
-    font-size: 1.25rem;
-    margin: 0;
-    flex: 1;
+    gap: var(--md-space-16);
+    padding-bottom: var(--md-space-8);
+    border-bottom: 1px solid var(--md-outline-variant);
 }
 .device {
-    color: var(--muted);
+    color: var(--md-on-surface-variant);
 }
 .notice {
-    margin: var(--space-3) 0;
-    padding: var(--space-2) var(--space-3);
-    background: var(--notice-bg);
-    border-radius: var(--radius);
+    margin: var(--md-space-16) 0;
+    padding: var(--md-space-8) var(--md-space-16);
+    background: var(--md-primary-container);
+    color: var(--md-on-primary-container);
+    border-radius: var(--md-shape-medium);
 }
 .muted {
-    color: var(--muted);
+    color: var(--md-on-surface-variant);
 }
 </style>
