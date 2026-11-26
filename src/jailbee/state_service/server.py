@@ -66,6 +66,7 @@ log = logging.getLogger(__name__)
 IDLE_TIMEOUT_SECONDS = 30.0
 TICK_SECONDS = 0.1
 ACTION_PRUNE_INTERVAL_SECONDS = 60.0
+ACTION_SCOPE_CACHE_SECONDS = 5.0
 # A client that cannot take a snapshot within this long is dropped, so one
 # wedged dashboard never stalls the others.
 DRAIN_TIMEOUT_SECONDS = 5.0
@@ -100,6 +101,8 @@ class _Client:
     replaying: bool = False
     pending: list[bytes] = field(default_factory=list)
     pending_bytes: int = 0
+    action_scope: dict[int, bool] = field(default_factory=dict)
+    action_scope_until: float = 0.0
 
 
 class StateServer:
@@ -308,6 +311,7 @@ class StateServer:
                 elif isinstance(message, Active):
                     client.active = message.value
                 elif isinstance(message, Refresh):
+                    client.action_scope.clear()
                     self._refresh = True
                     settle = min(max(message.settle, 0.0), MAX_SETTLE_SECONDS)
                     self._fast_until = max(self._fast_until, self._clock() + settle)
@@ -576,7 +580,7 @@ class StateServer:
             entry is None
             or pending is None
             or not client.dashboard_id
-            or not self._in_scope(entry, client)
+            or not self._resolve_action_scope(entry, client)
             or pending[0].question_id != answer.question_id
         ):
             return
@@ -601,6 +605,17 @@ class StateServer:
         self._broadcast_action(ActionQuestionResolved(entry_id, question.question_id, answered_by))
 
     def _in_scope(self, entry: ActionEntry, client: _Client) -> bool:
+        # Output bursts reuse a read-scope decision. Refresh/reconnect or the
+        # short TTL revalidates changed policy/registrations; writes never cache.
+        now = self._clock()
+        if now >= client.action_scope_until:
+            client.action_scope.clear()
+            client.action_scope_until = now + ACTION_SCOPE_CACHE_SECONDS
+        if entry.entry_id not in client.action_scope:
+            client.action_scope[entry.entry_id] = self._resolve_action_scope(entry, client)
+        return client.action_scope[entry.entry_id]
+
+    def _resolve_action_scope(self, entry: ActionEntry, client: _Client) -> bool:
         if client.transport != "none":
             try:
                 if self._repo_free_action(entry.argv):
@@ -645,12 +660,20 @@ class StateServer:
         entry = self._actions.get(entry_id)
         if entry is None or not entry.finished or not self._in_scope(entry, client):
             return
+        try:
+            if not self._resolve_action_scope(entry, client):
+                raise ValueError("action is outside the dashboard scope")
+            self._check_policy(client, entry.argv)
+        except (ValueError, OSError) as exc:
+            self._send_action(client, ActionRejected(entry_id, str(exc)))
+            return
         del self._actions[entry_id]
         self._action_dismissed(entry_id)
         message = ActionDismissed(entry_id)
         for recipient in list(self._clients):
             if self._in_scope(entry, recipient):
                 self._send_action(recipient, message)
+            recipient.action_scope.pop(entry_id, None)
 
     def _action_output(self, entry_id: int, chunk: str) -> None:
         from jailbee.dashboard.runner import OUTPUT_DROPPED_MARKER, OUTPUT_KEEP_CHARS
@@ -684,7 +707,7 @@ class StateServer:
             declined=finish.declined,
         )
         self._actions[finish.entry_id] = entry
-        self._broadcast_action(finish)
+        self._broadcast_action(entry if interrupted else finish)
         self._action_changed(entry)
         self._prune_finished_actions()
 
@@ -701,6 +724,7 @@ class StateServer:
             for recipient in list(self._clients):
                 if self._in_scope(entry, recipient):
                     self._send_action(recipient, message)
+                recipient.action_scope.pop(entry_id, None)
 
     def _action_changed(self, entry: ActionEntry) -> None:
         self._queue_persist(entry.entry_id, entry)

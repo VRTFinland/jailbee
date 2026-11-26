@@ -21,18 +21,24 @@ MAX_FINISHED_AGE = timedelta(days=7)
 def prune_finished(
     entries: list[ActionEntry], *, now: datetime
 ) -> tuple[list[ActionEntry], set[int]]:
-    """Keep at most 100 newest finished actions from the last seven days."""
+    """Keep each repository's 100 newest finished actions from the last seven days."""
     cutoff = now - MAX_FINISHED_AGE
     finished = sorted(
         (entry for entry in entries if entry.finished),
         key=lambda entry: (entry.finished_at or datetime.min.replace(tzinfo=UTC), entry.entry_id),
         reverse=True,
     )
-    keep = {
-        entry.entry_id
-        for entry in finished[:MAX_FINISHED_ACTIONS]
-        if entry.finished_at is not None and entry.finished_at >= cutoff
-    }
+    counts: dict[str, int] = {}
+    keep = set()
+    for entry in finished:
+        count = counts.get(entry.repo_root, 0)
+        if (
+            count < MAX_FINISHED_ACTIONS
+            and entry.finished_at is not None
+            and entry.finished_at >= cutoff
+        ):
+            keep.add(entry.entry_id)
+            counts[entry.repo_root] = count + 1
     return [entry for entry in entries if not entry.finished or entry.entry_id in keep], {
         entry.entry_id for entry in finished if entry.entry_id not in keep
     }

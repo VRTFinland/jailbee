@@ -95,7 +95,7 @@ Lifecycle jobs remain in the same queue alongside these actions.
 
 Entries and their capped output tails are stored in the host state database
 until dismissed or automatically pruned. The service retains at most the 100
-newest finished entries, and no finished entry older than seven days. Running
+newest finished entries per repository, and no finished entry older than seven days. Running
 and awaiting entries are never pruned; interrupted results follow the finished
 history limit. Every dashboard receives automatic dismissals so its in-memory
 queue stays in sync. After a state service restart, an entry left running or

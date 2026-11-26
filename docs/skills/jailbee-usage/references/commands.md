@@ -1195,10 +1195,10 @@ other dashboards leave them pending. Answering or aborting from an allowed
 dashboard settles the current question once; a modal answered elsewhere closes
 with a notice. `Later` remains local and does not answer the command. Neither
 questions nor their answers are persisted. Finished history retains the newest
-100 entries for at most seven days; running and awaiting entries are never
+100 entries per repository for at most seven days; running and awaiting entries are never
 pruned. Closing a dashboard does not cancel its actions or questions and asks
 no quit confirmation. The service's idle timer starts only after no clients or
-live work remain. Remote start, answer and abort requests are checked against
+live work remain. Remote start, answer, abort and dismissal requests are checked against
 the transport's host-side policy; a disallowed question is read-only with
 "answer in a local dashboard". When upgrading with live actions in an older
 service, wait and drain is the local dashboard's default; replacement explicitly
@@ -2026,8 +2026,8 @@ question modal shows the command, target and output tail. `Later` / Esc leaves
 the question pending; `Abort command` / Ctrl-C within the question cancels
 that command. A closed prompt channel removes its pending question, even
 beneath another screen. Returning from tmux opens the queue for new questions, never a
-question modal. Quitting with pending questions confirms the number of
-commands to abort; with none it asks nothing extra. Declining
+question modal. Quitting asks no extra confirmation and leaves actions and
+pending questions in the shared state service. Declining
 or cancelling never reports success, and the full output stays in the notification
 queue while the status notice shows only the outcome. Closing the dashboard box
 with Esc leaves confirmed publications running, including later PR creations in
