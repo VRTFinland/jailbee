@@ -399,14 +399,23 @@ def test_web_chat_delivers_and_audits_exact_message(home, tmp_path, monkeypatch,
 
 def test_message_post_hides_excluded_repo(home):
     for client in open_client(home):
-        response = client.post(f"/api/repos/secret/sessions/claude/{SESSION_A}/messages", json={"text": "hello"})
+        response = client.post(
+            f"/api/repos/secret/sessions/claude/{SESSION_A}/messages", json={"text": "hello"}
+        )
         assert response.status_code == 404
 
 
 def test_message_post_requires_authentication(home):
-    deps = WebDeps(snapshot_source=FakeSourceFactory(), engine=get_engine(), pin=PinHolder(generate=pin_sequence()), agent_homes={"alpha": [("claude", home)]}.get)
+    deps = WebDeps(
+        snapshot_source=FakeSourceFactory(),
+        engine=get_engine(),
+        pin=PinHolder(generate=pin_sequence()),
+        agent_homes={"alpha": [("claude", home)]}.get,
+    )
     with TestClient(create_app(deps)) as client:
-        response = client.post(f"/api/repos/alpha/sessions/claude/{SESSION_A}/messages", json={"text": "hello"})
+        response = client.post(
+            f"/api/repos/alpha/sessions/claude/{SESSION_A}/messages", json={"text": "hello"}
+        )
         assert response.status_code == 401
 
 

@@ -187,7 +187,7 @@ def send(cfg: Config, incus: Incus, container: str, session_id: str, text: str) 
 
 
 def _send_locked(cfg: Config, incus: Incus, container: str, session_id: str, text: str) -> Outcome:
-    text = "".join(c for c in text if c in "\n\t" or ord(c) >= 32 and not 127 <= ord(c) <= 159)
+    text = "".join(c for c in text if c in "\n\t" or (ord(c) >= 32 and not 127 <= ord(c) <= 159))
     outcome, pane = _resolve(cfg, incus, container, session_id)
     if pane is None:
         return outcome

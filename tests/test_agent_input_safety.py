@@ -95,9 +95,18 @@ def test_send_strips_terminal_control_sequences(setup_session):
     record(directory, "one.json")
     incus.exec.side_effect = [
         "42 10 123 S 42 42 34816\n10 1 22 S 10 42 34816",
-        "%1 10 1", "────\n> \n────", "", "", "",
+        "%1 10 1",
+        "────\n> \n────",
+        "",
+        "",
+        "",
     ]
-    assert agent_input.send(Mock(), incus, "box", "old", "x\x1b[201~\r\x03\x1b[200~\n\tok\x7f\x85").code == "delivered"
+    assert (
+        agent_input.send(
+            Mock(), incus, "box", "old", "x\x1b[201~\r\x03\x1b[200~\n\tok\x7f\x85"
+        ).code
+        == "delivered"
+    )
     assert incus.exec_with_input.call_args.args[2] == "x[201~[200~\n\tok"
 
 

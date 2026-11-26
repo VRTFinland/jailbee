@@ -278,7 +278,9 @@ def test_message_flood_preserves_security_events_and_message_text(monkeypatch):
         auth_admin.record_event(engine, "agent_message", source=text)
     events = auth_admin.recent_events(engine)
     assert [(e.event, e.source) for e in events] == [
-        ("revoke", "security"), ("agent_message", "second"), ("agent_message", "third")
+        ("revoke", "security"),
+        ("agent_message", "second"),
+        ("agent_message", "third"),
     ]
 
 
