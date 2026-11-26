@@ -84,6 +84,7 @@ def _run(
     on_prompt: Any = lambda p: True,
     audit: list[dict[str, Any]] | None = None,
     client: str | None = "dev-1",
+    environment: dict[str, str] | None = None,
 ) -> tuple[runner.RunResult, list[str]]:
     out: list[str] = []
     records = audit if audit is not None else []
@@ -97,6 +98,7 @@ def _run(
         client=client,
         spawn=spawn,
         audit=records.append,
+        environment=environment,
     )
     return result, out
 
@@ -115,6 +117,18 @@ def test_missing_policy_refuses(tmp_path: Path) -> None:
     spawn = Spawns()
     result, _ = _run(["ls"], spawn, tmp_path, policy=None)
     assert result.refused and spawn.calls == []
+
+
+def test_run_action_uses_explicit_environment_base(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("ACTION_BASE", "stale")
+    spawn = Spawns()
+    environment = {"ACTION_BASE": "current", "DISPLAY": ":1"}
+
+    result, _ = _run(["ls"], spawn, tmp_path, transport="none", environment=environment)
+
+    assert result.status == 0
+    assert spawn.calls[0]["env"]["ACTION_BASE"] == "current"
+    assert "PATH" not in spawn.calls[0]["env"]
 
 
 @pytest.mark.parametrize(

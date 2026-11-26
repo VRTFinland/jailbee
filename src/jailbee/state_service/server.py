@@ -302,6 +302,7 @@ class StateServer:
                     spawn=self._action_spawn or popen_spawn,
                     on_output=send_output,
                     address_flags=request.address_flags,
+                    environment=request.environment,
                 )
                 finish = ActionFinish(
                     request.entry_id,

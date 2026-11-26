@@ -88,6 +88,7 @@ def test_capped_service_tail_replaces_local_output_instead_of_appending_old_text
 
     class Client:
         dashboard_id = "origin"
+        excluded_prefixes = ()
 
         def __init__(self):
             self.sent = False

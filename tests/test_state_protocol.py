@@ -434,6 +434,7 @@ def test_wire_schema_names_every_field_that_crosses_the_wire():
         "dashboard_id",
         "excluded_prefixes",
     }
+    assert "environment" in schema["run_action"]["properties"]
 
 
 def test_wire_schema_leaves_out_docstrings_and_titles():
@@ -457,7 +458,7 @@ def test_wire_schema_leaves_out_docstrings_and_titles():
 # PROTOCOL fails below: a client of another version would misread it. A pydantic
 # upgrade that only reshapes its schema output trips this too; a bump is then
 # harmless (a protocol mismatch makes the dashboard replace the state service).
-WIRE_SCHEMA = (47, "7552267b03716a0d534163ef705f0aaca4cc8e8db5b519b17fc3b7c67f094634")
+WIRE_SCHEMA = (48, "4863943d26ac85783028ab2deadb8312027b93fa13285ec4ea84016453a426a1")
 
 
 def test_a_wire_schema_change_bumps_the_protocol():
