@@ -12234,6 +12234,9 @@ def agent_say_cmd(
         except IncusError as exc:
             error(str(exc))
             raise typer.Exit(9) from exc
+        if not sessions:
+            error("No live session")
+            raise typer.Exit(4)
         session = prompting.choose_one(
             "session",
             [
