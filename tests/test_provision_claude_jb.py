@@ -556,6 +556,9 @@ def test_settings_added_to_proxy_launch(script, argv_env, tmp_path):
                 "--append-system-prompt",
                 "--append-system-prompt-file",
                 "--json-schema",
+                "--model",
+                "--agent",
+                "--effort",
             )
         ],
         (["--", "--settings=prompt"], ["--settings", "FILE", "--", "--settings=prompt"]),

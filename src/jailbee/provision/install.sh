@@ -319,7 +319,9 @@ claude() (
         case "$_jb_arg" in
             --) break ;;
             --settings|--settings=*) command claude "$@"; return $? ;;
-            --system-prompt|--system-prompt-file|--append-system-prompt|--append-system-prompt-file|--json-schema) _jb_skip=1 ;;
+            --system-prompt|--system-prompt-file|--append-system-prompt|--append-system-prompt-file|--json-schema|\
+            --model|--agent|--agents|--effort|--fallback-model|--name|-n|--session-id|--input-format|--output-format|\
+            --permission-mode|--setting-sources|--max-budget-usd|--debug-file|--profile|-P|--context|-C) _jb_skip=1 ;;
         esac
     done
     if [ -f /etc/claude-code/managed-settings.d/50-jailbee.json ]; then
@@ -365,7 +367,11 @@ while [ $# -gt 0 ]; do
         --context|-C) [ $# -ge 2 ] || die "--context needs a value"; have_context=1; context="$2"; shift 2 ;;
         --context=*) have_context=1; context="${1#--context=}"; shift ;;
         --help|-h) want_help=1; args+=("$1"); plain+=("$1"); shift ;;
-        --effort|--effort=*) user_effort=1; args+=("$1"); plain+=("$1"); shift ;;
+        --effort) user_effort=1; args+=("$1"); plain+=("$1"); shift; if [ $# -gt 0 ]; then args+=("$1"); plain+=("$1"); shift; fi ;;
+        --effort=*) user_effort=1; args+=("$1"); plain+=("$1"); shift ;;
+        --system-prompt|--system-prompt-file|--json-schema|--model|--agent|--agents|--fallback-model|--name|-n|--session-id|--input-format|--output-format|--permission-mode|--setting-sources|--max-budget-usd|--debug-file|--settings)
+            args+=("$1"); plain+=("$1"); shift
+            if [ $# -gt 0 ]; then args+=("$1"); plain+=("$1"); shift; fi ;;
         --append-system-prompt|--append-system-prompt-file)
             if [ $# -lt 2 ]; then args+=("$1"); plain+=("$1"); shift; continue; fi
             kind=t
@@ -384,7 +390,9 @@ add_settings() {
         case "$arg" in
             --) break ;;
             --settings|--settings=*) return ;;
-            --system-prompt|--system-prompt-file|--append-system-prompt|--append-system-prompt-file|--json-schema) skip=1 ;;
+            --system-prompt|--system-prompt-file|--append-system-prompt|--append-system-prompt-file|--json-schema|\
+            --model|--agent|--agents|--effort|--fallback-model|--name|-n|--session-id|--input-format|--output-format|\
+            --permission-mode|--setting-sources|--max-budget-usd|--debug-file|--profile|-P|--context|-C) skip=1 ;;
         esac
     done
     if [ -f /etc/claude-code/managed-settings.d/50-jailbee.json ]; then

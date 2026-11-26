@@ -225,6 +225,11 @@ def test_interactive_remote_settings_notice(snippet: str, home: Path) -> None:
                 "--append-system-prompt",
                 "--append-system-prompt-file",
                 "--json-schema",
+                "--model",
+                "--agent",
+                "--effort",
+                "--profile",
+                "-C",
             )
         ],
         (["--", "--settings=prompt"], ["--settings", "FILE", "--", "--settings=prompt"]),
