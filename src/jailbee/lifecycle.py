@@ -3240,6 +3240,11 @@ def boot_container(
         detach_runtime_devices,
     )
 
+    if restart:
+        from jailbee.stopping import refuse_while_stopping
+
+        refuse_while_stopping(cfg, name)
+
     if initial_prompt is not None:
         from jailbee import initial_prompt as prompt_file
 
@@ -3305,6 +3310,12 @@ def boot_container(
     allocate_startup(cfg, incus, name)
 
     detach_runtime_devices(cfg, incus, name)
+    if ensure_running and state == "Running" and not restart:
+        # Device edits may have waited out an external stop operation.
+        state = next(
+            (raw.get("status", "Stopped") for raw in incus.list_containers() if raw["name"] == name),
+            "Stopped",
+        )
     if not (ensure_running and state == "Running" and not restart):
         incus.start(name)
     # Clear a failed-refresh guard only after the repaired disk is mounted.

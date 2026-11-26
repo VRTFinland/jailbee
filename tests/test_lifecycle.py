@@ -6100,6 +6100,44 @@ def test_boot_container_waits_for_a_stopping_container_before_device_changes(
     assert events == ["stop", "bindings", "detach", "start", "bindings", "attach"]
 
 
+@pytest.mark.parametrize("alive,restart", [(True, True), (False, True), (True, False)])
+def test_boot_container_restart_refuses_a_live_stop_job(tmp_path, mocker, alive, restart):
+    from datetime import UTC, datetime
+
+    from sqlmodel import Session
+
+    from jailbee import background
+    from jailbee.db import get_engine
+    from jailbee.db.models import JOB_STOP
+
+    cfg = _cfg_for_new(tmp_path)
+    name = f"{cfg.container_prefix}-feat-x"
+    incus = MagicMock()
+    incus.list_containers.return_value = [{"name": name, "status": "Stopped"}]
+    events = _boot_events(mocker, incus)
+    with Session(get_engine()) as session:
+        assert background.claim_job(
+            session,
+            container_name=name,
+            container_prefix=cfg.container_prefix,
+            pid=4242,
+            phase=background.PHASE_STOPPING,
+            now=datetime.now(UTC),
+            op_kind=JOB_STOP,
+        )
+    mocker.patch("jailbee.background.worker_alive", return_value=alive)
+
+    if alive and restart:
+        with pytest.raises(ValueError, match="stop operation is still running"):
+            boot_container(cfg, incus, name, restart=True)
+        incus.stop.assert_not_called()
+        incus.start.assert_not_called()
+        assert events == []
+    else:
+        boot_container(cfg, incus, name, restart=restart)
+        assert events == ["detach", "start", "attach"]
+
+
 def test_boot_container_restart_bounds_the_clean_shutdown(tmp_path, mocker):
     """A restart is a stop plus a start, and the stop goes through
     `stopping.stop_container`: a bare `incus restart` waits incusd's silent
@@ -6168,6 +6206,27 @@ def test_boot_container_resume_ensures_running_without_reboot(tmp_path, mocker, 
     boot_container(cfg, incus, "feat-x", restart=False, ensure_running=True)
 
     assert events == expected
+    incus.stop.assert_not_called()
+
+
+def test_boot_container_resume_starts_after_an_external_stop_finishes_during_detach(
+    tmp_path, mocker
+):
+    cfg = _cfg_for_new(tmp_path)
+    incus = MagicMock()
+    incus.list_containers.return_value = [{"name": "feat-x", "status": "Running"}]
+    events = _boot_events(mocker, incus)
+
+    def finish_stop(*args, **kwargs):
+        events.append("detach")
+        incus.list_containers.return_value = [{"name": "feat-x", "status": "Stopped"}]
+
+    mocker.patch("jailbee.runtime_mounts.detach_runtime_devices", side_effect=finish_stop)
+
+    boot_container(cfg, incus, "feat-x", restart=False, ensure_running=True)
+
+    assert events == ["detach", "start", "attach"]
+    incus.start.assert_called_once_with("feat-x")
     incus.stop.assert_not_called()
 
 

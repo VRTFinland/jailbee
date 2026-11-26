@@ -97,6 +97,34 @@ def test_busy_shutdown_is_diagnosed_and_names_the_force_escape_hatch(mocker, fai
     incus.stop.assert_called_once_with("foo", timeout=CLEAN_STOP_BUDGET)
 
 
+@pytest.mark.parametrize("force_fallback", [False, True])
+def test_busy_non_stop_operation_is_not_reported_as_a_shutdown_timeout(mocker, force_fallback):
+    incus = mocker.MagicMock()
+    incus.stop.side_effect = [
+        IncusError(
+            'Instance is still busy after waiting up to 120s: '
+            'Instance is busy running a "snapshot" operation'
+        ),
+        None,
+    ]
+    incus.exec.return_value = ""
+    incus.console_log.return_value = ""
+    warn = mocker.patch("jailbee.stopping.warn")
+
+    if force_fallback:
+        assert stop_container(incus, "foo", force_fallback=True, disposable=False) is True
+    else:
+        with pytest.raises(IncusError, match='"snapshot" operation') as excinfo:
+            stop_container(incus, "foo")
+        assert "clean-shutdown request" not in str(excinfo.value)
+        assert "--force" in str(excinfo.value)
+
+    warnings = " ".join(call.args[0] for call in warn.call_args_list)
+    assert '"snapshot" operation' in warnings
+    assert "did not shut down cleanly" not in warnings
+    assert "clean shutdown timed out" not in warnings
+
+
 def test_other_stop_failures_are_never_forced(mocker):
     """A real error must not be masked by a force fallback."""
     incus = mocker.MagicMock()
