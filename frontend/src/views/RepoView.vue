@@ -40,7 +40,7 @@ function when(iso: string): string {
 }
 
 function sessionLinkLabel(session: SessionSummary): string {
-    return [session.title || "Untitled session", session.agent,
+    return [session.title || "Untitled session", sessionStatus(session)?.label, session.agent,
         session.container ?? "unattributed", session.last_activity ? when(session.last_activity) : null,
         session.models.join(", ")]
         .filter(Boolean).join(" ")
@@ -84,7 +84,7 @@ watch(prefix, async (selected, _previous, onCleanup) => {
             <h2>Sessions</h2>
             <label class="session-filter">
                 <Switch v-model="liveOnly" label="Live only" />
-                <span>{{ liveOnly ? "Live only" : "All sessions" }}</span>
+                <span>Live only</span>
             </label>
             <p v-if="error" class="notice ui-notice">{{ error }}</p>
             <p v-else-if="sessions === null" class="muted">Loading…</p>

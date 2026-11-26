@@ -42,7 +42,22 @@ async def repo_sessions(prefix: str, ctx: Context, _auth: RequireSession) -> Ses
     live = live_session_containers(snapshot, prefix)
     listed = {(r.agent, r.session_id) for r in rows}
     return SessionListView(
+        # A just-started session has no transcript timestamp yet; keep it ahead
+        # of recorded sessions rather than treating it as the oldest one.
         sessions=[
+            SessionView(
+                session_id=sid,
+                agent=agent,
+                title="",
+                last_activity=None,
+                models=[],
+                container=owner,
+                live=True,
+            )
+            for (agent, sid), owner in live.items()
+            if (agent, sid) not in listed
+        ]
+        + [
             SessionView(
                 session_id=r.session_id,
                 agent=r.agent,
@@ -55,19 +70,6 @@ async def repo_sessions(prefix: str, ctx: Context, _auth: RequireSession) -> Ses
                 live=(r.agent, r.session_id) in live,
             )
             for r in rows
-        ]
-        + [
-            SessionView(
-                session_id=sid,
-                agent=agent,
-                title="",
-                last_activity=None,
-                models=[],
-                container=owner,
-                live=True,
-            )
-            for (agent, sid), owner in live.items()
-            if (agent, sid) not in listed
         ]
     )
 

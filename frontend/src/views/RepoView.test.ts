@@ -64,7 +64,15 @@ describe("RepoView", () => {
         updateSettings({liveSessionsOnly: true})
         const {wrapper} = await mountRepo(vi.fn().mockResolvedValue(jsonResponse(200, {sessions})))
         expect(wrapper.findAll("li.session")).toHaveLength(1)
-        await wrapper.get('[role="switch"][aria-label="Live only"]').trigger("click")
+        const toggle = wrapper.get('[role="switch"]')
+        const label = wrapper.get("label.session-filter")
+        expect(toggle.attributes("aria-label")).toBe(label.text())
+        expect(label.text()).toBe("Live only")
+        expect(toggle.attributes("aria-checked")).toBe("true")
+        await toggle.trigger("click")
+        expect(toggle.attributes("aria-label")).toBe(label.text())
+        expect(label.text()).toBe("Live only")
+        expect(toggle.attributes("aria-checked")).toBe("false")
         expect(wrapper.findAll("li.session")).toHaveLength(2)
         wrapper.unmount()
     })
@@ -77,29 +85,26 @@ describe("RepoView", () => {
         wrapper.unmount()
     })
 
-    it("ignores the previous repository's late answer after switching repos", async () => {
+    it("ignores a late response after leaving for another repository", async () => {
         updateSettings({liveSessionsOnly: true, openOnlyLiveSession: true})
-        let answer: (response: Response) => void = () => {}
-        const {wrapper, router} = await mountRepo(vi.fn(input => String(input).includes("/alpha/")
-            ? new Promise<Response>(resolve => {answer = resolve})
-            : Promise.resolve(jsonResponse(200, {sessions: []}))))
+        let answerAlpha!: (response: Response) => void
+        const fetchMock = vi.fn<typeof fetch>(input => {
+            if (input === "/api/repos/alpha/sessions") {
+                return new Promise<Response>(resolve => {answerAlpha = resolve})
+            }
+            return Promise.resolve(jsonResponse(200, {sessions: []}))
+        })
+        const {wrapper, router} = await mountRepo(fetchMock)
         await router.push("/repos/beta")
         await flushPromises()
-        answer(jsonResponse(200, {sessions}))
+        expect(fetchMock.mock.calls.map(call => call[0])).toEqual([
+            "/api/repos/alpha/sessions", "/api/repos/beta/sessions",
+        ])
+        answerAlpha(jsonResponse(200, {sessions}))
         await flushPromises()
         expect(router.currentRoute.value.path).toBe("/repos/beta")
         expect(wrapper.findAll("li.session")).toHaveLength(0)
-        wrapper.unmount()
-    })
-
-    it("ignores a late response after leaving the repository", async () => {
-        updateSettings({liveSessionsOnly: true, openOnlyLiveSession: true})
-        let answer: (response: Response) => void = () => {}
-        const {wrapper, router} = await mountRepo(vi.fn(() => new Promise<Response>(resolve => {answer = resolve})))
-        await router.push("/settings")
-        answer(jsonResponse(200, {sessions}))
-        await flushPromises()
-        expect(router.currentRoute.value.name).toBe("settings")
+        expect(wrapper.text()).toContain("No live sessions")
         wrapper.unmount()
     })
 
@@ -178,7 +183,7 @@ describe("RepoView", () => {
         const {wrapper} = await mountRepo(vi.fn().mockResolvedValue(jsonResponse(200, {sessions})))
         const links = wrapper.findAll("li.session a")
         expect(links[0].attributes("href")).toBe("/repos/alpha/sessions/claude/s-new")
-        expect(links[0].attributes("aria-label")).toBe("Fix the login bug claude alpha-1 Nov 1, 2026, 12:05 PM claude-opus-4, claude-haiku-4")
+        expect(links[0].attributes("aria-label")).toBe("Fix the login bug live claude alpha-1 Nov 1, 2026, 12:05 PM claude-opus-4, claude-haiku-4")
         expect(links[1].attributes("aria-label")).toBe("Untitled session claude unattributed")
     })
 

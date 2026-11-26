@@ -32,7 +32,9 @@ before editing `## Unreleased`.
   search, pagination and orchestration links. Container and repository session lists
   default to live sessions, with a per-visit switch to all sessions and a direct
   shortcut to the only live session that preserves Back and breadcrumb navigation;
-  both defaults can be changed in Settings.
+  both defaults can be changed in Settings. Live status is included in session link
+  names, filter labels stay stable, and newly started sessions without a transcript
+  appear before recorded sessions.
   Login and security-key setup use the shared fields and buttons, preserving PIN,
   authenticator-code, one-time-link and security-key flows.
   The transcript reader uses tonal prompts and tool disclosures, syntax colours
