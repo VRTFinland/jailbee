@@ -14,6 +14,11 @@ from jailbee.autostart import (
 from jailbee.config import Autostart, AutostartStep, Config
 from jailbee.tmux import TmuxStepError
 
+SETTINGS = (
+    "$(test ! -f /etc/claude-code/managed-settings.d/50-jailbee.json "
+    "|| printf '%s\\n' --settings /etc/claude-code/managed-settings.d/50-jailbee.json)"
+)
+
 
 def _cfg(steps_on_create=None, steps_on_start=None, **autostart_kwargs):
     """Construct a Config with autostart steps for testing."""
@@ -746,7 +751,7 @@ def test_agent_autostart_step_shape(tmp_path):
     assert step.name == "claude"
     assert step.background is True
     assert step.network is None
-    assert step.run == "exec claude"
+    assert step.run == f"exec claude {SETTINGS}"
 
 
 def test_agent_autostart_step_is_continue_on_error(tmp_path):
@@ -776,7 +781,7 @@ def test_agent_autostart_step_uses_custom_command(tmp_path):
         },
     )
     (step,) = agent_autostart_steps(cfg)
-    assert step.run == "exec claude --dangerously-skip-permissions"
+    assert step.run == f"exec claude {SETTINGS} --dangerously-skip-permissions"
 
 
 def test_claude_step_appended_to_on_start(tmp_path):
@@ -1018,9 +1023,9 @@ def _claude_cfg(tmp_path, command=None):
 @pytest.mark.parametrize(
     "command,expected",
     [
-        ("claude", "exec claude-jb"),
-        ("claude --dangerously-skip-permissions", "exec claude-jb --dangerously-skip-permissions"),
-        ("/home/dev/.local/bin/claude --resume", "exec claude-jb --resume"),
+        ("claude", f"exec claude-jb {SETTINGS}"),
+        ("claude --dangerously-skip-permissions", f"exec claude-jb {SETTINGS} --dangerously-skip-permissions"),
+        ("/home/dev/.local/bin/claude --resume", f"exec claude-jb {SETTINGS} --resume"),
         ("env FOO=1 claude", "exec env FOO=1 claude"),
         ("claude-wrapper", "exec claude-wrapper"),
         ("/opt/bin/claude-wrapper --x", "exec /opt/bin/claude-wrapper --x"),
@@ -1043,7 +1048,7 @@ def test_litellm_autostart_needs_both_switches(tmp_path, enabled, autostart):
         _claude_cfg(tmp_path, "claude --flag"), enabled=enabled, autostart=autostart
     )
     (step,) = agent_autostart_steps(cfg)
-    assert step.run == "exec claude --flag"
+    assert step.run == f"exec claude {SETTINGS} --flag"
 
 
 def test_litellm_autostart_leaves_other_agents_alone(tmp_path):
@@ -1054,7 +1059,7 @@ def test_litellm_autostart_leaves_other_agents_alone(tmp_path):
     cfg = _with_litellm(cfg)
     runs = {s.name: s.run for s in agent_autostart_steps(cfg)}
     assert runs["codex"] == "exec claude"
-    assert runs["claude"] == "exec claude-jb"
+    assert runs["claude"] == f"exec claude-jb {SETTINGS}"
 
 
 def test_litellm_autostart_keeps_the_install_check_on_claude(tmp_path):
@@ -1082,7 +1087,7 @@ def test_prompted_step_for_primary_agent_keeps_flags(tmp_path):
         tmp_path, claude={"enabled": True, "autostart": True, "command": "claude --model x"}
     )
     [step] = agent_autostart_steps(cfg, initial_prompt=True)
-    assert step.run == prompted_run("claude --model x", cfg.agents["claude"].prompt_args)
+    assert step.run == prompted_run(f"claude {SETTINGS} --model x", cfg.agents["claude"].prompt_args)
     assert "--model x" in step.run
     assert step.env[PROMPT_ENV] == CONSUMED_PATH
 
@@ -1095,7 +1100,7 @@ def test_unprompted_steps_unchanged(tmp_path):
         tmp_path, claude={"enabled": True, "autostart": True, "command": "claude --model x"}
     )
     [step] = agent_autostart_steps(cfg)
-    assert step.run == "exec claude --model x"
+    assert step.run == f"exec claude {SETTINGS} --model x"
     assert PROMPT_ENV not in step.env
 
 
@@ -1139,7 +1144,7 @@ def test_prompt_with_claude_jb(tmp_path):
 
     cfg = _with_litellm(_claude_cfg(tmp_path, "claude --model x"))
     [step] = agent_autostart_steps(cfg, initial_prompt=True)
-    assert step.run == prompted_run("claude-jb --model x", cfg.agents["claude"].prompt_args)
+    assert step.run == prompted_run(f"claude-jb {SETTINGS} --model x", cfg.agents["claude"].prompt_args)
 
 
 def test_prompted_step_run_never_contains_prompt_text(tmp_path):
@@ -1261,7 +1266,7 @@ def test_runner_prompts_claude_when_primary_is_codex(tmp_path):
         cfg, initial_prompt=True, runner=Runner(agent="claude", model="opus")
     )
     assert [s.name for s in steps] == ["claude"]
-    assert steps[0].run == prompted_run("claude --model opus", cfg.agents["claude"].prompt_args)
+    assert steps[0].run == prompted_run(f"claude {SETTINGS} --model opus", cfg.agents["claude"].prompt_args)
 
 
 def test_runner_with_autostarting_codex_primary_keeps_codex_unprompted(tmp_path):
@@ -1283,7 +1288,7 @@ def test_runner_with_autostarting_codex_primary_keeps_codex_unprompted(tmp_path)
     assert [s.name for s in steps] == ["codex", "claude"]
     assert steps[0].run == "exec codex" and PROMPT_ENV not in steps[0].env
     assert PROMPT_ENV in steps[1].env
-    assert steps[1].run == prompted_run("claude --model opus", cfg.agents["claude"].prompt_args)
+    assert steps[1].run == prompted_run(f"claude {SETTINGS} --model opus", cfg.agents["claude"].prompt_args)
 
 
 def test_native_runner_overrides_litellm_autostart(tmp_path):
@@ -1302,7 +1307,7 @@ def test_runner_applies_without_pending_prompt(tmp_path):
     cfg = _claude_cfg(tmp_path)
     runner = Runner(agent="claude-jb", profile="grok", model="haiku")
     [step] = agent_autostart_steps(cfg, initial_prompt=False, runner=runner)
-    assert step.run == "exec claude-jb -P grok --model haiku"
+    assert step.run == f"exec claude-jb {SETTINGS} -P grok --model haiku"
 
 
 def test_runner_falls_back_and_warns_when_command_is_not_claude(tmp_path, caplog):
@@ -1322,9 +1327,9 @@ def test_no_runner_unchanged(tmp_path, prompt):
     cfg = _claude_cfg(tmp_path, "claude --model x")
     [step] = agent_autostart_steps(cfg, initial_prompt=prompt)
     if prompt:
-        assert step.run == prompted_run("claude --model x", cfg.agents["claude"].prompt_args)
+        assert step.run == prompted_run(f"claude {SETTINGS} --model x", cfg.agents["claude"].prompt_args)
     else:
-        assert step.run == "exec claude --model x"
+        assert step.run == f"exec claude {SETTINGS} --model x"
 
 
 def test_on_start_reads_runner_label(mocker, tmp_path):
@@ -1661,7 +1666,7 @@ def test_default_runner_rewrites_the_claude_command_on_any_container(tmp_path):
     cfg = _with_litellm(_runner_cfg(tmp_path, claude_autostart=True), autostart=False)
     runner = Runner(agent="claude-jb", profile="grok", model="haiku")
     [step] = agent_autostart_steps(cfg, default_runner=runner)
-    assert step.run == "exec claude-jb -P grok --model haiku"
+    assert step.run == f"exec claude-jb {SETTINGS} -P grok --model haiku"
 
 
 def test_default_runner_claude_jb_without_litellm_falls_back_with_warning(tmp_path, caplog):
@@ -1670,7 +1675,7 @@ def test_default_runner_claude_jb_without_litellm_falls_back_with_warning(tmp_pa
     cfg = _with_litellm(_runner_cfg(tmp_path, claude_autostart=True), enabled=False)
     runner = Runner(agent="claude-jb", profile="grok")
     [step] = agent_autostart_steps(cfg, default_runner=runner)
-    assert step.run == "exec claude"
+    assert step.run == f"exec claude {SETTINGS}"
     assert "litellm" in caplog.text.lower()
 
 
@@ -1679,7 +1684,7 @@ def test_default_runner_beats_litellm_autostart_swap(tmp_path):
 
     cfg = _runner_cfg(tmp_path, claude_autostart=True)
     [step] = agent_autostart_steps(cfg, default_runner=Runner(agent="claude", model="opus"))
-    assert step.run == "exec claude --model opus"
+    assert step.run == f"exec claude {SETTINGS} --model opus"
 
 
 def test_runner_label_beats_default_runner(tmp_path):
@@ -1691,7 +1696,7 @@ def test_runner_label_beats_default_runner(tmp_path):
         runner=Runner(agent="claude", model="sonnet"),
         default_runner=Runner(agent="claude", model="opus"),
     )
-    assert step.run == "exec claude --model sonnet"
+    assert step.run == f"exec claude {SETTINGS} --model sonnet"
 
 
 def test_default_runner_does_not_make_claude_the_prompted_primary(tmp_path):
@@ -1719,7 +1724,7 @@ def test_default_runner_refused_command_falls_back_with_warning(tmp_path, caplog
 def test_no_runner_anywhere_keeps_the_legacy_path(tmp_path):
     cfg = _runner_cfg(tmp_path, claude_autostart=True)
     [step] = agent_autostart_steps(cfg)
-    assert step.run == "exec claude"
+    assert step.run == f"exec claude {SETTINGS}"
 
 
 def test_on_start_uses_the_repo_default_when_the_container_has_no_label(tmp_path, mocker):
@@ -1736,7 +1741,7 @@ def test_on_start_uses_the_repo_default_when_the_container_has_no_label(tmp_path
     mocker.patch("jailbee.orchestration.labels.orchestrator_env", return_value={})
     mocker.patch("jailbee.agent_resume.boot_entries", return_value=[])
     steps, _ = _on_start_agent_steps(cfg, incus, "box", AutostartTrigger.ON_START)
-    assert [s.run for s in steps if s.name == "claude"] == ["exec claude --model opus"]
+    assert [s.run for s in steps if s.name == "claude"] == [f"exec claude {SETTINGS} --model opus"]
 
 
 def test_on_start_label_beats_the_repo_default(tmp_path, mocker):
@@ -1756,4 +1761,4 @@ def test_on_start_label_beats_the_repo_default(tmp_path, mocker):
     mocker.patch("jailbee.orchestration.labels.orchestrator_env", return_value={})
     mocker.patch("jailbee.agent_resume.boot_entries", return_value=[])
     steps, _ = _on_start_agent_steps(cfg, incus, "box", AutostartTrigger.ON_START)
-    assert [s.run for s in steps if s.name == "claude"] == ["exec claude --model haiku"]
+    assert [s.run for s in steps if s.name == "claude"] == [f"exec claude {SETTINGS} --model haiku"]
