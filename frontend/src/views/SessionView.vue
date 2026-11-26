@@ -13,6 +13,7 @@ import JumpPanel from "../components/JumpPanel.vue"
 import ToolCall from "../components/ToolCall.vue"
 import {readableBottom} from "../composables/readableBottom"
 import {usePager} from "../composables/usePager"
+import {useAgentChat} from "../composables/useAgentChat"
 import {useDashboard} from "../dashboard"
 import type {
     EntryContent,
@@ -82,39 +83,13 @@ const sessionRef = computed(() => ({
 
 const transcript = ref<TranscriptView | null>(null)
 const error = ref<string | null>(null)
-const sending = ref(false)
-const sendError = ref("")
-const sendStatus = ref("")
-let awaitingText: string | null = null
-let matched = false
-function matchesMessage(entries: RenderedEntry[], text: string): boolean {
-    const normalize = (value: string) => value.replace(/\r\n/g, "\n")
-    return entries.some(entry => entry.kind === "user" && !entry.meta &&
-        entry.text !== undefined && normalize(entry.text) === normalize(text))
-}
-async function sendMessage(text: string) {
-    if (sending.value || awaitingText !== null || !transcript.value?.chat?.available || agentId.value !== null) return
-    sending.value = true
-    sendError.value = ""
-    sendStatus.value = ""
-    awaitingText = text
-    matched = false
-    try {
-        const result = await apiFetch<MessageOutcome>(`/api/repos/${transcriptPath.value}/messages`, {
-            method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({text}),
-        })
-        if (result.code !== "delivered") {
-            awaitingText = null
-            sendError.value = result.message
-        } else if (matched) {
-            awaitingText = null
-            sendStatus.value = "Delivered"
-        } else sendStatus.value = "Waiting for transcript"
-    } catch {
-        awaitingText = null
-        sendError.value = "The message could not be sent."
-    } finally { sending.value = false }
-}
+const chat = useAgentChat(
+    () => !!transcript.value?.chat?.available && agentId.value === null,
+    text => apiFetch<MessageOutcome>(`/api/repos/${transcriptPath.value}/messages`, {
+        method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({text}),
+    }),
+)
+const {draft, sending, awaiting, error: sendError, status: sendStatus, send: sendMessage} = chat
 const thinking = computed(() => settings.showThinking)
 const parentTitle = ref("Parent session")
 const sessionContainer = ref<string | null>(null)
@@ -382,12 +357,9 @@ function startFollowing(view: TranscriptView) {
         },
         view.offset,
         settings.agentContext,
-        {onAppend: (entries, chat) => {
-            if (transcript.value === activeTranscript && transcript.value && chat) transcript.value.chat = chat
-            if (awaitingText !== null && matchesMessage(entries, awaitingText)) {
-                matched = true
-                if (!sending.value) { awaitingText = null; sendStatus.value = "Delivered" }
-            }
+        {onAppend: (entries, availability) => {
+            if (transcript.value === activeTranscript && transcript.value && availability) transcript.value.chat = availability
+            if (transcript.value === activeTranscript) chat.observe(entries)
             appendQueue = appendQueue.then(async () => {
                 if (!unmounted && transcript.value === activeTranscript) await onLiveAppend(entries)
             })
@@ -397,6 +369,7 @@ function startFollowing(view: TranscriptView) {
 
 onBeforeUnmount(() => {
     unmounted = true
+    chat.reset()
     unfollow?.()
     unfollow = null
 })
@@ -473,6 +446,7 @@ async function expandMeta(id: string, event: Event) {
 }
 
 async function load() {
+    chat.reset()
     try {
         const mode = settings.agentContext
         const view = await apiFetch<TranscriptView>(
@@ -532,6 +506,10 @@ onMounted(() => {
         sessionContainer.value = parent.container ?? null
     }).catch(() => {})
 })
+watch(() => dashboard?.state.connected, (connected, previous) => {
+    if (connected !== previous) chat.reset()
+})
+watch([prefix, agent, sessionId, agentId], () => { chat.reset(); void load() })
 // Changing Agent context re-reads the transcript and resubscribes with the new mode.
 watch(
     () => settings.agentContext,
@@ -628,11 +606,11 @@ watch(
                         </TranscriptEntry>
                     </template>
                 </article>
-                <AgentComposer v-if="agentId === null" ref="composerEl" class="agent-composer"
+                <AgentComposer v-if="agentId === null" v-model:draft="draft" ref="composerEl" class="agent-composer"
                     :class="{'beside-nav': eink && settings.pageControls !== 'bar'}"
                     :available="transcript.chat?.available ?? false"
                     :reason="transcript.chat?.message || 'Messaging is unavailable.'"
-                    :sending="sending" :awaiting="sendStatus === 'Waiting for transcript'" :error="sendError" :status="sendStatus" @send="sendMessage" />
+                    :sending="sending" :awaiting="awaiting" :error="sendError" :status="sendStatus" @send="sendMessage" />
                 <Button
                     v-if="jumpLabel"
                     :variant="pending.length > 0 || unseen !== null ? 'tonal' : 'primary'"
@@ -662,6 +640,8 @@ watch(
     display: block;
     height: max(calc(var(--md-target-min) + var(--md-space-32)), calc(100dvh - var(--session-readable-top)));
 }
+/* SessionView owns the input layout: a future panel reserves space here,
+   below on mobile and beside the transcript on desktop, rather than covering it. */
 .agent-composer {
     position: fixed;
     left: var(--md-space-16);
