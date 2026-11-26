@@ -235,6 +235,7 @@ class DashboardApp(App[int], inherit_bindings=False):
         self._prompts_closed = False
         self._handoff_epoch = 0  # odd while suspended; detects a hand-off spanning a relay
         self._answers = AnswerRegistry()
+        self._shared_questions: dict[int, int] = {}
         self._output_screen: OutputScreen | None = None  # the one a live entry follows
         self._critical_screen: OutputScreen | None = None
 
@@ -374,6 +375,49 @@ class DashboardApp(App[int], inherit_bindings=False):
         except (Exception, asyncio.CancelledError):
             logger.debug("app-thread post dropped", exc_info=True)
 
+    def _sync_questions(self) -> None:
+        client = self.session.client
+        get_questions = getattr(client, "action_questions", None)
+        if get_questions is None:
+            return
+        questions = get_questions()
+        resolutions = client.drain_question_resolutions()
+        for resolution in resolutions:
+            entry_id = resolution.entry_id
+            if self._shared_questions.get(entry_id) != resolution.question_id:
+                continue
+            if resolution.answered_by != client.dashboard_id:
+                self.session.set_notice("answered in another dashboard")
+            self._answers.resolve(entry_id, None)
+            self.session.queue.set_awaiting(entry_id, False)
+            self._shared_questions.pop(entry_id, None)
+        for entry_id, question_id in list(self._shared_questions.items()):
+            current = questions.get(entry_id)
+            if current is None or current.question_id != question_id:
+                self._answers.resolve(entry_id, None)
+                self.session.queue.set_awaiting(entry_id, False)
+                self._shared_questions.pop(entry_id, None)
+        entries = client.action_entries()
+        for entry_id, question in questions.items():
+            if self._shared_questions.get(entry_id) == question.question_id:
+                continue
+            entry = self.session.queue.get(entry_id)
+            item = entries.get(entry_id)
+            if entry is None or item is None or entry.finished:
+                continue
+            self._shared_questions[entry_id] = question.question_id
+            answer = asyncio.get_running_loop().create_future()
+            self._answers.register(entry_id, answer)
+            origin = item.origin == client.dashboard_id
+            on_top = origin and (
+                self.session.question_in_foreground(entry_id) and self.screen is self._critical_screen
+                if entry.foreground else not self.modal_open
+            )
+            show = self.session.question_arrived(entry_id, question.prompt, on_top=on_top, queue_key="Q")
+            if show and origin:
+                self.show_question(entry_id)
+        self.session.queue_changed()
+
     def _disconnect_entry(self, entry_id: int) -> None:
         def cancel() -> None:
             self._answers.disconnect(entry_id)
@@ -449,6 +493,11 @@ class DashboardApp(App[int], inherit_bindings=False):
             if value is not LATER:
                 if not answer.done():
                     self.session.question_answered(entry_id)
+                question_id = self._shared_questions.get(entry_id)
+                if question_id is not None and not answer.done():
+                    self.session.client.answer_action_question(entry_id, question_id, value)
+                    self.session.queue.set_awaiting(entry_id, False)
+                    self.session.queue_changed()
                 self._resolve_answer(answer, value)
 
         modal = modal_for(entry.pending_question, entry=entry)
@@ -648,6 +697,7 @@ class DashboardApp(App[int], inherit_bindings=False):
         if self._prompts_closed:
             return
         self.session.tick(spin=spin)
+        self._sync_questions()
         title = self.session.title()
         if title != self._last_title:
             # Only on change: an OSC 2 write on every frame makes some

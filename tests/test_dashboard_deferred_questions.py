@@ -149,6 +149,7 @@ def test_only_the_critical_action_whose_modal_is_foreground_opens_its_question(m
             await pilot.pause()
             assert isinstance(app.screen, pm.OutputScreen)
             assert answers == {"merge": "first"}
+            app.session.client.release_test_questions()
 
     asyncio.run(scenario())
 
