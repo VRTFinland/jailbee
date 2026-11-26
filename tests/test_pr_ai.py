@@ -52,6 +52,18 @@ def test_claude_headless_preset_supplies_settings(make_cfg, tmp_path):
     assert proc.stderr == b""
 
 
+def test_custom_claude_headless_command_gets_settings(make_cfg, tmp_path):
+    from jailbee.pr_ai import resolve_pr_agent
+
+    cfg = make_cfg(tmp_path, agents={"claude": {
+        "enabled": True, "headless": 'claude -p "$JAILBEE_PR_PROMPT"',
+    }})
+    choice = resolve_pr_agent(cfg)
+    assert choice.agent is not None
+    assert "--settings" in choice.agent.headless
+    assert choice.agent.headless.endswith('-p "$JAILBEE_PR_PROMPT"')
+
+
 def _envelope(inner_text: str) -> str:
     """Wrap model text in Claude's --output-format json envelope."""
     return json.dumps({"type": "result", "result": inner_text})

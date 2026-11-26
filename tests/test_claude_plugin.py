@@ -44,6 +44,13 @@ def test_launch_settings_preserve_explicit_settings_and_other_binaries(command):
     assert claude_plugin.with_settings(command) == command
 
 
+@pytest.mark.parametrize("option", ["--system-prompt", "--append-system-prompt", "--json-schema"])
+def test_option_value_named_settings_does_not_suppress_jailbee_settings(option):
+    command = claude_plugin.with_settings(f"claude {option} --settings=example")
+    assert command.count("--settings") == 2
+    assert command.endswith(f"{option} --settings=example")
+
+
 def test_settings_path_is_in_mounted_dropin(make_cfg, tmp_path):
     cfg = make_cfg(tmp_path, agents={"claude": {"enabled": True}})
     mount = claude_plugin.profile_devices(cfg)["claude-managed-settings"]["path"]
