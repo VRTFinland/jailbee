@@ -4,7 +4,6 @@ export default {
     // component globs. Remove each with its migration (tickets 08-13); ticket 14
     // removes the list.
     ignoreFiles: [
-        "src/views/RepoView.vue", // 09: repository
         "src/views/ContainerView.vue", // 10: container
         "src/components/QuickSettings.vue", // 11: settings and dialogs
         "src/components/SettingsPanel.vue",
