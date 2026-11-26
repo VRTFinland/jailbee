@@ -198,7 +198,7 @@ class _PopenChild:
 
     def kill(self) -> None:
         pgid = self._proc.pid
-        os.killpg(pgid, signal.SIGTERM)
+        os.killpg(pgid, signal.SIGINT)
         deadline = time.monotonic() + 2.0
         while time.monotonic() < deadline:
             self._proc.poll()  # Reap the leader so an empty group disappears.
