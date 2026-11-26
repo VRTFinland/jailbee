@@ -329,7 +329,9 @@ def test_interrupt_runs_python_finally_cleanup(tmp_path):
     )
     child = runner.popen_spawn(
         [sys.executable, "-c", code, str(marker)],
-        cwd=tmp_path, env=os.environ, prompt_sock=child_sock,
+        cwd=tmp_path,
+        env=os.environ,
+        prompt_sock=child_sock,
     )
     try:
         assert child.stdout is not None
