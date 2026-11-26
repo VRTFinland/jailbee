@@ -62,6 +62,7 @@ from jailbee.remote_ssh.repo_scope import RemoteRepoScope
 
 if TYPE_CHECKING:
     from textual.driver import Driver
+    from textual.screen import Screen
 
     from jailbee.incus import Incus
 
@@ -236,6 +237,7 @@ class DashboardApp(App[int], inherit_bindings=False):
         self._handoff_epoch = 0  # odd while suspended; detects a hand-off spanning a relay
         self._answers = AnswerRegistry()
         self._shared_questions: dict[int, int] = {}
+        self._question_modals: dict[int, Screen[Any]] = {}
         self._output_screen: OutputScreen | None = None  # the one a live entry follows
         self._critical_screen: OutputScreen | None = None
 
@@ -386,19 +388,22 @@ class DashboardApp(App[int], inherit_bindings=False):
             return
         questions = get_questions()
         resolutions = client.drain_question_resolutions()
+        answered_elsewhere = False
         for resolution in resolutions:
             entry_id = resolution.entry_id
             if self._shared_questions.get(entry_id) != resolution.question_id:
                 continue
-            if resolution.answered_by != client.dashboard_id:
-                self.session.set_notice("answered in another dashboard")
+            if resolution.answered_by is not None and resolution.answered_by != client.dashboard_id:
+                answered_elsewhere = True
             self._answers.resolve(entry_id, None)
+            self._answers.hide(entry_id)
             self.session.queue.set_awaiting(entry_id, False)
             self._shared_questions.pop(entry_id, None)
         for entry_id, question_id in list(self._shared_questions.items()):
             current = questions.get(entry_id)
             if current is None or current.question_id != question_id:
                 self._answers.resolve(entry_id, None)
+                self._answers.hide(entry_id)
                 self.session.queue.set_awaiting(entry_id, False)
                 self._shared_questions.pop(entry_id, None)
         entries = client.action_entries()
@@ -424,6 +429,8 @@ class DashboardApp(App[int], inherit_bindings=False):
             )
             if show and origin:
                 self.show_question(entry_id)
+        if answered_elsewhere:
+            self.session.set_notice("answered in another dashboard")
         self.session.queue_changed()
 
     def _disconnect_entry(self, entry_id: int) -> None:
@@ -497,7 +504,9 @@ class DashboardApp(App[int], inherit_bindings=False):
             return
 
         def resolve(value: Any) -> None:
-            self._answers.hide(entry_id)
+            if self._question_modals.get(entry_id) is modal:
+                self._question_modals.pop(entry_id, None)
+                self._answers.hide(entry_id)
             if value is not LATER:
                 if not answer.done():
                     self.session.question_answered(entry_id)
@@ -511,7 +520,7 @@ class DashboardApp(App[int], inherit_bindings=False):
         modal = modal_for(entry.pending_question, entry=entry)
 
         def close_resolved(_future: asyncio.Future[Any]) -> None:
-            if self._prompts_closed or not self.screen_stack or not self._answers.shown(entry_id):
+            if self._prompts_closed or not self.screen_stack:
                 return
             if self.screen is modal:
                 modal.dismiss(None)
@@ -520,10 +529,13 @@ class DashboardApp(App[int], inherit_bindings=False):
                 # covered question, leaving the user's current screen untouched.
                 self._screen_stack.remove(modal)
                 modal._pop_result_callback()
-                self._answers.hide(entry_id)
+                if self._question_modals.get(entry_id) is modal:
+                    self._question_modals.pop(entry_id, None)
+                    self._answers.hide(entry_id)
                 self.call_later(modal.remove)
 
         answer.add_done_callback(close_resolved)
+        self._question_modals[entry_id] = modal
         self.push_screen(modal, resolve)
 
     def _cancel_pending_prompts(self) -> None:
