@@ -11,6 +11,8 @@ withDefaults(defineProps<{
     compact?: boolean
     /** One-line excerpt for prompt navigation; the full text stays its name. */
     truncate?: boolean
+    /** Narrow page counters retain a full hit target without wide pill insets. */
+    narrow?: boolean
     disabled?: boolean
     /** A leading icon, decorative: the content names the button. */
     icon?: IconName
@@ -19,7 +21,7 @@ defineEmits<{click: [event: MouseEvent]}>()
 </script>
 
 <template>
-    <button :type="type" class="button ui-state-layer ui-focus-ring" :data-variant="variant" :data-compact="compact || undefined" :data-truncate="truncate || undefined" :disabled="disabled"
+    <button :type="type" class="button ui-state-layer ui-focus-ring" :data-variant="variant" :data-compact="compact || undefined" :data-truncate="truncate || undefined" :data-narrow="narrow || undefined" :disabled="disabled"
         @click="$emit('click', $event)">
         <Icon v-if="icon" :name="icon" size="small" />
         <span class="button-label"><slot /></span>
@@ -80,6 +82,10 @@ defineEmits<{click: [event: MouseEvent]}>()
     border-color: var(--md-hairline);
     background: var(--md-surface);
     color: var(--md-on-surface);
+}
+.button[data-narrow] {
+    min-width: var(--md-target-min);
+    padding-inline: var(--md-space-4);
 }
 .button[data-truncate] {
     min-width: 0;

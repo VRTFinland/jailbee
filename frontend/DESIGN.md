@@ -44,7 +44,8 @@ All live in `src/components/ui/`.
 26px bar / 28px indicator. Drawn chrome is compact, but a pseudo-element extends
 the hit area upwards to `--md-target-min`, never into the bottom guard. Leave
 that area clear of other targets; do not use this density for ordinary forms.
-`Button`'s `truncate` option keeps prompt excerpts to one line with an ellipsis
+`Button`'s `narrow` option removes wide pill insets for side page counters
+without shrinking the hit target. `Button`'s `truncate` option keeps prompt excerpts to one line with an ellipsis
 while preserving their full accessible names. The Reader gallery group shows
 these controls and the transcript primitives.
 

@@ -39,7 +39,7 @@ watch(() => settings.pageControls, async () => {
             <IconButton v-if="settings.pageControls !== 'indicator'" class="prev"
                 :icon="settings.pageControls === 'side' ? 'collapse' : 'back'" label="Previous page"
                 :compact="settings.pageControls === 'bar'" :disabled="pager.page.value <= 0" @click="pager.prev()" />
-            <Button v-if="jumpEnabled" variant="text" :compact="settings.pageControls !== 'side'" class="page-indicator" aria-label="Jump to page" @click="emit('jump')">{{ pager.page.value + 1 }} / {{ pager.pageCount.value }}</Button>
+            <Button v-if="jumpEnabled" variant="text" narrow :compact="settings.pageControls !== 'side'" class="page-indicator" aria-label="Jump to page" @click="emit('jump')">{{ pager.page.value + 1 }} / {{ pager.pageCount.value }}</Button>
             <span v-else class="page-indicator">{{ pager.page.value + 1 }} / {{ pager.pageCount.value }}</span>
             <span v-if="settings.pageControls === 'bar'" class="page-percent">· {{ percent }} %</span>
             <IconButton v-if="settings.pageControls !== 'indicator'" class="next"

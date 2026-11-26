@@ -274,6 +274,7 @@ function typeStyle(token: string): Record<string, string> {
                         <Disclosure label="Bash: expanded command" :open="true" />
                         <div class="reader-controls">
                             <Button compact variant="text">3 / 18</Button>
+                            <Button narrow variant="text">33 / 180</Button>
                             <IconButton compact icon="back" label="Previous page (compact)" />
                             <IconButton compact icon="forward" label="Next page (compact)" />
                             <IconButton compact icon="back" label="Previous page (compact, disabled)" disabled />
