@@ -189,7 +189,11 @@ class StateClient:
                 activity = self._replacement
                 waiting = self._replacement_waiting
             if pending:
-                answer = self._ask_replacement(activity)
+                try:
+                    answer = self._ask_replacement(activity)
+                except BaseException:
+                    self.close()
+                    raise
                 with self._lock:
                     self._replacement_answer = answer
                     self._replacement_pending = False
