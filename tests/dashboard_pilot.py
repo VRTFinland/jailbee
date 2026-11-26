@@ -191,6 +191,12 @@ class FakeStateClient:
             self._action_entries[entry.entry_id] = replace(
                 current,
                 finished=True,
+                state=(
+                    "done"
+                    if result.status == 0
+                    and not (result.error or result.refused or result.cancelled or result.declined)
+                    else "failed"
+                ),
                 status=result.status,
                 refused=result.refused,
                 error=result.error,
