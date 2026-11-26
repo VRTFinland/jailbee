@@ -121,7 +121,7 @@ def test_abort_command_cancels_the_waiting_command(mocker, tmp_path, control):
             else:
                 await pilot.press("ctrl+c")
             async with asyncio.timeout(5):
-                while not answers or next(iter(app.session.queue)).state == "awaiting":
+                while not next(iter(app.session.queue)).finished:
                     await pilot.pause(0.01)
             assert answers == [None]
             assert next(iter(app.session.queue)).state == "failed"
