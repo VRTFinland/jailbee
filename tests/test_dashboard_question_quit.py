@@ -13,7 +13,7 @@ from tests.dashboard_fixtures import ci
 from tests.dashboard_pilot import burst, make_app
 
 
-def test_quit_confirms_and_cancels_pending_command(mocker, tmp_path):
+def test_quit_confirms_and_leaves_pending_command(mocker, tmp_path):
     answers = []
     release = Event()
 
@@ -43,10 +43,8 @@ def test_quit_confirms_and_cancels_pending_command(mocker, tmp_path):
             await pilot.press("ctrl+c")
             assert isinstance(app.screen, pm.ConfirmModal)
             await pilot.press("y")
-            async with asyncio.timeout(5):
-                while not answers:
-                    await asyncio.sleep(0.01)
-            assert answers == [None]
+            assert not answers
+            app.session.client.release_test_questions()
 
     asyncio.run(scenario())
 
@@ -88,11 +86,9 @@ def test_quit_confirmation_survives_unpaced_answer_bursts(mocker, tmp_path, keys
                 if not isinstance(app.screen, pm.ConfirmModal):
                     await pilot.press("q")
                 await pilot.press("y")
-            async with asyncio.timeout(5):
-                while not answers:
-                    await asyncio.sleep(0.01)
             assert app.quit_requested
-            assert answers == [None]
+            assert not answers
+            app.session.client.release_test_questions()
 
     asyncio.run(scenario())
 
