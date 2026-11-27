@@ -173,7 +173,14 @@ def test_lock_storage_is_bounded_across_many_panes(setup_session, monkeypatch, t
 
 @pytest.mark.parametrize(
     "waiting_for",
-    ["permission prompt", "dialog open", "input needed", "worker request", "sandbox request", "goal proposal"],
+    [
+        "permission prompt",
+        "dialog open",
+        "input needed",
+        "worker request",
+        "sandbox request",
+        "goal proposal",
+    ],
 )
 def test_dialog_refuses_availability_and_send_without_tmux_writes(setup_session, waiting_for):
     directory, incus = setup_session
