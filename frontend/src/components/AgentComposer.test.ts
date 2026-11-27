@@ -1,5 +1,5 @@
 import {mount} from "@vue/test-utils"
-import {beforeEach, describe, expect, it} from "vitest"
+import {beforeEach, describe, expect, it, vi} from "vitest"
 
 beforeEach(() => localStorage.setItem("jailbee.composerExpanded", "1"))
 import AgentComposer from "./AgentComposer.vue"
@@ -25,11 +25,44 @@ describe("agent composer", () => {
     it("sends on Enter but not Shift+Enter or IME composition", async () => {
         const w = mount(AgentComposer, {props: {available: true, draft: "hello"}})
         const field = w.get("textarea")
-        await field.trigger("keydown", {key: "Enter", shiftKey: true})
-        await field.trigger("keydown", {key: "Enter", isComposing: true})
+        for (const options of [{shiftKey: true}, {isComposing: true}, {keyCode: 229}]) {
+            const event = new KeyboardEvent("keydown", {key: "Enter", bubbles: true, cancelable: true, ...options})
+            field.element.dispatchEvent(event)
+            expect(event.defaultPrevented).toBe(false)
+        }
         expect(w.emitted("send")).toBeUndefined()
         await field.trigger("keydown", {key: "Enter"})
         expect(w.emitted("send")?.[0]).toEqual(["hello"])
+    })
+    it("offers phone users a newline at the cursor without sending", async () => {
+        const w = mount(AgentComposer, {attachTo: document.body, props: {available: true, draft: "firstsecond"}})
+        const field = w.get('textarea').element as HTMLTextAreaElement
+        expect(field.getAttribute('enterkeyhint')).toBe('send')
+        field.setSelectionRange(5, 5)
+        await w.get('[aria-label="Insert newline"]').trigger('click')
+        expect(w.emitted('update:draft')?.[0]).toEqual(['first\nsecond'])
+        expect(field.selectionStart).toBe(6)
+        expect(document.activeElement).toBe(field)
+        expect(w.emitted('send')).toBeUndefined()
+        w.unmount()
+    })
+    it("shows a fresh send result before availability, then restores the reason", async () => {
+        vi.useFakeTimers()
+        const w = mount(AgentComposer, {props: {available: false, reason: "No live agent"}})
+        const row = w.get('[role="status"]')
+        expect(row.text()).toBe('No live agent')
+        await w.setProps({error: 'The agent is waiting at a dialog in the terminal; answer it there first.'})
+        expect(row.text()).toContain('waiting at a dialog')
+        await vi.advanceTimersByTimeAsync(5000)
+        expect(row.text()).toBe('No live agent')
+        await w.setProps({error: '', sending: true})
+        expect(row.text()).toBe('Sending…')
+        await w.setProps({sending: false, status: 'Delivered'})
+        expect(row.text()).toBe('Delivered')
+        await vi.advanceTimersByTimeAsync(5000)
+        expect(row.text()).toBe('No live agent')
+        w.unmount()
+        vi.useRealTimers()
     })
     it("reserves one polite status row across changes", async () => {
         const w = mount(AgentComposer, {props: {available: true}})
@@ -68,6 +101,6 @@ describe("agent composer", () => {
         expect(w.text()).toContain("No pane")
         await w.setProps({available: false, reason: "Not permitted"})
         expect(w.get("textarea").attributes("disabled")).toBeDefined()
-        expect(w.text()).toContain("Not permitted")
+        expect(w.get('[role="status"]').text()).toBe("No pane")
     })
 })

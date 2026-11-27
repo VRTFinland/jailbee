@@ -141,15 +141,26 @@ If real text is already typed in the terminal, the paste joins that text.
 There is no web marker in the transcript. Only Claude is supported, including
 `claude-jb`; subagent transcripts cannot be messaged.
 
-Press Enter to send or Shift+Enter to add a line; the answer panel's free-text
-field uses the same keys. While an input method is composing text, Enter does not
-send. When permission is off, the composer and answer-panel send controls are
-hidden; questions remain readable in the transcript. The field is disabled with
-a reason when the session is no longer live, the agent is unsupported, or its
-pane cannot be found. Sending to an open terminal dialog still pastes the text
-and shows a warning to check the dialog there: the paste and Enter may act on the
-dialog rather than produce a user turn. A refusal keeps your text and shows the
-reason in the reserved status row, which also announces delivery updates. Avoid
+In the composer, Enter sends and Shift+Enter adds a line; on phones, use
+**Insert newline** to add a line, and the keyboard's Enter key is labelled Send.
+While an input method is composing text, Enter does not send. In an answer
+panel's free-text field, Enter advances to the next question, then to the summary;
+it never sends. Send numbered answers only from the summary's **Send** action.
+When permission is off, the composer and answer-panel send controls are hidden;
+questions remain readable in the transcript. The field is disabled with a reason
+when the session is no longer live, the agent is unsupported, or its pane cannot
+be found. The only agent-state refusal is a nonempty `waitingFor` in Claude's own
+session record: permission prompts (`permission prompt`), plan and other dialogs
+(`dialog open`), questions/MCP elicitation (`input needed`), `worker request`,
+`sandbox request`, or `goal proposal` in Claude Code 2.1.332. Unattended mode removes
+the AskUserQuestion and EnterPlanMode tools, but user-entered plan mode and other
+dialogs can still occur. No screen contents, busy state, ghost text or typed draft
+are used to block sending. A reported dialog returns `waiting_at_dialog` and the
+message **The agent is waiting at a dialog in the terminal; answer it there
+first.** No text is pasted and Enter is not sent; the CLI exits nonzero too.
+Every refusal keeps your text and shows the reason in the reserved status row,
+which also announces delivery updates. A fresh send result
+takes precedence over an availability reason for five seconds. Avoid
 typing into the same pane while sending: the paste cannot lock out concurrent
 terminal typing.
 
@@ -198,9 +209,11 @@ badged; choose another full-width option or add a note. A question without optio
 has a text field. The compact title row contains the question number, title, body,
 step dots and controls. Truncated text can be shown in full on demand. Use Back,
 Next or the step dots to move between questions; the **Show in conversation**
-icon finds and highlights the question in the transcript. The footer places
-**Discard answer** on the left and **Next** or **Send** on the right. Answer
-send status and warnings use the same reserved row as the composer.
+icon finds and highlights the question in the transcript. The footer places **Discard answers** on the left and **Next** on the right;
+free-text Enter advances through the questions to the summary, where **Send** is
+the only send action. Discarding requires inline confirmation with **Keep
+answers** or **Confirm discard answers**. Answer send status and warnings use the
+same reserved row as the composer. The Hide control uses a distinct minimize icon.
 The last step lists every answer, marking nonempty answers to questions with a
 recommendation as recommendation or changed. Select a summary
 row to edit it. Only this summary offers Send, beside a preview of the exact
@@ -658,10 +671,8 @@ mark the previous page boundary with a hairline.
 
 **Jump to…** in the menu or the `j` key opens a list of user prompts, with links
 to Start, Latest answer and End. In Indicator mode, the page indicator opens it
-too. Reading position is remembered per transcript on this device, including
-subagents, and restored by entry even after changing font size. An explicit
-jump takes precedence. A session left at its live end returns there when follow
-is enabled. **Show title bar** can hide the bar for more reading space; the
+too. Opening a transcript starts at its end (the last page on e-ink); an explicit
+message anchor takes precedence. Reading positions are not remembered. **Show title bar** can hide the bar for more reading space; the
 floating ⋮ remains available and offers a way back to the parent.
 
 ## Install as an app

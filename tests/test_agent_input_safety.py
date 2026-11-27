@@ -52,7 +52,7 @@ def test_latest_session_record_wins_before_session_id_lookup(setup_session):
     )
     incus.exec.return_value = "42 10 123 S 42 42 34816\n10 1 22 S 10 42 34816"
     assert agent_input.send(Mock(), incus, "box", "old", "text").code == "no_live_session"
-    assert agent_input.send(Mock(), incus, "box", "new", "text").code == "no_pane"
+    assert agent_input.send(Mock(), incus, "box", "new", "text").code == "waiting_at_dialog"
     incus.exec_with_input.assert_not_called()
 
 
@@ -171,16 +171,54 @@ def test_lock_storage_is_bounded_across_many_panes(setup_session, monkeypatch, t
     assert len(list(tmp_path.rglob("*.lock"))) <= 256
 
 
-def test_dialog_delivery_warns_without_disabling_chat(setup_session):
+@pytest.mark.parametrize(
+    "waiting_for",
+    [
+        "permission prompt",
+        "dialog open",
+        "input needed",
+        "worker request",
+        "sandbox request",
+        "goal proposal",
+    ],
+)
+def test_dialog_refuses_availability_and_send_without_tmux_writes(setup_session, waiting_for):
     directory, incus = setup_session
-    record(directory, "dialog.json", status="waiting", waitingFor="permission")
+    record(directory, "dialog.json", status="waiting", waitingFor=waiting_for)
+    incus.exec.return_value = "42 10 123 S 42 42 34816\n10 1 22 S 10 42 34816"
+    message = "The agent is waiting at a dialog in the terminal; answer it there first."
+    assert agent_input.availability(Mock(), incus, "box", "old") == agent_input.Outcome(
+        "waiting_at_dialog", message
+    )
+    assert agent_input.send(Mock(), incus, "box", "old", "text") == agent_input.Outcome(
+        "waiting_at_dialog", message
+    )
+    incus.exec_with_input.assert_not_called()
+    assert not any(
+        "paste-buffer" in str(call) or "send-keys" in str(call)
+        for call in incus.exec.call_args_list
+    )
+
+
+def test_dialog_opening_under_lock_refuses_without_tmux_writes(setup_session):
+    directory, incus = setup_session
+    record(directory, "one.json")
     tree = "42 10 123 S 42 42 34816\n10 1 22 S 10 42 34816"
-    incus.exec.side_effect = [tree, "%1 10"] * 3 + ["", "", ""]
-    assert agent_input.availability(Mock(), incus, "box", "old").code == "available"
+
+    def execute(_container, command):
+        if "list-panes" in command[-1]:
+            record(directory, "one.json", status="waiting", waitingFor="permission")
+            return "%1 10"
+        return tree
+
+    incus.exec.side_effect = execute
     result = agent_input.send(Mock(), incus, "box", "old", "text")
-    assert result.code == "delivered_with_warning"
-    assert result.message == "The text went to an open terminal dialog; check it there."
-    assert incus.exec_with_input.call_args.args[2] == "text"
+    assert result.code == "waiting_at_dialog"
+    incus.exec_with_input.assert_not_called()
+    assert not any(
+        "paste-buffer" in str(call) or "send-keys" in str(call)
+        for call in incus.exec.call_args_list
+    )
 
 
 def test_equal_age_conflicting_session_records_refuse(setup_session):

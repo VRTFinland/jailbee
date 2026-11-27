@@ -290,7 +290,7 @@ function typeStyle(token: string): Record<string, string> {
                     </div>
                     <div class="group">
                         <h3 class="group-title">Answer full</h3>
-                        <AnswerPanel :set="sampleQuestions" :available="false" reason="Messaging is unavailable." initial-height="full" />
+                        <AnswerPanel :set="sampleQuestions" :available="false" initial-height="full" />
                     </div>
 
                     <div class="group">
@@ -343,6 +343,10 @@ function typeStyle(token: string): Record<string, string> {
                                 {{ shape }}
                             </li>
                         </ul>
+                    </div>
+                    <div class="group">
+                        <h3 class="group-title">Answer discard confirmation</h3>
+                        <AnswerPanel :set="sampleQuestions" :available="true" initial-height="half" />
                     </div>
                 </section>
             </template>

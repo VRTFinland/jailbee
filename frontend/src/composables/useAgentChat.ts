@@ -53,17 +53,12 @@ export function useAgentChat(available: () => boolean, deliver: (text: string) =
         try {
             const result = await deliver(text)
             if (current !== generation) return false
-            if (result.code !== "delivered" && result.code !== "delivered_with_warning") {
+            if (result.code !== "delivered") {
                 expected = null
                 error.value = result.message
                 return false
             }
             if (draft.value === text) draft.value = ""
-            if (result.code === "delivered_with_warning") {
-                expected = null
-                status.value = result.message
-                return true
-            }
             if (expected === null) finish(false)
             else if (matched) finish()
             else {

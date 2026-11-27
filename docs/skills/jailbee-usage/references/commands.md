@@ -261,7 +261,7 @@ speculatively.
 | `jailbee agent use [PROFILE[/MODEL]] [--clear]` | Write `agents.default_runner` to the repo's host-local config (`claude/opus` = plain Claude, other profile = `claude-jb` on it; model optional), validated against the LiteLLM config, then resync `claude-jb`'s default profile in running containers. `--clear` removes it. Allowed in a restricted remote SSH session. |
 | `jailbee agent use [PROFILE[/MODEL]] --container NAME [--clear]` | Set or remove one container's own runner label (outranks the repo default at its next autostart; running sessions untouched). Without an argument the picker starts with a "repo default" row. |
 | `jailbee agent open [NAME]` | Start the effective agent in a new tmux window of a running container. |
-| `jailbee agent say [NAME] [TEXT] [--session ID]` | Send a user turn to a live Claude tmux session; use `-` as TEXT to read stdin. Sending to an open terminal dialog succeeds with exit 0 and warns to check it there; busy Claude queues the turn. A paste joins real text already typed in the terminal, while Claude replaces its ghost suggestion. |
+| `jailbee agent say [NAME] [TEXT] [--session ID]` | Send a user turn to a live Claude tmux session; use `-` as TEXT to read stdin. If Claude is waiting at a terminal dialog, sending is refused with `waiting_at_dialog` and `The agent is waiting at a dialog in the terminal; answer it there first.` No paste or Enter is sent, and the command exits nonzero. Busy Claude queues the turn. A paste joins real text already typed in the terminal, while Claude replaces its ghost suggestion. |
 | `jailbee agent show` | Effective default runner and its source (`local`/`repo`/`global`/`legacy`); lists containers whose own runner label overrides it. Host-only. |
 
 ## LiteLLM proxy
@@ -451,8 +451,10 @@ Host-side only; included in every install. Full guide: `docs/web-dashboard.md`.
 The transcript reader can message its live Claude session when
 `remote.web.agent_chat` is enabled (the default; set it to false to opt out). Messages use the same tmux paste
 boundary as `jailbee agent say`, including multi-line text and busy sessions.
-Enter sends and Shift+Enter adds a line, including in answer-panel free text;
-Enter does not send during IME composition. When chat is opted out, send controls
+Composer Enter sends and Shift+Enter adds a line; on phones, **Insert newline**
+adds a line and the keyboard Enter key is labelled Send. In answer-panel free text,
+Enter advances to the next question and then the summary; only the summary's Send
+action sends. Enter does not send during IME composition. When chat is opted out, send controls
 are hidden. The composer disables with a reason when temporarily unavailable; a
 refused send keeps its text. A reserved status row shows delivery and errors even
 when the composer is collapsed. The composer starts collapsed on mobile and
@@ -460,8 +462,9 @@ expanded on desktop, remembers explicit show/hide choices on the device, and
 preserves its draft when hidden. It hides while the answer panel is open and
 returns in its remembered state when the panel is hidden or answered.
 Delivered appears only when the ordinary user entry reaches the followed
-transcript. A send to an open terminal dialog succeeds with a warning to check it
-there; the paste and Enter may act on the dialog. Claude queues sends while busy
+transcript. A send while Claude waits at a terminal dialog is refused with `waiting_at_dialog`
+and the message `The agent is waiting at a dialog in the terminal; answer it there first.`
+No paste or Enter is sent; the CLI exits nonzero. Claude queues sends while busy
 and replaces its ghost suggestion; pasted text joins real text already typed in
 the terminal.
 Repository visibility applies, and the audit log records the message and device name.
@@ -476,8 +479,10 @@ mobile bottom sheet, desktop side column, with no animation on e-ink. The caret
 points in the direction of movement; **Hide** preserves answers and is distinct
 from discarding a draft. The compact title row holds the question, step pills,
 **Show in conversation** and **Hide**; truncated question text can be shown in
-full on demand. The footer puts **Discard answer** left and **Next** or **Send**
-right. Answer send status and warnings share the composer's status row. It offers
+full on demand. The footer puts **Discard answers** left and **Next** right; free-text Enter
+advances through the questions to the summary, where **Send** is the only send
+action. Discard requires inline confirmation with **Keep answers** or **Confirm
+discard answers**. Answer send status and warnings share the composer's status row. It offers
 recommendations, per-answer notes and a summary-only Send with the exact outgoing
 message. Edited answers persist in this browser per session and source message;
 a newer reply keeps the edited draft with a notice and offers its own questions
@@ -513,8 +518,9 @@ agent, models and session ID. E-ink Page controls offers Indicator (default), Si
 buttons and Bar; Page step offers 100, 90, 75, 66 or 50 percent, with an overlap
 marker on forward turns. Edge zones, n/m and the bottom guard remain available.
 Jump to… or `j` lists prompts and links to Start, Latest answer and End; the
-indicator also opens it. Reading position is remembered per transcript on the
-device, including subagents. Show title bar hides the bar while leaving a floating
+indicator also opens it. Opening a transcript starts at its end (last e-ink
+page); explicit message anchors take precedence. Reading positions are not
+remembered. Show title bar hides the bar while leaving a floating
 ⋮ and parent navigation available.
 The front page and repository menus have three container filters: All,
 Running (Incus state Running), and Active (the terminal dashboard's non-grey

@@ -65,7 +65,7 @@ describe("GalleryView", () => {
             expect(buttons.slice(-2).map((b) => [b.text(), b.find("svg").exists()]))
                 .toEqual([["New container", true], ["Settings", true]])
             const iconButtons = panel.findAll(".icon-button")
-            expect(iconButtons.map((b) => b.attributes("aria-label"))).toEqual(["Menu", "Close", "Menu (tonal)", "Settings (tonal, disabled)", "Settings (disabled)", "Actions for feat-reader-chrome", "Actions for dev-ork", "Show in conversation", "Expand answer panel", "Hide", "Show in conversation", "Reduce answer panel", "Hide", "Show in conversation", "Expand answer panel", "Hide", "Hide composer", "Send message", "Previous page (compact)", "Next page (compact)", "Previous page (compact, disabled)", "Previous earlier sessions", "Next earlier sessions"])
+            expect(iconButtons.map((b) => b.attributes("aria-label"))).toEqual(["Menu", "Close", "Menu (tonal)", "Settings (tonal, disabled)", "Settings (disabled)", "Actions for feat-reader-chrome", "Actions for dev-ork", "Show in conversation", "Expand answer panel", "Hide", "Show in conversation", "Reduce answer panel", "Hide", "Show in conversation", "Expand answer panel", "Hide", "Insert newline", "Hide composer", "Send message", "Previous page (compact)", "Next page (compact)", "Previous page (compact, disabled)", "Previous earlier sessions", "Next earlier sessions", "Show in conversation", "Expand answer panel", "Hide"])
             expect(iconButtons[2].attributes("data-variant")).toBe("tonal")
             expect(iconButtons[3].attributes("disabled")).toBeDefined()
             expect(iconButtons[4].attributes("disabled")).toBeDefined()
@@ -111,7 +111,19 @@ describe("GalleryView", () => {
                 "a) Keep the current approach Recommendation", "b) Try a new approach", "Optional note",
                 "a) Keep the current approach Recommendation", "b) Try a new approach", "Optional note",
                 "Yes Recommendation", "Answer", "Optional note", "Message agent",
+                "a) Keep the current approach Recommendation", "b) Try a new approach", "Optional note",
             ])
+        }
+    })
+
+    it("offers a discard confirmation sample in every theme and profile", async () => {
+        const wrapper = mountGallery()
+        for (const panel of wrapper.findAll('section[aria-label]')) {
+            const group = panel.findAll('.group').find(group => group.get('.group-title').text() === 'Answer discard confirmation')
+            expect(group).toBeDefined()
+            await group!.get('[aria-label="Discard answers"]').trigger('click')
+            expect(group!.get('[aria-label="Keep answers"]').text()).toBe('Keep answers')
+            expect(group!.get('[aria-label="Confirm discard answers"]').text()).toBe('Confirm discard answers')
         }
     })
 

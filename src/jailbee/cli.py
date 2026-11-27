@@ -12257,11 +12257,6 @@ def agent_say_cmd(
         error("Text is empty")
         raise typer.Exit(2)
     result = agent_input.send(cfg, incus, full, session, text)
-    if result.code == "delivered_with_warning":
-        from jailbee.tui import warn
-
-        warn(result.message)
-        return
     if result.code == "delivered":
         success(result.message)
         return

@@ -7,7 +7,7 @@ import Field from "./Field.vue"
 import {buildAnswerMessage, initialAnswers} from "../../questions"
 import type {Answer, QuestionSet} from "../../questions"
 
-const props = withDefaults(defineProps<{set: QuestionSet; available: boolean; busy?: boolean; answers?: Answer[]; reason?: string; error?: string; status?: string; initialHeight?: "bar" | "half" | "full"}>(), {initialHeight: "bar"})
+const props = withDefaults(defineProps<{set: QuestionSet; available: boolean; busy?: boolean; answers?: Answer[]; initialHeight?: "bar" | "half" | "full"}>(), {initialHeight: "bar"})
 const emit = defineEmits<{send: [text: string]; show: [index: number]; discard: []; height: [value: "bar" | "half" | "full"]; "update:answers": [value: Answer[]]}>()
 const localAnswers = ref(initialAnswers(props.set))
 const answers = computed(() => props.answers ?? localAnswers.value)
@@ -17,6 +17,8 @@ function updateAnswer(index: number, key: keyof Answer, value: string) {
     emit("update:answers", updated)
 }
 const step = ref(0)
+const confirmingDiscard = ref(false)
+watch(() => props.set, () => { confirmingDiscard.value = false })
 const height = ref<"bar" | "half" | "full">(props.initialHeight)
 watch(() => props.set, set => { localAnswers.value = initialAnswers(set); step.value = 0; height.value = props.initialHeight })
 watch(height, value => emit("height", value))
@@ -59,7 +61,7 @@ function syncPage() {
 function answerKey(event: KeyboardEvent) {
     if (event.key !== "Enter" || event.shiftKey || event.isComposing || event.keyCode === 229) return
     event.preventDefault()
-    if (props.available && !props.busy && answers.value.every(answer => answer.value.trim())) emit("send", preview.value)
+    if (!props.busy && question.value) step.value++
 }
 function pageKey(event: KeyboardEvent) {
     if (!eink.value || !['PageUp', 'PageDown'].includes(event.key)) return
@@ -101,7 +103,7 @@ onBeforeUnmount(() => { resize?.disconnect(); mutation?.disconnect(); profileObs
                 <IconButton v-if="question" icon="jump" label="Show in conversation" @click="emit('show', step)" />
                 <IconButton v-if="height === 'half'" icon="collapse" label="Expand answer panel" @click="height = 'full'" />
                 <IconButton v-else icon="expand" label="Reduce answer panel" @click="height = 'half'" />
-                <IconButton icon="expand" label="Hide" @click="height = 'bar'" />
+                <IconButton icon="remove" label="Hide" @click="height = 'bar'" />
             </template>
         </header>
         <div v-if="height !== 'bar'" ref="content" class="panel-content" @scroll="syncPage" @focusin="nextTick(syncPage)">
@@ -115,7 +117,7 @@ onBeforeUnmount(() => { resize?.disconnect(); mutation?.disconnect(); profileObs
                         <span>{{ option.letter }}) {{ option.text }} <strong v-if="question.recommendation === option.letter">Recommendation</strong></span>
                     </label>
                 </fieldset>
-                <Field v-if="!question.options.length" :model-value="answers[step].value" label="Answer" multiline placeholder="Enter to send; Shift+Enter for a new line" :disabled="busy" @keydown="answerKey" @update:model-value="updateAnswer(step, 'value', $event)" />
+                <Field v-if="!question.options.length" :model-value="answers[step].value" label="Answer" multiline placeholder="Enter for next step; Shift+Enter for a new line" enterkeyhint="next" :disabled="busy" @keydown="answerKey" @update:model-value="updateAnswer(step, 'value', $event)" />
                 <Field :model-value="answers[step].note" label="Optional note" :disabled="busy" @update:model-value="updateAnswer(step, 'note', $event)" />
             </template>
             <template v-else>
@@ -126,9 +128,15 @@ onBeforeUnmount(() => { resize?.disconnect(); mutation?.disconnect(); profileObs
                 <h3>Message preview</h3><pre>{{ preview }}</pre>
             </template>
             <footer>
-                <Button variant="danger" aria-label="Discard answer" :disabled="busy" @click="emit('discard')">Discard answer</Button>
-                <Button v-if="question" variant="primary" aria-label="Next step" @click="step++">Next</Button>
-                <Button v-else variant="primary" aria-label="Send answers" :disabled="!available || busy || answers.some(answer => !answer.value.trim())" @click="emit('send', preview)">Send</Button>
+                <template v-if="confirmingDiscard">
+                    <Button variant="text" aria-label="Keep answers" @click="confirmingDiscard = false">Keep answers</Button>
+                    <Button variant="danger" aria-label="Confirm discard answers" :disabled="busy" @click="confirmingDiscard = false; emit('discard')">Confirm discard answers</Button>
+                </template>
+                <Button v-else variant="danger" aria-label="Discard answers" :disabled="busy" @click="confirmingDiscard = true">Discard answers</Button>
+                <template v-if="!confirmingDiscard">
+                    <Button v-if="question" variant="primary" aria-label="Next step" @click="step++">Next</Button>
+                    <Button v-else variant="primary" aria-label="Send answers" :disabled="!available || busy || answers.some(answer => !answer.value.trim())" @click="emit('send', preview)">Send</Button>
+                </template>
             </footer>
         </div>
         <nav v-if="height !== 'bar' && eink && pages > 1" class="answer-pages" aria-label="Answer pages">
